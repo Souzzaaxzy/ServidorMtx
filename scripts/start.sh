@@ -47,8 +47,11 @@ fi
 ok "Dependências instaladas"
 
 # ── 3. PostgreSQL ─────────────────────────────────────────────
-# Try to ensure a reachable database. If Docker is available, bring up the
-# compose `db` service (it exposes the port on the host) and wait for it.
+# Two modes:
+#   A) Docker available on the host: bring up the compose `db` service and use
+#      it (port exposed on the host).
+#   B) No Docker (e.g. Pterodactyl container): assume an external PostgreSQL
+#      reachable via DATABASE_URL / DB_* env vars (provided by the panel).
 DB_PORT="${DB_PORT:-5432}"
 DB_USER="${POSTGRES_USER:-matrix}"
 DB_NAME="${POSTGRES_DB:-matrix}"
@@ -56,7 +59,7 @@ DB_NAME="${POSTGRES_DB:-matrix}"
 if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
   log "Subindo PostgreSQL via Docker Compose"
   docker compose up -d db
-  log "Aguardando o banco aceitar conexões em localhost:${DB_PORT}"
+  log "Aguardando o banco aceitar conexões em 127.0.0.1:${DB_PORT}"
   # Wait until the port is actually reachable from the host (not just inside
   # the container). The compose healthcheck flips to healthy before the host
   # port is fully wired, so probe the host side directly.
@@ -68,18 +71,28 @@ if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
     fi
     sleep 1
   done
+  # Normalise the compose-internal "db" host to the host-reachable 127.0.0.1.
+  # Use 127.0.0.1 (not "localhost"): "localhost" may resolve to IPv6 ::1 first,
+  # which Docker does not bind, causing "Can't reach database server".
+  DB_URL="${DATABASE_URL:-postgresql://${DB_USER}:${POSTGRES_PASSWORD:-matrix}@127.0.0.1:${DB_PORT}/${DB_NAME}?schema=public}"
+  DB_URL="$(printf '%s' "$DB_URL" | sed -E 's/@db:/@127.0.0.1:/; s/@localhost:/@127.0.0.1:/')"
 else
-  warn "Docker não disponível. Assumindo PostgreSQL externo em DATABASE_URL."
+  # No Docker (Pterodactyl, etc.): build DATABASE_URL from DB_* vars if the
+  # panel provides them as separate components instead of a single URL.
+  if [ -z "${DATABASE_URL:-}" ] && [ -n "${DB_HOST:-${DATABASE_HOST:-}}" ]; then
+    DB_HOSTVAL="${DB_HOST:-${DATABASE_HOST}}"
+    DB_URL="postgresql://${DB_USER}:${POSTGRES_PASSWORD:-${DB_PASSWORD:-matrix}}@${DB_HOSTVAL}:${DB_PORT}/${DB_NAME}?schema=public"
+  else
+    DB_URL="${DATABASE_URL:-}"
+  fi
+  if [ -z "$DB_URL" ]; then
+    warn "Nenhum banco configurado."
+    warn "Defina DATABASE_URL (ou DB_HOST + POSTGRES_PASSWORD) no painel/ambiente."
+    warn "Ex: postgresql://matrix:senha@host:5432/matrix?schema=public"
+    exit 1
+  fi
+  ok "Usando banco externo (modo sem Docker)"
 fi
-
-# Make sure DATABASE_URL points at the host-reachable Postgres.
-#   - When using the compose db the URL may reference the internal host "db";
-#     on the host we reach it via 127.0.0.1.
-#   - Use 127.0.0.1 instead of "localhost": on many hosts "localhost" resolves
-#     to ::1 (IPv6) first, but Docker only binds the port on IPv4 (0.0.0.0),
-#     so an IPv6-first connect fails with "Can't reach database server".
-DB_URL="${DATABASE_URL:-postgresql://${DB_USER}:${POSTGRES_PASSWORD:-matrix}@127.0.0.1:${DB_PORT}/${DB_NAME}?schema=public}"
-DB_URL="$(printf '%s' "$DB_URL" | sed -E 's/@db:/@127.0.0.1:/; s/@localhost:/@127.0.0.1:/')"
 export DATABASE_URL="$DB_URL"
 
 # ── 4. Prisma client ─────────────────────────────────────────
@@ -112,6 +125,10 @@ log "Verificando necessidade de seed"
 ok "Banco pronto"
 
 # ── 8. Start server ───────────────────────────────────────────
-log "Iniciando servidor MATRIX API na porta ${PORT:-3000}"
-ok "Servidor online em http://localhost:${PORT:-3000}"
+# Pterodactyl exposes the allocated port as SERVER_PORT; PORT takes priority
+# when set. The server also reads SERVER_PORT internally as a fallback.
+SERVER_PORT_VAL="${SERVER_PORT:-${PORT:-3000}}"
+export PORT="$SERVER_PORT_VAL"
+log "Iniciando servidor MATRIX API na porta ${PORT}"
+ok "Servidor online em http://0.0.0.0:${PORT}"
 exec node dist/src/app.js

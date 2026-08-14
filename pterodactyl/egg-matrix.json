@@ -1,0 +1,100 @@
+{
+  "_comment": "MATRIX API egg for Pterodactyl. Import via Admin → Eggs → Import. Requires a PostgreSQL database (create one in the panel or use an external one).",
+  "meta": {
+    "version": "PTDL_v2",
+    "update_url": null
+  },
+  "exported_at": "2026-08-14T21:30:00Z",
+  "name": "MATRIX API",
+  "author": "Souzzaaxzy",
+  "description": "Backend do MATRIX 💤 — Node.js + Fastify + Prisma + PostgreSQL. O install script clona o repositório, instala dependências e compila. O startup (npm start) aplica migrations, popula o banco se vazio, e sobe o servidor. Configure DATABASE_URL e JWT_SECRET nas variáveis.",
+  "features": null,
+  "docker_images": {
+    "Node": "node:22-bookworm-slim"
+  },
+  "file_denylist": [],
+  "startup": "npm start",
+  "config": {
+    "files": {},
+    "startup": {
+      "done": "Server listening at"
+    },
+    "logs": {
+      "custom": true,
+      "location": "logs/latest.log"
+    },
+    "stop": "^C"
+  },
+  "scripts": {
+    "installation": {
+      "container": "node:22-bookworm-slim",
+      "entrypoint": "bash",
+      "script": "#!/bin/bash\nset -euo pipefail\n\nREPO_URL=\"https://github.com/Souzzaaxzy/ServidorMtx.git\"\nBRANCH=\"main\"\n\ncd /mnt/server\n\n# OpenSSL is required by Prisma's query engine.\napt-get update && apt-get install -y --no-install-recommends openssl ca-certificates git && rm -rf /var/lib/apt/lists/*\n\nif [ ! -f package.json ]; then\n  echo '>> Cloning repository...'\n  git clone --depth 1 -b \"$BRANCH\" \"$REPO_URL\" /tmp/matrix-src\n  shopt -s dotglob\n  mv /tmp/matrix-src/* .\n  shopt -u dotglob\n  rmdir /tmp/matrix-src 2>/dev/null || true\n  echo '>> Repository cloned.'\nelse\n  echo '>> package.json already present — skipping clone.'\nfi\n\necho '>> Installing dependencies...'\nnpm install --legacy-peer-deps\n\necho '>> Generating Prisma client...'\n./node_modules/.bin/prisma generate\n\necho '>> Compiling TypeScript...'\nnpm run build\n\necho '>> MATRIX API installation complete!'\necho '>> Set DATABASE_URL and JWT_SECRET in the server variables.'"
+    }
+  },
+  "variables": [
+    {
+      "name": "Database URL",
+      "description": "PostgreSQL connection string. Create a database in the panel and use the provided URL, or point to an external Postgres. Example: postgresql://user:pass@host:5432/dbname?schema=public",
+      "env_variable": "DATABASE_URL",
+      "default_value": "",
+      "user_viewable": true,
+      "user_editable": true,
+      "rules": "required|string"
+    },
+    {
+      "name": "JWT Secret",
+      "description": "Secret used to sign JWT access tokens. Use a long random string in production.",
+      "env_variable": "JWT_SECRET",
+      "default_value": "change-me-to-a-long-random-secret",
+      "user_viewable": true,
+      "user_editable": true,
+      "rules": "required|string"
+    },
+    {
+      "name": "CORS Origin",
+      "description": "Comma-separated allowed CORS origins. Use * for development, or list explicit origins in production.",
+      "env_variable": "CORS_ORIGIN",
+      "default_value": "*",
+      "user_viewable": true,
+      "user_editable": true,
+      "rules": "required|string"
+    },
+    {
+      "name": "Node Environment",
+      "description": "production or development.",
+      "env_variable": "NODE_ENV",
+      "default_value": "production",
+      "user_viewable": true,
+      "user_editable": true,
+      "rules": "required|string|in:production,development"
+    },
+    {
+      "name": "AI Provider",
+      "description": "Akame AI provider: mock (default, no key needed), openai, or anthropic.",
+      "env_variable": "AI_PROVIDER",
+      "default_value": "mock",
+      "user_viewable": true,
+      "user_editable": true,
+      "rules": "required|string|in:mock,openai,anthropic"
+    },
+    {
+      "name": "AI API Key",
+      "description": "API key for the AI provider. Leave empty when using mock.",
+      "env_variable": "AI_API_KEY",
+      "default_value": "",
+      "user_viewable": true,
+      "user_editable": true,
+      "rules": "nullable|string"
+    },
+    {
+      "name": "Max Upload Bytes",
+      "description": "Maximum upload size in bytes (default 5MB = 5242880).",
+      "env_variable": "MAX_UPLOAD_BYTES",
+      "default_value": "5242880",
+      "user_viewable": true,
+      "user_editable": true,
+      "rules": "required|integer"
+    }
+  ]
+}

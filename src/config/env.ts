@@ -17,11 +17,16 @@ function int(name: string, fallback: number): number {
 
 const isProd = process.env.NODE_ENV === 'production';
 
+// Pterodactyl exposes the allocated port as SERVER_PORT; prefer PORT when set
+// (our own convention) but fall back to SERVER_PORT so the panel works out of
+// the box without extra config.
+const portFallback = process.env.PORT ?? process.env.SERVER_PORT ?? '3000';
+
 export const env = {
   isProd,
   isDev: !isProd,
   isTest: process.env.NODE_ENV === 'test',
-  port: int('PORT', 3000),
+  port: int('PORT', Number.parseInt(portFallback, 10) || 3000),
   corsOrigin: (process.env.CORS_ORIGIN ?? '*').split(',').map((s) => s.trim()),
   databaseUrl: required('DATABASE_URL', 'postgresql://matrix:matrix@localhost:5432/matrix?schema=public'),
   jwt: {

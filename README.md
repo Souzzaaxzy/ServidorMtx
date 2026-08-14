@@ -117,6 +117,42 @@ npm run db:seed
 npm run dev
 ```
 
+## Pterodactyl (hospedagem em painel)
+
+O servidor roda em painéis Pterodactyl **sem Docker** — o banco PostgreSQL é
+fornecido pelo próprio painel (ou externamente), e `npm start` usa a
+`DATABASE_URL` configurada nas variáveis do servidor.
+
+### Importar o egg
+
+1. No painel: **Admin → Eggs → Import Egg** e envie
+   [`pterodactyl/egg-matrix.json`](pterodactyl/egg-matrix.json).
+2. Crie um **Nest** (ou use um existente) e associe o egg.
+3. Crie um **Server** usando esse egg.
+4. Crie um **Database** no painel (PostgreSQL) e atribua ao servidor — o
+   painel gera a `DATABASE_URL` automaticamente, ou preencha a variável
+   `Database URL` manualmente com uma string externa.
+5. Defina `JWT Secret` para uma string aleatória longa.
+
+O egg faz tudo automaticamente:
+- **Install script**: clona o repositório, `npm install`, gera o Prisma,
+  compila o TypeScript (roda uma vez na criação do servidor).
+- **Startup**: `npm start` → aplica migrations, popula o banco se vazio,
+  sobe o servidor na `SERVER_PORT` do painel.
+
+### Egg genérico (alternativa)
+
+Se preferir usar um egg Node.js genérico já existente:
+
+- **Install script**: `bash -c 'git clone https://github.com/Souzzaaxzy/ServidorMtx.git . && npm install --legacy-peer-deps && ./node_modules/.bin/prisma generate && npm run build'`
+- **Startup command**: `npm start`
+- **Variáveis**: `DATABASE_URL` (obrigatória), `JWT_SECRET`, `SERVER_PORT`
+  (automática do painel), `NODE_ENV=production`.
+
+> Importante: no Pterodactyl **não há Docker dentro do container**, então o
+> Postgres deve ser externo (criado pelo painel). O `npm start` detecta a
+> ausência do Docker e usa o banco via `DATABASE_URL` automaticamente.
+
 ## Testes
 
 ```bash
