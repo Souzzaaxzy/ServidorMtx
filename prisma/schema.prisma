@@ -1,0 +1,554 @@
+// MATRIX 💤 — database schema (Prisma)
+// See migrations/ for the versioned history.
+//
+// Design principles (Phase 3):
+// - Identity: internal `id` (cuid) never changes; `username` is mutable.
+//   All relations use `userId`/`id`, never `username`.
+// - No email/phone: auth is username + password only.
+// - Password hashing uses Argon2id; recovery codes are hashed too.
+// - Gamification: XP and Matrix Coins are append-only ledgers
+//   (xp_transactions / coin_transactions) for full auditability.
+// - Customization: the APK renders generic item "types"; the server owns
+//   which items exist, their rarity, pricing and availability. Adding a new
+//   frame/banner/badge never requires a new APK.
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/generated"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  USER
+  MODERATOR
+  ADMIN
+  OWNER
+}
+
+enum ItemType {
+  AVATAR_FRAME
+  PROFILE_BANNER
+  BADGE
+  PROFILE_EFFECT
+  THEME_ACCCENT
+}
+
+enum ItemRarity {
+  COMMON
+  UNCOMMON
+  RARE
+  EPIC
+  LEGENDARY
+}
+
+enum XpReason {
+  POST_CREATED
+  COMMENT_CREATED
+  LIKE_RECEIVED
+  ACHIEVEMENT
+  EVENT_REWARD
+  GAME_REWARD
+  ADMIN_GRANT
+}
+
+enum CoinReason {
+  POST_CREATED
+  ACHIEVEMENT
+  EVENT_REWARD
+  GAME_REWARD
+  ADMIN_GRANT
+  ADMIN_REMOVE
+  PURCHASE
+  REWARD
+}
+
+enum CoinTransactionType {
+  EARN
+  SPEND
+  ADMIN_GRANT
+  ADMIN_REMOVE
+  REWARD
+}
+
+enum EventStatus {
+  DRAFT
+  ACTIVE
+  ENDED
+  CANCELLED
+}
+
+enum MusicVoteDirection {
+  UP
+  DOWN
+}
+
+model User {
+  id                String    @id @default(cuid())
+  name              String
+  username          String    @unique
+  passwordHash      String
+  recoveryCodeHash  String
+  role              UserRole  @default(USER)
+  avatarUrl         String?
+  bio               String    @default("")
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  posts        Post[]
+  likes        Like[]
+  comments     Comment[]
+  sessions     Session[]
+
+  xpTransactions     XpTransaction[]
+  coinTransactions   CoinTransaction[]
+  userCoins          MatrixCoin?
+  userAchievements   UserAchievement[]
+  userBadges         UserBadge[]
+  userItems          UserItem[]
+  equippedItems      EquippedItem[]
+  eventParticipants  EventParticipant[]
+  playlists          Playlist[]
+  gameSessions       GameSession[]
+  musicVotes         MusicVote[]
+
+  @@index([username])
+  @@map("users")
+}
+
+model Post {
+  id        String    @id @default(cuid())
+  userId    String
+  text      String?
+  imageUrl  String?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  likes    Like[]
+  comments Comment[]
+
+  @@index([userId])
+  @@index([createdAt])
+  @@map("posts")
+}
+
+model Like {
+  id        String   @id @default(cuid())
+  userId    String
+  postId    String
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  post Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, postId])
+  @@index([postId])
+  @@map("likes")
+}
+
+model Comment {
+  id        String   @id @default(cuid())
+  userId    String
+  postId    String
+  text      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  post Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@index([postId])
+  @@index([userId])
+  @@map("comments")
+}
+
+model Session {
+  id               String   @id @default(cuid())
+  userId           String
+  refreshTokenHash String   @unique
+  expiresAt        DateTime
+  createdAt        DateTime @default(now())
+  revokedAt        DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("sessions")
+}
+
+// ── Gamification ─────────────────────────────────────────────
+// Append-only ledger of every XP change. Never mutate a single `xp`
+// counter directly — always insert a transaction so the full history is
+// auditable and the current total is `SUM(amount)`.
+
+model XpTransaction {
+  id        String   @id @default(cuid())
+  userId    String
+  amount    Int
+  reason    XpReason
+  source    String
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([createdAt])
+  @@map("xp_transactions")
+}
+
+model Level {
+  id          Int      @id
+  name        String
+  minXp       Int      @unique
+  color       String?
+  createdAt   DateTime @default(now())
+
+  @@map("levels")
+}
+
+model MatrixCoin {
+  userId    String   @id
+  balance   Int      @default(0)
+  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("matrix_coins")
+}
+
+// Append-only ledger of every Matrix Coin movement. The balance is the
+// `SUM(amount)` of all transactions for a user.
+model CoinTransaction {
+  id        String              @id @default(cuid())
+  userId    String
+  amount    Int
+  type      CoinTransactionType
+  reason    CoinReason
+  createdAt DateTime            @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([createdAt])
+  @@map("coin_transactions")
+}
+
+// ── Achievements & Badges ─────────────────────────────────────
+
+model Achievement {
+  id          String   @id
+  name        String
+  description String
+  xpReward    Int      @default(0)
+  coinReward  Int      @default(0)
+  iconUrl     String?
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  userAchievements UserAchievement[]
+
+  @@map("achievements")
+}
+
+model UserAchievement {
+  id            String      @id @default(cuid())
+  userId        String
+  achievementId String
+  unlockedAt    DateTime    @default(now())
+
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  achievement Achievement @relation(fields: [achievementId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, achievementId])
+  @@index([userId])
+  @@map("user_achievements")
+}
+
+model Badge {
+  id          String   @id
+  name        String
+  description String
+  iconUrl     String?
+  rarity      ItemRarity @default(COMMON)
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  userBadges UserBadge[]
+
+  @@map("badges")
+}
+
+model UserBadge {
+  id        String   @id @default(cuid())
+  userId    String
+  badgeId   String
+  acquiredAt DateTime @default(now())
+
+  user  User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  badge Badge  @relation(fields: [badgeId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, badgeId])
+  @@index([userId])
+  @@map("user_badges")
+}
+
+// ── Customization (Personalization Engine) ────────────────────
+// The server owns the catalog. The APK only knows how to render a given
+// ItemType; adding items is a data operation, not an APK release.
+
+model Item {
+  id         String    @id
+  type       ItemType
+  name       String
+  assetUrl   String
+  rarity     ItemRarity @default(COMMON)
+  price      Int       @default(0)
+  active     Boolean   @default(true)
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  userItems     UserItem[]
+  equippedItems EquippedItem[]
+
+  @@index([type])
+  @@map("items")
+}
+
+model UserItem {
+  id          String    @id @default(cuid())
+  userId      String
+  itemId      String
+  quantity    Int       @default(1)
+  acquiredAt  DateTime  @default(now())
+  expiresAt   DateTime?
+  source      String    @default("GRANT")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  item Item @relation(fields: [itemId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, itemId])
+  @@index([userId])
+  @@map("user_items")
+}
+
+model EquippedItem {
+  id        String   @id @default(cuid())
+  userId    String
+  itemId    String
+  slot      ItemType
+  equippedAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  item Item @relation(fields: [itemId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, slot])
+  @@index([userId])
+  @@map("equipped_items")
+}
+
+// ── Events ─────────────────────────────────────────────────────
+
+model Event {
+  id          String      @id @default(cuid())
+  title       String
+  description String      @default("")
+  status      EventStatus @default(DRAFT)
+  startsAt    DateTime
+  endsAt      DateTime?
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  participants EventParticipant[]
+  rewards      EventReward[]
+
+  @@index([status])
+  @@map("events")
+}
+
+model EventParticipant {
+  id        String   @id @default(cuid())
+  userId    String
+  eventId   String
+  joinedAt  DateTime @default(now())
+
+  user  User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  event Event  @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, eventId])
+  @@index([eventId])
+  @@map("event_participants")
+}
+
+model EventReward {
+  id        String   @id @default(cuid())
+  eventId   String
+  itemId    String?
+  xpAmount  Int      @default(0)
+  coinAmount Int     @default(0)
+  createdAt DateTime @default(now())
+
+  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  @@index([eventId])
+  @@map("event_rewards")
+}
+
+// ── Matrix Music ──────────────────────────────────────────────
+// No commercial audio is stored. Tracks reference an external provider
+// (e.g. a licensed streaming API) via provider + externalId/externalUrl.
+
+model Track {
+  id          String   @id @default(cuid())
+  title       String
+  artist      String
+  coverUrl    String?
+  provider    String   @default("external")
+  externalId  String?
+  externalUrl String?
+  duration    Int      @default(0)
+  createdAt    DateTime @default(now())
+
+  playlistTracks PlaylistTrack[]
+  votes           MusicVote[]
+
+  @@index([provider])
+  @@map("tracks")
+}
+
+model Playlist {
+  id          String   @id @default(cuid())
+  ownerId     String
+  title       String
+  description String   @default("")
+  coverUrl    String?
+  visibility  String   @default("public")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  owner         User           @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  playlistTracks PlaylistTrack[]
+
+  @@index([ownerId])
+  @@map("playlists")
+}
+
+model PlaylistTrack {
+  id         String  @id @default(cuid())
+  playlistId String
+  trackId    String
+  position   Int
+
+  playlist Playlist @relation(fields: [playlistId], references: [id], onDelete: Cascade)
+  track    Track    @relation(fields: [trackId], references: [id], onDelete: Cascade)
+
+  @@unique([playlistId, trackId])
+  @@index([playlistId])
+  @@map("playlist_tracks")
+}
+
+model MusicVote {
+  id        String           @id @default(cuid())
+  userId    String
+  trackId   String
+  direction MusicVoteDirection
+  createdAt DateTime         @default(now())
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  track Track @relation(fields: [trackId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, trackId])
+  @@index([trackId])
+  @@map("music_votes")
+}
+
+// ── Games ─────────────────────────────────────────────────────
+// Rewards are validated server-side: a GameResult records the outcome but
+// the server decides the payout. The client can never mint coins by itself.
+
+model Game {
+  id          String   @id @default(cuid())
+  slug        String   @unique
+  name        String
+  description String   @default("")
+  active      Boolean  @default(true)
+  createdAt    DateTime @default(now())
+
+  sessions GameSession[]
+
+  @@map("games")
+}
+
+model GameSession {
+  id        String   @id @default(cuid())
+  userId    String
+  gameId     String
+  score      Int      @default(0)
+  metadata   Json?
+  createdAt  DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  game Game @relation(fields: [gameId], references: [id], onDelete: Cascade)
+
+  result GameResult?
+
+  @@index([userId])
+  @@index([gameId])
+  @@map("game_sessions")
+}
+
+model GameResult {
+  id           String   @id @default(cuid())
+  gameSessionId String  @unique
+  xpAwarded    Int      @default(0)
+  coinAwarded  Int      @default(0)
+  createdAt    DateTime @default(now())
+
+  session GameSession @relation(fields: [gameSessionId], references: [id], onDelete: Cascade)
+
+  @@map("game_results")
+}
+
+// ── Matrix Calls (contracts only — no media transport yet) ─────
+
+model CallRoom {
+  id        String   @id @default(cuid())
+  ownerId   String
+  title     String
+  status    String   @default("active")
+  createdAt DateTime @default(now())
+  endedAt   DateTime?
+
+  @@map("call_rooms")
+}
+
+model CallParticipant {
+  id        String   @id @default(cuid())
+  roomId    String
+  userId    String
+  status    String   @default("joined")
+  joinedAt  DateTime @default(now())
+  leftAt    DateTime?
+
+  @@unique([roomId, userId])
+  @@index([roomId])
+  @@map("call_participants")
+}
+
+// ── Dynamic configuration ─────────────────────────────────────
+// Key/value store the app reads at startup to toggle features, announce
+// maintenance, or push personalizations without an APK update.
+
+model AppConfig {
+  key       String   @id
+  value     Json
+  public    Boolean  @default(false)
+  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now())
+
+  @@map("app_config")
+}

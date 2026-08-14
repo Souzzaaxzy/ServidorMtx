@@ -1,0 +1,25 @@
+# Build artifacts
+node_modules
+dist
+coverage
+*.tsbuildinfo
+
+# Environment (must be provided at runtime via env/secret)
+.env
+.env.*
+!.env.example
+
+# Local uploads (runtime volume)
+uploads/
+
+# Git / editor / OS noise
+.git
+.gitignore
+.vscode
+.idea
+.DS_Store
+
+# Docs / CI not needed inside the image
+README.md
+AGENTS.md
+.github

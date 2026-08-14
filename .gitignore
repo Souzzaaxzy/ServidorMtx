@@ -1,0 +1,19 @@
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+
+# Environment — never commit
+.env
+.env.*
+!.env.example
+
+# Local upload storage (dev)
+uploads/
+
+# Prisma generated client
+src/generated/
+
+# Pid/logs
+*.pid
+*.log

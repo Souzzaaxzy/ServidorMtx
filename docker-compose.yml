@@ -1,0 +1,76 @@
+# ──────────────────────────────────────────────────────────────
+# MATRIX API — docker-compose (server + PostgreSQL)
+#
+# Uso no host:
+#   1. copie .env.example -> .env e ajuste JWT_SECRET / senhas
+#   2. docker compose up -d --build
+#   3. a API responde em http://localhost:3000
+#
+# O Postgres persiste dados no volume `pgdata`. As migrations são
+# aplicadas automaticamente pelo entrypoint do container da API.
+# ──────────────────────────────────────────────────────────────
+
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-matrix}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-matrix}
+      POSTGRES_DB: ${POSTGRES_DB:-matrix}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      # Expor só se precisar inspecionar o banco do host.
+      - "${DB_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-matrix} -d ${POSTGRES_DB:-matrix}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - matrix-net
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      CORS_ORIGIN: ${CORS_ORIGIN:-*}
+      # O host do banco dentro do compose é o nome do serviço "db".
+      DATABASE_URL: postgresql://${POSTGRES_USER:-matrix}:${POSTGRES_PASSWORD:-matrix}@db:5432/${POSTGRES_DB:-matrix}?schema=public
+      JWT_SECRET: ${JWT_SECRET:-change-me-to-a-long-random-secret}
+      JWT_ACCESS_EXPIRES_IN: ${JWT_ACCESS_EXPIRES_IN:-15m}
+      JWT_REFRESH_EXPIRES_IN: ${JWT_REFRESH_EXPIRES_IN:-30d}
+      AI_API_KEY: ${AI_API_KEY:-}
+      AI_PROVIDER: ${AI_PROVIDER:-mock}
+      MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-5242880}
+      # Storage local (vazio = filesystem). Para S3/R2 preencha abaixo.
+      STORAGE_ENDPOINT: ${STORAGE_ENDPOINT:-}
+      STORAGE_ACCESS_KEY: ${STORAGE_ACCESS_KEY:-}
+      STORAGE_SECRET_KEY: ${STORAGE_SECRET_KEY:-}
+      STORAGE_BUCKET: ${STORAGE_BUCKET:-matrix-uploads}
+      STORAGE_REGION: ${STORAGE_REGION:-auto}
+      STORAGE_FORCE_PATH_STYLE: ${STORAGE_FORCE_PATH_STYLE:-true}
+      STORAGE_PUBLIC_BASE_URL: ${STORAGE_PUBLIC_BASE_URL:-}
+    ports:
+      - "${API_PORT:-3000}:3000"
+    volumes:
+      # Persiste uploads locais entre reinícios.
+      - uploads:/app/uploads
+    networks:
+      - matrix-net
+
+volumes:
+  pgdata:
+  uploads:
+
+networks:
+  matrix-net:
+    driver: bridge
