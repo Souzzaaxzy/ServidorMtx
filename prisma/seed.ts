@@ -31,6 +31,14 @@ const GAMES = [
 async function main() {
   console.log('🌱 Seeding MATRIX database…');
 
+  // Guard: never wipe a database that already has real users. This makes the
+  // seed safe to run automatically on every start without destroying data.
+  const existingUsers = await prisma.user.count();
+  if (existingUsers > 0) {
+    console.log(`ℹ️  Database already has ${existingUsers} user(s). Skipping seed to preserve data.`);
+    return;
+  }
+
   // Wipe in dependency order so re-seeding is idempotent.
   const models = [
     prisma.gameResult, prisma.gameSession, prisma.game,

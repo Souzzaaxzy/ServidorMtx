@@ -68,12 +68,48 @@ curl http://localhost:3000/api/config
 | POST | `/api/uploads` | Upload de mídia (auth, multipart) |
 | POST | `/api/akame/chat` | Chat com a IA Akame (auth) |
 
+## Rodar no host com `npm start` (tudo automático)
+
+Requisitos no host: **Node 20+**, **Docker** (para o Postgres; se já tiver um
+Postgres local, o Docker é opcional).
+
+Um único comando provisiona **tudo** e sobe o servidor:
+
+```bash
+git clone https://github.com/Souzzaaxzy/ServidorMtx.git
+cd ServidorMtx
+npm start
+```
+
+O `npm start` executa `scripts/start.sh`, que faz automaticamente:
+
+1. cria `.env` a partir do `.env.example` (se ainda não existir)
+2. instala as dependências (`npm install`)
+3. sobe um PostgreSQL em container via Docker Compose (se o Docker estiver disponível)
+4. gera o cliente Prisma
+5. aplica as migrations
+6. compila o TypeScript
+7. popula o banco (seed) — **só se o banco estiver vazio** (nunca apaga dados)
+8. inicia o servidor compilado (`node dist/src/app.js`)
+
+A API responde em `http://localhost:3000`. O comando é idempotente: pode ser
+rodado de novo a qualquer momento sem perder dados.
+
+> Se você não usa Docker, basta apontar `DATABASE_URL` no `.env` para o seu
+> Postgres local (use `127.0.0.1` e não `localhost` para evitar problema de
+> resolução IPv6).
+
+Para iniciar apenas o servidor (sem o bootstrap, após já ter feito o setup):
+```bash
+npm run start:server
+```
+
 ## Desenvolvimento local (sem Docker)
 
 ```bash
 npm install --legacy-peer-deps
 cp .env.example .env
-# ajuste DATABASE_URL para seu Postgres local
+# ajuste DATABASE_URL para seu Postgres local (use 127.0.0.1)
 
 npm run prisma:generate
 npx prisma migrate deploy
