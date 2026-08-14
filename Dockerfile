@@ -19,8 +19,8 @@ COPY prisma ./prisma
 RUN npm ci --legacy-peer-deps || npm install --legacy-peer-deps
 
 # Generate the Prisma client (src/generated is gitignored, so it must be
-# produced inside the image).
-RUN npx prisma generate
+# produced inside the image). Use the locally pinned CLI, not `npx`.
+RUN ./node_modules/.bin/prisma generate
 
 # Copy the rest of the source and compile TypeScript -> dist/
 COPY tsconfig.json ./
@@ -38,14 +38,26 @@ ENV NODE_ENV=production
 RUN apt-get update && apt-get install -y --no-install-recommends openssl ca-certificates tini \
     && rm -rf /var/lib/apt/lists/*
 
-# Only production dependencies.
+# Production dependencies (tsx included as a runtime dep for `db:seed`).
+# Note: we use `npm install` (not `npm ci`) so the lockfile is reconciled
+# with the current package.json before installing.
 COPY package.json package-lock.json* ./
 COPY prisma ./prisma
-RUN npm ci --omit=dev --legacy-peer-deps || npm install --omit=dev --legacy-peer-deps
+RUN npm install --legacy-peer-deps --omit=dev
 
 # Copy compiled output + generated Prisma client from the builder stage.
+# tsc emits to dist/src/ (rootDir="." includes prisma/), so the compiled
+# app is at dist/src/app.js. The Prisma client is plain JS (not compiled),
+# so it must be placed where the relative import '../generated/index.js'
+# from dist/src/config/prisma.js resolves → dist/src/generated/index.js.
 COPY --from=builder /app/dist ./dist
-COPY --from=builder /app/src/generated ./src/generated
+COPY --from=builder /app/src/generated ./dist/src/generated
+
+# Source is needed at runtime for `npm run db:seed` (prisma/seed.ts is
+# TypeScript executed by tsx, and imports from ../src/*.ts).
+COPY --from=builder /app/src ./src
+COPY --from=builder /app/prisma ./prisma
+COPY --from=builder /app/tsconfig.json ./tsconfig.json
 
 # Local uploads directory (when STORAGE_ENDPOINT is empty).
 RUN mkdir -p /app/uploads
@@ -58,4 +70,4 @@ EXPOSE 3000
 
 # tini reaps zombie processes (signal handling for graceful shutdown).
 ENTRYPOINT ["/usr/bin/tini", "--", "./docker-entrypoint.sh"]
-CMD ["node", "dist/app.js"]
+CMD ["node", "dist/src/app.js"]

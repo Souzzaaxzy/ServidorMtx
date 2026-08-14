@@ -8,8 +8,9 @@ coverage/
 .env.*
 !.env.example
 
-# Local upload storage (dev)
-uploads/
+# Local upload storage (dev). Note: anchored to repo root so it does NOT
+# ignore the source module at src/modules/uploads/.
+/uploads/
 
 # Prisma generated client
 src/generated/
