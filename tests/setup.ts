@@ -12,7 +12,12 @@ config({ path: '.env.test' });
 const TEST_DB = process.env.TEST_DATABASE_URL;
 const usingTestDb = Boolean(TEST_DB);
 
-if (!usingTestDb) {
+// Point Prisma (both the CLI used in setup and the PrismaClient) at the
+// dedicated test database when configured. Without this the Prisma CLI would
+// fall back to DATABASE_URL from .env (the compose-internal "db" host).
+if (usingTestDb) {
+  process.env.DATABASE_URL = TEST_DB;
+} else {
   // Fall back to the dev DATABASE_URL so `npm test` works locally without
   // extra config; tests still truncate tables between cases.
   process.env.DATABASE_URL ??= 'postgresql://matrix:matrix@localhost:5432/matrix?schema=public';
