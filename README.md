@@ -61,9 +61,12 @@ curl http://localhost:3000/api/config
 | GET | `/api/posts` | Feed |
 | POST | `/api/posts` | Criar post |
 | GET | `/api/config` | Configuração dinâmica do app |
-| GET | `/api/gamification/levels` | Níveis |
-| GET | `/api/customization/items` | Itens de personalização |
-| POST | `/api/akame/chat` | Chat com a IA Akame |
+| GET | `/api/gamification/me` | Status do usuário (auth) |
+| GET | `/api/gamification/ranking` | Top usuários por XP |
+| GET | `/api/customization/catalog` | Catálogo de itens |
+| GET | `/api/customization/inventory` | Inventário (auth) |
+| POST | `/api/uploads` | Upload de mídia (auth, multipart) |
+| POST | `/api/akame/chat` | Chat com a IA Akame (auth) |
 
 ## Desenvolvimento local (sem Docker)
 
