@@ -38,8 +38,11 @@ else
 fi
 
 # ── Install dependencies ──────────────────────────────────────
+# --include=dev ensures devDependencies (tsc, typescript, prisma CLI) are
+# installed even when NODE_ENV=production is set by the panel — they are
+# required to compile TypeScript below.
 log "Instalando dependências (npm install)"
-npm install
+npm install --include=dev
 ok "Dependências instaladas"
 
 # ── Generate Prisma client ────────────────────────────────────

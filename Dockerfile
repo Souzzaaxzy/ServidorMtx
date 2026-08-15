@@ -16,7 +16,9 @@ COPY package.json package-lock.json* ./
 COPY prisma ./prisma
 
 # Install ALL deps (dev included) so we can build + generate the Prisma client.
-RUN npm ci || npm install
+# --include=dev is explicit because NODE_ENV=production (set later/in panel)
+# would otherwise omit the devDeps (tsc, typescript) needed to compile.
+RUN npm ci --include=dev || npm install --include=dev
 
 # Generate the Prisma client (src/generated is gitignored, so it must be
 # produced inside the image). Use the locally pinned CLI, not `npx`.
