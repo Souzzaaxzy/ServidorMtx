@@ -8,6 +8,13 @@ coverage/
 .env.*
 !.env.example
 
+# SQLite database files (local persistent storage). The DB is created at
+# runtime by start.sh / prisma; it must NEVER be committed to git.
+data/*.db
+data/*.db-journal
+data/*.db-shm
+data/*.db-wal
+
 # Local upload storage (dev). Note: anchored to repo root so it does NOT
 # ignore the source module at src/modules/uploads/.
 /uploads/

@@ -1,5 +1,5 @@
 import { prisma } from '../config/prisma.js';
-import type { CoinReason, CoinTransactionType } from '../generated/index.js';
+import type { CoinReason, CoinTransactionType } from '../types/enums.js';
 
 // ── Matrix Coins ledger ────────────────────────────────────────
 // Coins are a virtual currency tracked as an append-only ledger. The
@@ -67,4 +67,4 @@ export const COIN_REWARDS = {
   POST_CREATED: 5,
 } as const;
 
-export { CoinReason, CoinTransactionType } from '../generated/index.js';
+export { CoinReason, CoinTransactionType } from '../types/enums.js';

@@ -2,7 +2,7 @@ import type { FastifyReply, FastifyRequest, FastifyInstance } from 'fastify';
 import { ApiError } from '../utils/errors.js';
 import { verifyAccessToken } from '../utils/auth.js';
 import { prisma } from '../config/prisma.js';
-import type { UserRole } from '../generated/index.js';
+import type { UserRole } from '../types/enums.js';
 
 declare module 'fastify' {
   interface FastifyInstance {
@@ -60,7 +60,9 @@ export function requireRole(...allowed: UserRole[]) {
       select: { role: true },
     });
     if (!user) throw ApiError.unauthorized();
-    const userRank = ROLE_RANK[user.role];
+    // role is stored as a plain string (SQLite has no enums); treat any
+    // unknown value as the lowest-privilege role (USER).
+    const userRank = ROLE_RANK[user.role as UserRole] ?? ROLE_RANK.USER;
     const minRequired = Math.min(...allowed.map((r) => ROLE_RANK[r]));
     if (userRank < minRequired) {
       throw ApiError.forbidden('Acesso restrito à equipe.');

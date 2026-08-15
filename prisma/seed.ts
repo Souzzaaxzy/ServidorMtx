@@ -162,16 +162,17 @@ async function main() {
     data: { userId: leonardo.id, badgeId: 'badge_founder' },
   }).catch(() => void 0);
 
-  // Public dynamic config defaults.
+  // Public dynamic config defaults. SQLite stores config values as JSON
+  // strings (the schema has no Json type), so serialize non-string values.
   await prisma.appConfig.upsert({
     where: { key: 'minAppVersion' },
-    update: { value: '1.0.0', public: true },
-    create: { key: 'minAppVersion', value: '1.0.0', public: true },
+    update: { value: JSON.stringify('1.0.0'), public: true },
+    create: { key: 'minAppVersion', value: JSON.stringify('1.0.0'), public: true },
   });
   await prisma.appConfig.upsert({
     where: { key: 'maintenance' },
-    update: { value: false, public: true },
-    create: { key: 'maintenance', value: false, public: true },
+    update: { value: JSON.stringify(false), public: true },
+    create: { key: 'maintenance', value: JSON.stringify(false), public: true },
   });
 
   console.log(`✅ Seeded ${LEVELS.length} levels, ${ITEMS.length} items, ${GAMES.length} games, ${users.length} users, ${posts.length} posts.`);

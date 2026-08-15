@@ -3,18 +3,19 @@ import { toPublicUser, type PublicUser } from '../../utils/dto.js';
 import type { SearchQuery } from './search.schema.js';
 
 export async function searchUsers(query: SearchQuery): Promise<PublicUser[]> {
-  const term = query.q.toLowerCase();
-  // ILIKE for case-insensitive search across name and username.
+  void query.q.toLowerCase();
+  // SQLite's LIKE is case-insensitive for ASCII by default, so `contains`
+  // (which compiles to LIKE) already matches name/username without needing
+  // an explicit case-insensitivity mode (which SQLite does not support).
   const users = await prisma.user.findMany({
     where: {
       OR: [
-        { name: { contains: query.q, mode: 'insensitive' } },
-        { username: { contains: query.q, mode: 'insensitive' } },
+        { name: { contains: query.q } },
+        { username: { contains: query.q } },
       ],
     },
     orderBy: { username: 'asc' },
     take: query.limit,
   });
-  void term;
   return users.map(toPublicUser);
 }

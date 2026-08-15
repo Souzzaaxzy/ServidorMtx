@@ -1,6 +1,6 @@
 import { prisma } from '../../config/prisma.js';
 import { ApiError } from '../../utils/errors.js';
-import type { ItemType } from '../../generated/index.js';
+import type { ItemType } from '../../types/enums.js';
 
 // ── Personalization Engine ─────────────────────────────────────
 // The APK renders generic item "types" (avatar_frame, profile_banner, …).
@@ -9,7 +9,7 @@ import type { ItemType } from '../../generated/index.js';
 
 export interface CatalogItem {
   id: string;
-  type: ItemType;
+  type: string;
   name: string;
   assetUrl: string;
   rarity: string;
@@ -36,7 +36,7 @@ export async function listCatalog(type?: ItemType): Promise<CatalogItem[]> {
 export interface UserInventoryEntry {
   itemId: string;
   name: string;
-  type: ItemType;
+  type: string;
   assetUrl: string;
   rarity: string;
   quantity: number;
@@ -71,7 +71,7 @@ export async function getInventory(userId: string): Promise<UserInventoryEntry[]
 }
 
 export interface EquippedSlot {
-  slot: ItemType;
+  slot: string;
   itemId: string;
   name: string;
   assetUrl: string;
@@ -123,4 +123,4 @@ export async function unequipSlot(userId: string, slot: ItemType): Promise<void>
   await prisma.equippedItem.deleteMany({ where: { userId, slot } });
 }
 
-export { ItemType } from '../../generated/index.js';
+export { ItemType } from '../../types/enums.js';

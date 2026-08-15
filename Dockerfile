@@ -1,6 +1,6 @@
 # ──────────────────────────────────────────────────────────────
 # MATRIX API — Dockerfile (production-ready, multi-stage)
-# Node 22 + Fastify + Prisma + PostgreSQL
+# Node 22 + Fastify + Prisma + SQLite
 # ──────────────────────────────────────────────────────────────
 
 # ── Stage 1: install deps + build ─────────────────────────────
@@ -62,7 +62,8 @@ COPY --from=builder /app/prisma ./prisma
 COPY --from=builder /app/tsconfig.json ./tsconfig.json
 
 # Local uploads directory (when STORAGE_ENDPOINT is empty).
-RUN mkdir -p /app/uploads
+# SQLite persistent storage directory (data/matrix.db lives here).
+RUN mkdir -p /app/uploads /app/data
 
 # Entrypoint runs prisma migrate deploy then starts the server.
 COPY docker-entrypoint.sh ./docker-entrypoint.sh

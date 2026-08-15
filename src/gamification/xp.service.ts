@@ -1,5 +1,5 @@
 import { prisma } from '../config/prisma.js';
-import type { XpReason } from '../generated/index.js';
+import type { XpReason } from '../types/enums.js';
 
 // ── XP ledger ──────────────────────────────────────────────────
 // XP is an append-only ledger. Every change is recorded as an
@@ -71,4 +71,4 @@ export const XP_REWARDS = {
   LIKE_RECEIVED: 1,
 } as const;
 
-export { XpReason } from '../generated/index.js';
+export { XpReason } from '../types/enums.js';

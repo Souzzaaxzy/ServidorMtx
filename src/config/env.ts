@@ -28,7 +28,11 @@ export const env = {
   isTest: process.env.NODE_ENV === 'test',
   port: int('PORT', Number.parseInt(portFallback, 10) || 3000),
   corsOrigin: (process.env.CORS_ORIGIN ?? '*').split(',').map((s) => s.trim()),
-  databaseUrl: required('DATABASE_URL', 'postgresql://matrix:matrix@localhost:5432/matrix?schema=public'),
+  // SQLite file (created at <project root>/data/matrix.db by start.sh).
+  // DATABASE_URL is optional in production; this default points at an
+  // ABSOLUTE path so the Prisma client (dev or compiled dist) and the CLI
+  // all open the same file regardless of how they resolve relative paths.
+  databaseUrl: required('DATABASE_URL', `file:${process.cwd()}/data/matrix.db`),
   jwt: {
     secret: required('JWT_SECRET', 'dev-insecure-secret-change-me'),
     accessExpiresIn: process.env.JWT_ACCESS_EXPIRES_IN ?? '15m',

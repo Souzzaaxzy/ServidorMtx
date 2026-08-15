@@ -7,21 +7,14 @@ import { prisma } from '../src/config/prisma.js';
 config({ path: '.env.test' });
 
 // ── Env ──────────────────────────────────────────────────────
-// Tests target a real PostgreSQL instance. A dedicated test database
-// is created/reset before the run so we never touch dev data.
-const TEST_DB = process.env.TEST_DATABASE_URL;
-const usingTestDb = Boolean(TEST_DB);
-
-// Point Prisma (both the CLI used in setup and the PrismaClient) at the
-// dedicated test database when configured. Without this the Prisma CLI would
-// fall back to DATABASE_URL from .env (the compose-internal "db" host).
-if (usingTestDb) {
-  process.env.DATABASE_URL = TEST_DB;
-} else {
-  // Fall back to the dev DATABASE_URL so `npm test` works locally without
-  // extra config; tests still truncate tables between cases.
-  process.env.DATABASE_URL ??= 'postgresql://matrix:matrix@localhost:5432/matrix?schema=public';
-}
+// Tests use a throwaway SQLite database file (data/test.db) so they never
+// touch the real data/matrix.db used in development/production. We use an
+// ABSOLUTE path so the Prisma client (src/generated, run by vitest) and the
+// CLI (migrate deploy) open the exact same file regardless of how each
+// resolves relative `file:` paths. The file is wiped before each run.
+const TEST_DB_URL =
+  process.env.DATABASE_URL ?? `file:${process.cwd()}/data/test.db`;
+process.env.DATABASE_URL = TEST_DB_URL;
 process.env.NODE_ENV = 'test';
 process.env.JWT_SECRET ??= 'test-secret-very-long-random-string-0123456789';
 process.env.JWT_ACCESS_EXPIRES_IN ??= '15m';
@@ -32,36 +25,62 @@ process.env.STORAGE_PUBLIC_BASE_URL ??= 'http://localhost:3000';
 process.env.MAX_UPLOAD_BYTES ??= '5242880';
 
 // ── Schema bootstrap ─────────────────────────────────────────
-// Ensure the test database schema exists. We use `prisma migrate deploy`
-// so the schema is created deterministically without prompting.
+// Apply the SQLite migration baseline to the test DB so the schema exists.
+// `migrate deploy` is non-destructive and idempotent; on a fresh file it
+// creates all tables, on an already-migrated file it is a no-op.
 beforeAll(async () => {
-  if (usingTestDb) {
-    try {
-      execSync('npx prisma migrate deploy', { stdio: 'inherit', env: process.env });
-    } catch {
-      // If migrations haven't been generated, push the schema directly.
-      execSync('npx prisma db push --skip-generate', { stdio: 'inherit', env: process.env });
-    }
+  try {
+    execSync('npx prisma migrate deploy', { stdio: 'inherit', env: process.env });
+  } catch {
+    // Fallback: push the schema directly if no migration history exists.
+    execSync('npx prisma db push --skip-generate', { stdio: 'inherit', env: process.env });
   }
   await prisma.$connect();
 });
 
-// ── Isolation: truncate all tables between tests ─────────────
+// ── Isolation: delete all rows between tests ─────────────────
+// SQLite has no TRUNCATE; we DELETE in dependency-safe (child-first) order.
+// PRAGMA foreign_keys is ON (Prisma enables it), so order matters.
+const TABLES = [
+  'game_results',
+  'game_sessions',
+  'games',
+  'music_votes',
+  'playlist_tracks',
+  'playlists',
+  'tracks',
+  'event_rewards',
+  'event_participants',
+  'events',
+  'equipped_items',
+  'user_items',
+  'items',
+  'user_badges',
+  'badges',
+  'user_achievements',
+  'achievements',
+  'coin_transactions',
+  'matrix_coins',
+  'xp_transactions',
+  'levels',
+  'call_participants',
+  'call_rooms',
+  'app_config',
+  'comments',
+  'likes',
+  'posts',
+  'sessions',
+  'users',
+];
+
 afterEach(async () => {
-  // Cascade truncates all rows in dependency-safe order.
-  await prisma.$executeRawUnsafe(
-    'TRUNCATE TABLE ' +
-      '"game_results", "game_sessions", "games", ' +
-      '"music_votes", "playlist_tracks", "playlists", "tracks", ' +
-      '"event_rewards", "event_participants", "events", ' +
-      '"equipped_items", "user_items", "items", ' +
-      '"user_badges", "badges", "user_achievements", "achievements", ' +
-      '"coin_transactions", "matrix_coins", "xp_transactions", "levels", ' +
-      '"call_participants", "call_rooms", ' +
-      '"app_config", ' +
-      '"comments", "likes", "posts", "sessions", "users" ' +
-      'RESTART IDENTITY CASCADE;',
-  );
+  // Disable FK checks during the bulk wipe so order is irrelevant, then
+  // re-enable. This is safe inside a transaction.
+  await prisma.$transaction([
+    prisma.$executeRawUnsafe('PRAGMA foreign_keys = OFF'),
+    ...TABLES.map((t) => prisma.$executeRawUnsafe(`DELETE FROM "${t}"`)),
+    prisma.$executeRawUnsafe('PRAGMA foreign_keys = ON'),
+  ]);
 });
 
 afterAll(async () => {

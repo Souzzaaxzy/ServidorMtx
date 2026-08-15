@@ -1,26 +1,27 @@
 #!/usr/bin/env bash
 # ──────────────────────────────────────────────────────────────
-# MATRIX API — one-shot bootstrap + start
+# MATRIX API — one-shot bootstrap + start (SQLite edition)
 #
-# `npm start` (the Pterodactyl startup command) runs this. It is the ONLY
-# command needed to bring the API online on a fresh host, and it stays fast
-# on restarts by skipping work that is already done.
+# `npm start` (the Pterodactyl/Bronxys startup command) runs this. It is the
+# ONLY command needed to bring the API online on a fresh host, and it stays
+# fast on restarts by skipping work that is already done.
 #
 #   1. diagnostics
 #   2. .env  — load if present (OPTIONAL; never required, never overwritten).
-#              In production (Pterodactyl) variables come from process.env.
+#              In production (Pterodactyl/Bronxys) variables come from process.env.
 #   3. deps  — npm install only if node_modules is missing/incomplete
-#   4. prisma — generate the client only if missing/stale
-#   5. db    — resolve DATABASE_URL (Docker compose OR external panel DB)
-#   6. validate — check required process.env (DATABASE_URL, JWT_SECRET, PORT)
-#   7. migrations — prisma migrate deploy (non-destructive, idempotent)
-#   8. build — compile TypeScript only if dist is missing/stale
-#   9. seed  — populate an empty DB only (never destroys data)
-#  10. start — exec node dist/src/app.js (becomes the container's main process)
+#   4. data  — create the persistent data/ dir (SQLite lives here)
+#   5. db    — resolve DATABASE_URL (defaults to the local SQLite file)
+#   6. prisma — generate the client only if missing/stale
+#   7. validate — check required process.env (JWT_SECRET, PORT); DB is optional
+#   8. migrations — prisma migrate deploy (creates the DB on first boot)
+#   9. build — compile TypeScript only if dist is missing/stale
+#  10. seed  — populate an empty DB only (never destroys data)
+#  11. start — exec node dist/src/app.js (becomes the container's main process)
 #
 # Every step is idempotent. No loops, no background processes, no --force,
-# no --legacy-peer-deps. The server never depends on .env or .env.example in
-# production — those are conveniences for local dev only.
+# no --legacy-peer-deps. No PostgreSQL, no psql, no external database.
+# The SQLite file at data/matrix.db is NEVER deleted or reset by this script.
 # ──────────────────────────────────────────────────────────────
 set -euo pipefail
 
@@ -40,11 +41,8 @@ SCHEMA="prisma/schema.prisma"
 GENERATED="src/generated"
 APP_ENTRY="dist/src/app.js"
 SEED_ENTRY="dist/prisma/seed.js"
-
-# Mask the password inside a connection URL: postgresql://user:PASS@host...
-mask_url() {
-  printf '%s' "$1" | sed -E 's#://([^:]+):[^@]+@#://\1:****@#'
-}
+DATA_DIR="data"
+DB_FILE="$DATA_DIR/matrix.db"
 
 # ══════════════════════════════════════════════════════════════
 # 1. DIAGNÓSTICO DE AMBIENTE
@@ -64,19 +62,21 @@ echo "  .env.example   : $([ -f .env.example ] && echo 'presente ✓' || echo 'a
 echo "  Prisma Client  : $([ -d "$GENERATED" ] && echo 'OK ✓' || echo 'ausente')"
 echo "  dist/          : $([ -f "$APP_ENTRY" ] && echo 'presente ✓' || echo 'ausente')"
 echo "  PORT           : ${PORT:-${SERVER_PORT:-<não configurada, usará 3000>}}"
-echo "  Database       : $([ -n "${DATABASE_URL:-}" ] && echo 'configurado ✓' || echo 'NÃO CONFIGURADO')"
+echo "  SQLite         : configurado ✓"
+echo "  Database       : $DB_FILE"
+echo "  Database file  : $([ -f "$DB_FILE" ] && echo 'presente ✓' || echo 'será criado na primeira inicialização')"
+echo "  JWT_SECRET     : $([ -n "${JWT_SECRET:-}" ] && echo 'configurado ✓' || echo 'NÃO CONFIGURADO')"
+echo "  NODE_ENV       : ${NODE_ENV:-<vazio>}"
 [ -f package.json ] || die "package.json ausente — não é a raiz do projeto."
 
 # ── 2. .env (OPTIONAL) ─────────────────────────────────────────
-# .env is a convenience for local development. In production (Pterodactyl)
-# the panel injects every variable through process.env, so .env is NOT
-# required. .env.example is documentation only and is never copied.
+# .env is a convenience for local development. In production (Pterodactyl/
+# Bronxys) the panel injects every variable through process.env, so .env is
+# NOT required. .env.example is documentation only and is never copied.
 #
 # If .env exists, load it — but NEVER overwrite variables already set in the
-# environment (the panel injects DATABASE_URL, JWT_SECRET, SERVER_PORT, etc.
-# as real env vars; a plain `set -a; . ./.env` would clobber them). dotenv
-# (used by Node at runtime) has the same no-override behaviour, so we mirror
-# it here for the shell-side steps (prisma, db probe).
+# environment (the panel injects JWT_SECRET, PORT, etc. as real env vars; a
+# plain `set -a; . ./.env` would clobber them).
 load_env_no_override() {
   local key val
   while IFS='=' read -r key val || [ -n "$key" ]; do
@@ -106,19 +106,9 @@ fi
 SERVER_PORT_VAL="${SERVER_PORT:-${PORT:-3000}}"
 export PORT="$SERVER_PORT_VAL"
 
-echo "  ── Variáveis de ambiente ──"
-echo "  NODE_ENV      : ${NODE_ENV:-<vazio>}"
-echo "  PORT          : ${PORT}"
-echo "  SERVER_PORT   : ${SERVER_PORT:-<vazio>}"
-echo "  DATABASE_URL  : $(mask_url "${DATABASE_URL:-<vazio>}")"
-echo "  DB_HOST       : ${DB_HOST:-${DATABASE_HOST:-<vazio>}}"
-echo "  DB_PORT       : ${DB_PORT:-<vazio>}"
-echo "  POSTGRES_USER : ${POSTGRES_USER:-<vazio>}"
-echo "  POSTGRES_DB   : ${POSTGRES_DB:-<vazio>}"
-echo "  JWT_SECRET    : $([ -n "${JWT_SECRET:-}" ] && echo 'definido ✓' || echo '<vazio>')"
-echo "  AI_PROVIDER   : ${AI_PROVIDER:-mock}"
-echo "  ── Banco esperado pelo Prisma ──"
-echo "  provider      : $(sed -n '/datasource/,/^}/p' "$SCHEMA" 2>/dev/null | grep -E '^\s*provider' || echo '?')"
+echo "  ── Resumo ──"
+echo "  Banco          : SQLite (local, sem PostgreSQL/psql)"
+echo "  Arquivo do DB  : $DB_FILE"
 echo "═══════════════════════════════════════════════════════════════"
 echo ""
 echo "═══════════════════════════════════════════════════════════════"
@@ -132,8 +122,6 @@ echo "════════════════════════�
 # skip to keep restarts fast.
 needs_install() {
   [ ! -d node_modules ] && return 0
-  # Markers whose presence implies the install finished cleanly, INCLUDING
-  # the devDeps required to compile TypeScript (tsc, typescript).
   for bin in node_modules/.bin/prisma node_modules/.bin/tsc; do
     [ -e "$bin" ] || return 0
   done
@@ -166,13 +154,33 @@ if ! node -e "require('argon2')" 2>/dev/null; then
 fi
 ok "argon2 carregado (hashing de senhas disponível)"
 
-# ── 4. Prisma client ──────────────────────────────────────────
+# ── 4. Data directory (persistent SQLite storage) ─────────────
+# Create data/ if it does not exist. NEVER delete or reset the DB file —
+# it holds all users, posts, comments, etc. and must survive restarts.
+mkdir -p "$DATA_DIR"
+ok "Diretório de dados pronto: $DATA_DIR/"
+if [ -f "$DB_FILE" ]; then
+  ok "Banco SQLite existente detectado: $DB_FILE (dados preservados)"
+else
+  info "Banco SQLite ausente — será criado na etapa de migrations"
+fi
+
+# ── 5. Database URL (SQLite, absolute path) ───────────────────
+# The schema uses a local SQLite file. DATABASE_URL is OPTIONAL: if the
+# panel does not set it, we default to an ABSOLUTE path to the local file.
+# Prisma resolves `file:` paths relative to the schema.prisma directory,
+# which differs between the CLI (prisma/), the dev client (src/generated)
+# and the compiled client (dist/src/generated) — an absolute path removes
+# all that ambiguity so every component opens the exact same file.
+export DATABASE_URL="${DATABASE_URL:-file:$(pwd)/$DB_FILE}"
+info "DATABASE_URL = $DATABASE_URL"
+
+# ── 6. Prisma client ──────────────────────────────────────────
 # Generate only when the client is missing OR older than the schema. Skip
 # otherwise to keep restarts fast.
 needs_prisma_generate() {
   [ ! -d "$GENERATED" ] && return 0
   [ ! -f "$GENERATED/index.js" ] && return 0
-  # Regenerate if the schema is newer than the generated client.
   [ "$SCHEMA" -nt "$GENERATED/index.js" ] && return 0
   return 1
 }
@@ -184,95 +192,14 @@ else
   ok "Cliente Prisma já gerado e atualizado (generate ignorado)"
 fi
 
-# ── 5. Database URL ───────────────────────────────────────────
-# Two modes:
-#   A) Docker available on the host: bring up the compose `db` service.
-#   B) No Docker (Pterodactyl container): use the external PostgreSQL the
-#      panel provides via DATABASE_URL (or DB_* component vars).
-#
-# NOTE: this step never INVENTS a database URL. If nothing is configured we
-# leave DATABASE_URL empty and let the validation step (6) report the missing
-# configuration clearly. The server never starts against a fake localhost DB.
-DB_PORT="${DB_PORT:-5432}"
-DB_USER="${POSTGRES_USER:-matrix}"
-DB_NAME="${POSTGRES_DB:-matrix}"
-
-if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
-  # Docker mode (local dev): only start the compose DB if a DATABASE_URL was
-  # already provided OR can be assembled from POSTGRES_* vars. If the panel
-  # set DATABASE_URL to an external host we honour it as-is.
-  DB_URL="${DATABASE_URL:-}"
-  if [ -z "$DB_URL" ]; then
-    log "Subindo PostgreSQL via Docker Compose (modo dev)"
-    docker compose up -d db
-    log "Aguardando o banco aceitar conexões em 127.0.0.1:${DB_PORT}"
-    for i in $(seq 1 40); do
-      if docker run --rm --network host postgres:17-alpine \
-          pg_isready -h 127.0.0.1 -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" >/dev/null 2>&1; then
-        ok "PostgreSQL pronto (porta $DB_PORT)"
-        break
-      fi
-      sleep 1
-    done
-    DB_URL="postgresql://${DB_USER}:${POSTGRES_PASSWORD:-matrix}@127.0.0.1:${DB_PORT}/${DB_NAME}?schema=public"
-  fi
-  # Normalise the compose-internal "db"/"localhost" host to host-reachable 127.0.0.1.
-  DB_URL="$(printf '%s' "$DB_URL" | sed -E 's/@db:/@127.0.0.1:/; s/@localhost:/@127.0.0.1:/')"
-else
-  # No Docker (Pterodactyl, etc.): use DATABASE_URL from the panel, or build
-  # it from DB_* component vars if the panel provides those instead.
-  if [ -z "${DATABASE_URL:-}" ] && [ -n "${DB_HOST:-${DATABASE_HOST:-}}" ]; then
-    DB_HOSTVAL="${DB_HOST:-${DATABASE_HOST}}"
-    DB_URL="postgresql://${DB_USER}:${POSTGRES_PASSWORD:-${DB_PASSWORD:-matrix}}@${DB_HOSTVAL}:${DB_PORT}/${DB_NAME}?schema=public"
-  else
-    DB_URL="${DATABASE_URL:-}"
-  fi
-  if [ -n "$DB_URL" ]; then
-    ok "Usando banco externo (modo sem Docker)"
-  fi
-fi
-export DATABASE_URL="$DB_URL"
-
-# Detect a MySQL URL — the Prisma schema expects PostgreSQL, so a MySQL DB
-# from the panel means the app cannot run. (Only checked when a URL exists;
-# a missing URL is reported by the validation step below.)
-if [ -n "$DB_URL" ]; then
-  DB_SCHEME="$(printf '%s' "$DB_URL" | sed -E 's#^([a-z]+)://.*#\1#')"
-  if [ "$DB_SCHEME" = "mysql" ] || [ "$DB_SCHEME" = "mariadb" ]; then
-    err "=============================================================="
-    err "  BANCO MySQL DETECTADO — o MATRIX API precisa de PostgreSQL!"
-    err "  Crie um banco PostgreSQL no painel (ou use um Postgres externo)"
-    err "  e atualize DATABASE_URL."
-    err "  DATABASE_URL atual: $(mask_url "$DB_URL")"
-    err "=============================================================="
-    die "Banco incompatível (MySQL)."
-  fi
-
-  # Probe TCP reachability (bash /dev/tcp works without any extra tooling).
-  DB_PROBE_HOST="$(printf '%s' "$DB_URL" | sed -nE 's#.*@([^:/]+).*#\1#p')"
-  DB_PROBE_PORT="$(printf '%s' "$DB_URL" | sed -nE 's#.*@[^:/]+:([0-9]+).*#\1#p')"
-  DB_PROBE_PORT="${DB_PROBE_PORT:-5432}"
-  if [ -n "${DB_PROBE_HOST:-}" ] && [ "$DB_PROBE_HOST" != "$DB_URL" ]; then
-    log "Testando conexão com ${DB_PROBE_HOST}:${DB_PROBE_PORT}..."
-    if (exec 3<>/dev/tcp/"$DB_PROBE_HOST"/"$DB_PROBE_PORT") 2>/dev/null; then
-      ok "Porta ${DB_PROBE_HOST}:${DB_PROBE_PORT} acessível (TCP conectou)"
-      exec 3>&- 2>/dev/null || true
-    else
-      warn "Não foi possível conectar a ${DB_PROBE_HOST}:${DB_PROBE_PORT} (TCP)."
-      warn "Verifique no painel se o banco está ativo e host/porta corretos."
-    fi
-  fi
-fi
-
-# ── 6. Validação de variáveis obrigatórias ─────────────────────
+# ── 7. Validação de variáveis obrigatórias ─────────────────────
 # Validate the variables the server truly needs to run, reading them from
 # process.env (the panel source). Secrets are NEVER printed — only
-# "configurado"/"ausente". A missing DATABASE_URL or JWT_SECRET is fatal: we
-# refuse to start rather than silently fall back to an invented/dev value.
+# "configurado"/"ausente". DATABASE_URL is NOT required (defaults to the
+# local SQLite file); JWT_SECRET and PORT are the only hard requirements.
 log "Validando variáveis de ambiente obrigatórias"
 VALIDATION_ERRORS=0
 validate_present() {
-  # $1 = var name, $2 = current value (pass empty to test absence)
   local name="$1" val="$2"
   if [ -n "$val" ]; then
     ok "$name configurado"
@@ -281,16 +208,22 @@ validate_present() {
     VALIDATION_ERRORS=$((VALIDATION_ERRORS + 1))
   fi
 }
-validate_present "NODE_ENV"    "${NODE_ENV:-}"
 validate_present "PORT"        "${PORT:-}"
-validate_present "DATABASE_URL" "${DATABASE_URL:-}"
 validate_present "JWT_SECRET"  "${JWT_SECRET:-}"
+# NODE_ENV is recommended but not fatal (defaults handled by the app).
+if [ -n "${NODE_ENV:-}" ]; then
+  ok "NODE_ENV configurado (${NODE_ENV})"
+else
+  info "NODE_ENV ausente (o servidor usará o padrão)"
+fi
 # CORS_ORIGIN is optional (defaults to '*' in the app) — report only.
 if [ -n "${CORS_ORIGIN:-}" ]; then
   ok "CORS_ORIGIN configurado"
 else
   info "CORS_ORIGIN ausente (o servidor usará o padrão '*')"
 fi
+# DATABASE_URL is optional (defaults to the local SQLite file).
+ok "DATABASE_URL configurado (SQLite: $DATABASE_URL)"
 # AI (Akame) is optional — mock provider is used when AI_API_KEY is empty.
 if [ -n "${AI_API_KEY:-}" ]; then
   ok "AI_API_KEY configurado (provedor real: ${AI_PROVIDER:-mock})"
@@ -302,42 +235,46 @@ if [ "$VALIDATION_ERRORS" -gt 0 ]; then
   err "=============================================================="
   err "  Configuração incompleta — o MATRIX API não pode iniciar."
   err "  Variáveis obrigatórias ausentes. Configure no painel da"
-  err "  Pterodactyl (Server → Variables) as seguintes:"
-  err "    DATABASE_URL  -> PostgreSQL (ex: postgresql://user:senha@host:5432/matrix?schema=public)"
+  err "  Pterodactyl/Bronxys (Server → Variables) as seguintes:"
   err "    JWT_SECRET    -> segredo longo e aleatório para assinar tokens"
   err "    PORT          -> porta alocada pelo painel (ex: 4299)"
-  err "    NODE_ENV      -> production"
-  err "  Opcional: CORS_ORIGIN, AI_API_KEY/AI_PROVIDER (Akame)."
+  err "  Opcional: NODE_ENV=production, CORS_ORIGIN, AI_API_KEY/AI_PROVIDER."
+  err "  O banco é SQLite local (data/matrix.db) — NÃO precisa de DATABASE_URL."
   err "=============================================================="
   die "Configuração incompleta — corrija as variáveis no painel e reinicie."
 fi
 ok "Todas as variáveis obrigatórias estão configuradas"
 
-# ── 7. Migrations ─────────────────────────────────────────────
+# ── 8. Migrations (creates the SQLite DB on first boot) ───────
 # `prisma migrate deploy` is non-destructive: it only applies pending
-# migrations and never resets/deletes data. Running it on every boot
-# guarantees the schema is in sync; when nothing is pending it is a fast
-# no-op (a single connection + check).
+# migrations and NEVER resets/deletes data. On a fresh host it creates
+# data/matrix.db with the full schema; on subsequent boots it is a fast
+# no-op. The DB file is never deleted or reset by this step.
 log "Aplicando migrations (prisma migrate deploy — não destrutivo)"
-for i in $(seq 1 10); do
-  if $PRISMA migrate deploy; then
-    break
-  fi
-  warn "Banco ainda não aceita conexões, tentando novamente ($i/10)..."
-  sleep 2
-done
+$PRISMA migrate deploy
 ok "Migrations aplicadas"
 
-# ── 8. Build ──────────────────────────────────────────────────
+# SQLite health check: confirm Prisma can actually open the DB. The client
+# reads process.env.DATABASE_URL (same as the server), so we do NOT override
+# the URL — this guarantees the health check opens the exact same file the
+# server will use.
+if ! node -e "
+  const { PrismaClient } = require('./src/generated');
+  const p = new PrismaClient();
+  p.\$queryRaw\`SELECT 1 AS ok\`.then(() => { process.stdout.write('[OK] Banco SQLite acessível\n'); return p.\$disconnect(); }).catch((e) => { process.stderr.write('[ERROR] Não foi possível abrir o banco SQLite: ' + e.message + '\n'); process.exit(1); });
+" 2>&1; then
+  die "Banco SQLite inacessível — verifique permissões em $DATA_DIR/"
+fi
+ok "Banco SQLite acessível (health check OK)"
+
+# ── 9. Build ──────────────────────────────────────────────────
 # Compile TypeScript only when dist is missing OR any source file is newer
 # than the compiled entry. Skips the (slow) tsc step on restarts.
 needs_build() {
   [ ! -f "$APP_ENTRY" ] && return 0
-  # Any .ts under src/ newer than the entry → rebuild.
   while IFS= read -r -d '' src; do
     [ "$src" -nt "$APP_ENTRY" ] && return 0
   done < <(find src -type f -name '*.ts' -not -path 'src/generated/*' -print0 2>/dev/null)
-  # Schema change can require a regenerated client copy in dist.
   [ "$SCHEMA" -nt "$APP_ENTRY" ] && return 0
   return 1
 }
@@ -350,7 +287,7 @@ else
 fi
 [ -f "$APP_ENTRY" ] || die "Entrypoint $APP_ENTRY não encontrado após build."
 
-# ── 9. Seed (only if empty) ───────────────────────────────────
+# ── 10. Seed (only if empty) ──────────────────────────────────
 # Run the COMPILED seed with plain `node` — no tsx/esbuild needed at runtime.
 # seed.js skips automatically when users already exist, so this never
 # overwrites or destroys data.
@@ -362,10 +299,11 @@ else
   warn "Seed compilado ($SEED_ENTRY) ausente — pulando seed."
 fi
 
-# ── 10. Start server ───────────────────────────────────────────
+# ── 11. Start server ──────────────────────────────────────────
 # `exec` replaces the shell with the Node process so it becomes PID 1 (the
 # container's main process) and receives signals for graceful shutdown.
 info "Entrypoint: node $APP_ENTRY"
 info "Host: 0.0.0.0  |  Porta: ${PORT}"
+info "Banco: SQLite ($DB_FILE)"
 ok "Iniciando servidor MATRIX API"
 exec node "$APP_ENTRY"

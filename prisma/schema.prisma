@@ -18,73 +18,18 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider = "sqlite"
+  // SQLite file lives at <project root>/data/matrix.db (see scripts/start.sh,
+  // which creates data/ on boot). DATABASE_URL is optional in production: if
+  // the panel does not set it, the app/start.sh default to this file path.
+  // Tests override DATABASE_URL to point at a throwaway file (see .env.test).
+  url = env("DATABASE_URL")
 }
 
-enum UserRole {
-  USER
-  MODERATOR
-  ADMIN
-  OWNER
-}
-
-enum ItemType {
-  AVATAR_FRAME
-  PROFILE_BANNER
-  BADGE
-  PROFILE_EFFECT
-  THEME_ACCCENT
-}
-
-enum ItemRarity {
-  COMMON
-  UNCOMMON
-  RARE
-  EPIC
-  LEGENDARY
-}
-
-enum XpReason {
-  POST_CREATED
-  COMMENT_CREATED
-  LIKE_RECEIVED
-  ACHIEVEMENT
-  EVENT_REWARD
-  GAME_REWARD
-  ADMIN_GRANT
-}
-
-enum CoinReason {
-  POST_CREATED
-  ACHIEVEMENT
-  EVENT_REWARD
-  GAME_REWARD
-  ADMIN_GRANT
-  ADMIN_REMOVE
-  PURCHASE
-  REWARD
-}
-
-enum CoinTransactionType {
-  EARN
-  SPEND
-  ADMIN_GRANT
-  ADMIN_REMOVE
-  REWARD
-}
-
-enum EventStatus {
-  DRAFT
-  ACTIVE
-  ENDED
-  CANCELLED
-}
-
-enum MusicVoteDirection {
-  UP
-  DOWN
-}
+// NOTE: Prisma's SQLite connector does not support `enum` types, so these
+// are stored as plain `String` columns. The allowed values are mirrored as
+// TypeScript const enums in src/types/enums.ts and validated at the app
+// layer. Defaults below keep the same value names the codebase already uses.
 
 model User {
   id                String    @id @default(cuid())
@@ -92,7 +37,7 @@ model User {
   username          String    @unique
   passwordHash      String
   recoveryCodeHash  String
-  role              UserRole  @default(USER)
+  role              String    @default("USER")
   avatarUrl         String?
   bio               String    @default("")
   createdAt         DateTime  @default(now())
@@ -189,7 +134,7 @@ model XpTransaction {
   id        String   @id @default(cuid())
   userId    String
   amount    Int
-  reason    XpReason
+  reason    String
   source    String
   createdAt DateTime @default(now())
 
@@ -227,8 +172,8 @@ model CoinTransaction {
   id        String              @id @default(cuid())
   userId    String
   amount    Int
-  type      CoinTransactionType
-  reason    CoinReason
+  type      String
+  reason    String
   createdAt DateTime            @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -274,7 +219,7 @@ model Badge {
   name        String
   description String
   iconUrl     String?
-  rarity      ItemRarity @default(COMMON)
+  rarity      String   @default("COMMON")
   active      Boolean  @default(true)
   createdAt   DateTime @default(now())
 
@@ -303,10 +248,10 @@ model UserBadge {
 
 model Item {
   id         String    @id
-  type       ItemType
+  type       String
   name       String
   assetUrl   String
-  rarity     ItemRarity @default(COMMON)
+  rarity     String    @default("COMMON")
   price      Int       @default(0)
   active     Boolean   @default(true)
   createdAt  DateTime  @default(now())
@@ -340,7 +285,7 @@ model EquippedItem {
   id        String   @id @default(cuid())
   userId    String
   itemId    String
-  slot      ItemType
+  slot      String
   equippedAt DateTime @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -357,7 +302,7 @@ model Event {
   id          String      @id @default(cuid())
   title       String
   description String      @default("")
-  status      EventStatus @default(DRAFT)
+  status      String    @default("DRAFT")
   startsAt    DateTime
   endsAt      DateTime?
   createdAt   DateTime    @default(now())
@@ -455,7 +400,7 @@ model MusicVote {
   id        String           @id @default(cuid())
   userId    String
   trackId   String
-  direction MusicVoteDirection
+  direction String
   createdAt DateTime         @default(now())
 
   user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -488,7 +433,7 @@ model GameSession {
   userId    String
   gameId     String
   score      Int      @default(0)
-  metadata   Json?
+  metadata   String?
   createdAt  DateTime @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -545,7 +490,7 @@ model CallParticipant {
 
 model AppConfig {
   key       String   @id
-  value     Json
+  value     String  @default("{}")
   public    Boolean  @default(false)
   updatedAt DateTime @updatedAt
   createdAt DateTime @default(now())
