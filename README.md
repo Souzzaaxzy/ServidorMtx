@@ -144,14 +144,36 @@ O egg faz tudo automaticamente:
 
 Se preferir usar um egg Node.js genérico já existente:
 
-- **Install script**: `bash -c 'git clone https://github.com/Souzzaaxzy/ServidorMtx.git . && npm install --legacy-peer-deps && ./node_modules/.bin/prisma generate && npm run build'`
-- **Startup command**: `npm start`
+- **Startup command** (clona o repo se o container estiver vazio, depois sobe):
+  ```
+  bash -c 'if [ ! -f package.json ]; then git clone --depth 1 https://github.com/Souzzaaxzy/ServidorMtx.git /tmp/mx && cp -a /tmp/mx/. . && rm -rf /tmp/mx; fi && npm start'
+  ```
+  > O `npm start` sozinho falha com "no such file package.json" quando o
+  > container está vazio. O one-liner acima resolve isso clonando antes.
+- **Install script** (opcional, acelera o primeiro start):
+  ```
+  git clone https://github.com/Souzzaaxzy/ServidorMtx.git . && npm install --legacy-peer-deps && ./node_modules/.bin/prisma generate && npm run build
+  ```
 - **Variáveis**: `DATABASE_URL` (obrigatória), `JWT_SECRET`, `SERVER_PORT`
   (automática do painel), `NODE_ENV=production`.
 
 > Importante: no Pterodactyl **não há Docker dentro do container**, então o
 > Postgres deve ser externo (criado pelo painel). O `npm start` detecta a
 > ausência do Docker e usa o banco via `DATABASE_URL` automaticamente.
+
+### Lendo o diagnóstico no console
+
+Ao iniciar, o `npm start` imprime um bloco de diagnóstico no console do
+painel (visível na aba "Console"). Ele mostra: versões do Node/npm/git,
+se o `package.json` existe, todas as variáveis de ambiente (senhas
+mascaradas), o tipo de banco esperado pelo Prisma, e um teste de
+conectividade TCP com o banco. Se algo falhar, esse bloco diz exatamente o
+que está faltando — por exemplo, se o painel forneceu um banco MySQL em vez
+de PostgreSQL, aparece:
+
+```
+⚠ BANCO MySQL DETECTADO — o MATRIX API precisa de PostgreSQL!
+```
 
 ## Testes
 
