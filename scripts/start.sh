@@ -103,7 +103,7 @@ diag_vars
 # ── 2. Dependencies ──────────────────────────────────────────
 if [ ! -d node_modules ] || [ ! -f node_modules/.bin/prisma ]; then
   log "Instalando dependências (npm install)"
-  npm install --legacy-peer-deps
+  npm install
 fi
 ok "Dependências instaladas"
 

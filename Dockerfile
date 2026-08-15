@@ -16,7 +16,7 @@ COPY package.json package-lock.json* ./
 COPY prisma ./prisma
 
 # Install ALL deps (dev included) so we can build + generate the Prisma client.
-RUN npm ci --legacy-peer-deps || npm install --legacy-peer-deps
+RUN npm ci || npm install
 
 # Generate the Prisma client (src/generated is gitignored, so it must be
 # produced inside the image). Use the locally pinned CLI, not `npx`.
@@ -43,7 +43,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends openssl ca-cert
 # with the current package.json before installing.
 COPY package.json package-lock.json* ./
 COPY prisma ./prisma
-RUN npm install --legacy-peer-deps --omit=dev
+RUN npm install --omit=dev
 
 # Copy compiled output + generated Prisma client from the builder stage.
 # tsc emits to dist/src/ (rootDir="." includes prisma/), so the compiled

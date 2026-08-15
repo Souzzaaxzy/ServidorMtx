@@ -46,7 +46,7 @@
     "tsx": "^4.19.2"
   },
   "devDependencies": {
-    "@eslint/js": "^10.0.1",
+    "@eslint/js": "^9.17.0",
     "@types/jsonwebtoken": "^9.0.7",
     "@types/ms": "^2.1.0",
     "@types/node": "^22.10.2",

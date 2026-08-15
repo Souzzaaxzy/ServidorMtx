@@ -39,7 +39,7 @@ fi
 
 # ── Install dependencies ──────────────────────────────────────
 log "Instalando dependências (npm install)"
-npm install --legacy-peer-deps
+npm install
 ok "Dependências instaladas"
 
 # ── Generate Prisma client ────────────────────────────────────
