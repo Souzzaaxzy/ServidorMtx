@@ -183,6 +183,25 @@ Pterodactyl/Bronxys (Server → Variables)
 Verifique a saúde da API em `GET /health` (responde `200` com o status do
 banco).
 
+### URL pública da API (conexão com o MatrixApp)
+
+A URL pública **não é criada pelo código** — ela vem da infraestrutura do
+painel. O servidor escuta em `0.0.0.0` na porta alocada (`PORT`/
+`SERVER_PORT`) e o painel expõe essa porta no IP/host público do node.
+
+1. No painel, abra a página do servidor e copie o endereço da
+   **alocação** (network/allocation) no formato `IP-OU-HOST:PORTA`.
+2. A URL da API é `http://IP-OU-HOST:PORTA` (sem barra final). Use
+   **HTTPS somente** se o painel oferecer um domínio/subdomínio com SSL
+   apontando para essa alocação — nunca coloque `https://` na frente de um
+   IP+porta sem SSL válido.
+3. Defina `PUBLIC_API_URL` (Server → Variables) com esse valor — o banner
+   de startup passa a imprimir a URL e o link do health check.
+4. Configure o **mesmo valor** no MatrixApp (`API_BASE_URL`) e valide com
+   `GET <URL>/health` pelo navegador do celular.
+
+Detalhes completos em [CONEXAO_APP.md](CONEXAO_APP.md).
+
 ## Testes
 
 ```bash

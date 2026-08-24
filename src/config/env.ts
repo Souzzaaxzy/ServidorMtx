@@ -60,6 +60,14 @@ export const env = {
   isDev: !isProd,
   isTest,
   port: int('PORT', Number.parseInt(portFallback, 10) || 3000),
+  // PUBLIC_API_URL — endereço público REAL da API (o que o APK usa).
+  // A Pterodactyl/Bronxys NÃO injeta um hostname público: o endereço é o
+  // IP/host público do node + a porta alocada (visível na página do servidor
+  // no painel), ou um subdomínio/domínio configurado no próprio painel.
+  // Esta variável é informativa (banner/diagnóstico) — ela NÃO muda o bind
+  // do servidor (sempre 0.0.0.0:PORT). Nunca invente o valor: copie o
+  // endereço exibido no painel.
+  publicApiUrl: (process.env.PUBLIC_API_URL ?? '').replace(/\/+$/, ''),
   corsOrigin: (process.env.CORS_ORIGIN ?? '*').split(',').map((s) => s.trim()),
   // SQLite file (created at <project root>/data/matrix.db by start.sh).
   // DATABASE_URL is optional in production; this default points at an

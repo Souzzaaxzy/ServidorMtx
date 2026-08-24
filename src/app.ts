@@ -178,12 +178,63 @@ async function start() {
     // container; the port comes from the environment (PORT / SERVER_PORT).
     await app.listen({ port: env.port, host: '0.0.0.0' });
     console.log('[MATRIX] API iniciada com sucesso.');
+    await logPublicUrl();
   } catch (err) {
     logger.error(
       { err: err instanceof Error ? err.message : String(err) },
       'server failed to start',
     );
     process.exit(1);
+  }
+}
+
+// Best-effort public IP detection. The process inside the container does
+// NOT know the node's public address — on most Pterodactyl nodes the egress
+// IP matches the allocation IP shown on the panel, but nodes behind NAT can
+// differ. That's why the detected URL is always printed with a "confirm on
+// the panel" note, and PUBLIC_API_URL (panel variable) always wins.
+async function detectPublicIp(): Promise<string | null> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 5000);
+  try {
+    const res = await fetch('https://api.ipify.org', {
+      signal: controller.signal,
+    });
+    if (!res.ok) return null;
+    const ip = (await res.text()).trim();
+    return /^\d{1,3}(\.\d{1,3}){3}$/.test(ip) ? ip : null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+// Prints the `URL:` line the user copies into the MatrixApp configuration.
+// Priority: PUBLIC_API_URL (panel) → auto-detected egress IP:port → panel
+// instructions. Never invents a hostname.
+async function logPublicUrl(): Promise<void> {
+  if (env.publicApiUrl) {
+    console.log(`[MATRIX] URL: ${env.publicApiUrl}`);
+    console.log('[MATRIX] ↑ Use esta URL no MatrixApp (API_BASE_URL).');
+    console.log(`[MATRIX] Health check: ${env.publicApiUrl}/health`);
+    return;
+  }
+  const ip = await detectPublicIp();
+  if (ip) {
+    console.log(`[MATRIX] URL: http://${ip}:${env.port}`);
+    console.log(
+      '[MATRIX] ↑ URL detectada automaticamente (IP público + porta alocada).' +
+        ' Confirme no painel (página do servidor → alocação) que este é o' +
+        ' mesmo IP:PORTA antes de usar no MatrixApp (API_BASE_URL).',
+    );
+    console.log(`[MATRIX] Health check: http://${ip}:${env.port}/health`);
+  } else {
+    console.log('[MATRIX] URL: não foi possível detectar o IP público.');
+    console.log(
+      '[MATRIX] Copie o endereço IP:PORTA da alocação na página do servidor' +
+        ' no painel — a URL da API é http://IP:PORTA (ex.: http://123.45.67.89:4316).',
+    );
   }
 }
 
