@@ -56,4 +56,5 @@ npm run build
 ok "Build concluído"
 
 ok "Instalação do MATRIX API concluída!"
-ok "Configure DATABASE_URL e JWT_SECRET nas variáveis do servidor no painel."
+ok "Configure apenas JWT_SECRET nas variáveis do servidor no painel."
+ok "A porta é obtida automaticamente do painel e o banco é SQLite local (data/matrix.db) — DATABASE_URL não é necessária."

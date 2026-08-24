@@ -16,16 +16,35 @@ function int(name: string, fallback: number): number {
 }
 
 const isProd = process.env.NODE_ENV === 'production';
+const isTest = process.env.NODE_ENV === 'test';
 
-// Pterodactyl exposes the allocated port as SERVER_PORT; prefer PORT when set
-// (our own convention) but fall back to SERVER_PORT so the panel works out of
-// the box without extra config.
+// Port resolution: PORT (absolute priority, injected by the panel or set
+// manually) → SERVER_PORT (Pterodactyl's standard allocation variable) →
+// 3000 as a LAST RESORT for local development only. The port is NEVER
+// hardcoded and never needs to be typed by the user in production.
 const portFallback = process.env.PORT ?? process.env.SERVER_PORT ?? '3000';
+
+// JWT_SECRET is the only truly required variable (it signs auth tokens).
+// In production there is NO fallback: a missing secret must fail fast with
+// a clear message. A fixed or auto-generated secret is never used — a fixed
+// one would be insecure and a generated one would invalidate tokens on
+// every restart. Dev/test keep a convenience fallback so `npm run dev` and
+// `npm test` work out of the box.
+function jwtSecret(): string {
+  const value = process.env.JWT_SECRET;
+  if (value && value !== '') return value;
+  if (isProd) {
+    throw new Error(
+      'JWT_SECRET não configurado. Configure esta variável no painel da Pterodactyl/Bronxys.',
+    );
+  }
+  return 'dev-insecure-secret-change-me';
+}
 
 export const env = {
   isProd,
   isDev: !isProd,
-  isTest: process.env.NODE_ENV === 'test',
+  isTest,
   port: int('PORT', Number.parseInt(portFallback, 10) || 3000),
   corsOrigin: (process.env.CORS_ORIGIN ?? '*').split(',').map((s) => s.trim()),
   // SQLite file (created at <project root>/data/matrix.db by start.sh).
@@ -34,7 +53,7 @@ export const env = {
   // all open the same file regardless of how they resolve relative paths.
   databaseUrl: required('DATABASE_URL', `file:${process.cwd()}/data/matrix.db`),
   jwt: {
-    secret: required('JWT_SECRET', 'dev-insecure-secret-change-me'),
+    secret: jwtSecret(),
     accessExpiresIn: process.env.JWT_ACCESS_EXPIRES_IN ?? '15m',
     refreshExpiresIn: process.env.JWT_REFRESH_EXPIRES_IN ?? '30d',
   },

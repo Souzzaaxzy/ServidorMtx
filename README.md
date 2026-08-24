@@ -1,11 +1,11 @@
 # ServidorMtx — MATRIX Backend API
 
-Backend do [MATRIX 💤](https://github.com/Souzzaaxzy/MatrixApp) — Node.js + Fastify + Prisma + PostgreSQL.
+Backend do [MATRIX 💤](https://github.com/Souzzaaxzy/MatrixApp) — Node.js + Fastify + Prisma + SQLite.
 
 ## Stack
 - **Node 22** + TypeScript (ESM)
 - **Fastify** (HTTP API, todas as rotas em `/api`)
-- **Prisma 5** + **PostgreSQL 17**
+- **Prisma 5** + **SQLite** (arquivo local em `data/matrix.db` — sem banco externo)
 - **Argon2id** para senhas, JWT para sessões
 
 ## Rodar em container (recomendado)
@@ -18,12 +18,12 @@ cd ServidorMtx
 
 # 1. configurar ambiente
 cp .env.example .env
-# edite .env: troque JWT_SECRET e POSTGRES_PASSWORD
+# edite .env: troque JWT_SECRET
 
-# 2. subir (build + Postgres + migrations automáticas)
+# 2. subir (build + SQLite + migrations automáticas)
 docker compose up -d --build
 
-# 3. popular o banco (uma vez)
+# 3. popular o banco (uma vez — opcional; apenas se quiser dados de exemplo)
 docker compose exec api npx tsx prisma/seed.ts
 ```
 
@@ -38,16 +38,18 @@ curl http://localhost:3000/api/config
 
 | Variável | Default | Descrição |
 |----------|---------|-----------|
-| `POSTGRES_USER` | `matrix` | Usuário do banco |
-| `POSTGRES_PASSWORD` | `matrix` | **Trocar em produção** |
-| `POSTGRES_DB` | `matrix` | Nome do banco |
-| `DATABASE_URL` | `postgresql://matrix:matrix@db:5432/matrix` | Connection string (host `db` no compose) |
-| `JWT_SECRET` | `change-me…` | **Trocar por string aleatória longa** |
+| `JWT_SECRET` | — | **OBRIGATÓRIA. Trocar por string aleatória longa** |
+| `PORT` / `SERVER_PORT` | `3000` | Porta do servidor. **Automática na Pterodactyl** — não configurar |
+| `NODE_ENV` | `production` | Ambiente (opcional) |
 | `CORS_ORIGIN` | `*` | Origens permitidas (liste explicitamente em prod) |
 | `AI_API_KEY` | vazio | Chave do provedor de IA (Akame). Vazio = mock |
 | `AI_PROVIDER` | `mock` | `mock` \| `openai` \| `anthropic` |
-| `API_PORT` | `3000` | Porta exposta no host |
+| `API_PORT` | `3000` | Porta exposta no host (apenas docker-compose) |
 | `STORAGE_ENDPOINT` | vazio | S3/R2/MinIO. Vazio = filesystem local |
+
+> O banco é **SQLite local** (`data/matrix.db`) — **não existe** `DATABASE_URL`
+> obrigatória nem qualquer banco externo. A pasta `data/` e o arquivo são
+> criados automaticamente na primeira inicialização.
 
 ## Endpoints principais
 
@@ -70,8 +72,7 @@ curl http://localhost:3000/api/config
 
 ## Rodar no host com `npm start` (tudo automático)
 
-Requisitos no host: **Node 20+**, **Docker** (para o Postgres; se já tiver um
-Postgres local, o Docker é opcional).
+Requisitos no host: **Node 20+** apenas. Sem Docker, sem PostgreSQL.
 
 Um único comando provisiona **tudo** e sobe o servidor:
 
@@ -83,33 +84,29 @@ npm start
 
 O `npm start` executa `scripts/start.sh`, que faz automaticamente:
 
-1. cria `.env` a partir do `.env.example` (se ainda não existir)
-2. instala as dependências (`npm install`)
-3. sobe um PostgreSQL em container via Docker Compose (se o Docker estiver disponível)
-4. gera o cliente Prisma
-5. aplica as migrations
-6. compila o TypeScript
-7. popula o banco (seed) — **só se o banco estiver vazio** (nunca apaga dados)
-8. inicia o servidor compilado (`node dist/src/app.js`)
+1. carrega `.env` **se existir** (opcional — nunca sobrescreve variáveis do ambiente)
+2. instala as dependências (`npm install`, somente se necessário)
+3. cria o diretório `data/` (armazenamento persistente do SQLite)
+4. gera o cliente Prisma (somente se ausente/desatualizado)
+5. valida o `JWT_SECRET` (única variável obrigatória)
+6. aplica as migrations no SQLite (`data/matrix.db`, criado na 1ª vez)
+7. compila o TypeScript (somente se ausente/desatualizado)
+8. popula o banco (seed) — **só se o banco estiver vazio** (nunca apaga dados)
+9. inicia o servidor compilado (`node dist/src/app.js`) em `0.0.0.0` na porta do ambiente
 
-A API responde em `http://localhost:3000`. O comando é idempotente: pode ser
-rodado de novo a qualquer momento sem perder dados.
-
-> Se você não usa Docker, basta apontar `DATABASE_URL` no `.env` para o seu
-> Postgres local (use `127.0.0.1` e não `localhost` para evitar problema de
-> resolução IPv6).
+A API responde em `http://localhost:3000` (ou na `PORT` definida). O comando é
+idempotente: pode ser rodado de novo a qualquer momento sem perder dados.
 
 Para iniciar apenas o servidor (sem o bootstrap, após já ter feito o setup):
 ```bash
 npm run start:server
 ```
 
-## Desenvolvimento local (sem Docker)
+## Desenvolvimento local
 
 ```bash
-npm install --legacy-peer-deps
-cp .env.example .env
-# ajuste DATABASE_URL para seu Postgres local (use 127.0.0.1)
+npm install
+cp .env.example .env   # opcional — ajuste JWT_SECRET
 
 npm run prisma:generate
 npx prisma migrate deploy
@@ -117,11 +114,11 @@ npm run db:seed
 npm run dev
 ```
 
-## Pterodactyl (hospedagem em painel)
+## Pterodactyl / Bronxys (hospedagem em painel)
 
-O servidor roda em painéis Pterodactyl **sem Docker** — o banco PostgreSQL é
-fornecido pelo próprio painel (ou externamente), e `npm start` usa a
-`DATABASE_URL` configurada nas variáveis do servidor.
+O servidor roda em painéis Pterodactyl **sem Docker e sem banco externo** —
+o banco é **SQLite local** (`data/matrix.db`), criado automaticamente na
+primeira inicialização e **nunca apagado** nos reinícios.
 
 ### Importar o egg
 
@@ -129,16 +126,16 @@ fornecido pelo próprio painel (ou externamente), e `npm start` usa a
    [`pterodactyl/egg-matrix.json`](pterodactyl/egg-matrix.json).
 2. Crie um **Nest** (ou use um existente) e associe o egg.
 3. Crie um **Server** usando esse egg.
-4. Crie um **Database** no painel (PostgreSQL) e atribua ao servidor — o
-   painel gera a `DATABASE_URL` automaticamente, ou preencha a variável
-   `Database URL` manualmente com uma string externa.
-5. Defina `JWT Secret` para uma string aleatória longa.
+4. Defina `JWT_SECRET` para uma string aleatória longa
+   (`openssl rand -hex 32`). **É a única variável obrigatória.**
+5. Inicie o servidor. A **porta é alocada automaticamente pelo painel** —
+   não configure `PORT` manualmente.
 
 O egg faz tudo automaticamente:
 - **Install script**: clona o repositório, `npm install`, gera o Prisma,
   compila o TypeScript (roda uma vez na criação do servidor).
-- **Startup**: `npm start` → aplica migrations, popula o banco se vazio,
-  sobe o servidor na `SERVER_PORT` do painel.
+- **Startup**: `npm start` → cria `data/`, aplica migrations no SQLite,
+  popula o banco se vazio, sobe o servidor em `0.0.0.0` na porta alocada.
 
 ### Egg genérico (alternativa)
 
@@ -152,28 +149,39 @@ Se preferir usar um egg Node.js genérico já existente:
   > container está vazio. O one-liner acima resolve isso clonando antes.
 - **Install script** (opcional, acelera o primeiro start):
   ```
-  git clone https://github.com/Souzzaaxzy/ServidorMtx.git . && npm install --legacy-peer-deps && ./node_modules/.bin/prisma generate && npm run build
+  git clone https://github.com/Souzzaaxzy/ServidorMtx.git . && npm install --include=dev && ./node_modules/.bin/prisma generate && npm run build
   ```
-- **Variáveis**: `DATABASE_URL` (obrigatória), `JWT_SECRET`, `SERVER_PORT`
-  (automática do painel), `NODE_ENV=production`.
-
-> Importante: no Pterodactyl **não há Docker dentro do container**, então o
-> Postgres deve ser externo (criado pelo painel). O `npm start` detecta a
-> ausência do Docker e usa o banco via `DATABASE_URL` automaticamente.
+- **Variáveis**: `JWT_SECRET` (obrigatória), `NODE_ENV=production`
+  (opcional), `CORS_ORIGIN` (opcional). A porta vem do painel
+  automaticamente e o banco é SQLite local — **sem `DATABASE_URL`**.
 
 ### Lendo o diagnóstico no console
 
 Ao iniciar, o `npm start` imprime um bloco de diagnóstico no console do
-painel (visível na aba "Console"). Ele mostra: versões do Node/npm/git,
-se o `package.json` existe, todas as variáveis de ambiente (senhas
-mascaradas), o tipo de banco esperado pelo Prisma, e um teste de
-conectividade TCP com o banco. Se algo falhar, esse bloco diz exatamente o
-que está faltando — por exemplo, se o painel forneceu um banco MySQL em vez
-de PostgreSQL, aparece:
+painel (visível na aba "Console") seguido do banner da aplicação:
 
 ```
-⚠ BANCO MySQL DETECTADO — o MATRIX API precisa de PostgreSQL!
+[MATRIX] Iniciando API...
+[MATRIX] Ambiente: production
+[MATRIX] Banco: SQLite
+[MATRIX] Banco: data/matrix.db
+[MATRIX] Porta obtida do ambiente: XXXX
+[MATRIX] Host: 0.0.0.0
+[MATRIX] SQLite conectado.
+[MATRIX] API iniciada com sucesso.
 ```
+
+`XXXX` é a porta alocada automaticamente pelo painel. Se algo falhar, o
+diagnóstico diz exatamente o que está faltando (sem expor segredos) — por
+exemplo, se `JWT_SECRET` não estiver configurado:
+
+```
+[ERROR] JWT_SECRET não configurado. Configure esta variável no painel da
+Pterodactyl/Bronxys (Server → Variables)
+```
+
+Verifique a saúde da API em `GET /health` (responde `200` com o status do
+banco).
 
 ## Testes
 

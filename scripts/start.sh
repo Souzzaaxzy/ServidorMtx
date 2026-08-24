@@ -101,14 +101,16 @@ else
   ok ".env ausente — usando variáveis de ambiente (process.env) diretamente"
 fi
 
-# Resolve the listening port. PORT wins; SERVER_PORT (Pterodactyl) is the
-# fallback; 3000 is the last resort (dev only).
-SERVER_PORT_VAL="${SERVER_PORT:-${PORT:-3000}}"
-export PORT="$SERVER_PORT_VAL"
+# Resolve the listening port. PORT has ABSOLUTE priority; SERVER_PORT (the
+# variable Pterodactyl injects with the allocated port) is the fallback;
+# 3000 is the last resort for LOCAL DEVELOPMENT only. The user never needs
+# to configure the port manually on the panel.
+export PORT="${PORT:-${SERVER_PORT:-3000}}"
 
 echo "  ── Resumo ──"
 echo "  Banco          : SQLite (local, sem PostgreSQL/psql)"
 echo "  Arquivo do DB  : $DB_FILE"
+echo "  Porta          : $PORT (obtida do ambiente)"
 echo "═══════════════════════════════════════════════════════════════"
 echo ""
 echo "═══════════════════════════════════════════════════════════════"
@@ -157,7 +159,9 @@ ok "argon2 carregado (hashing de senhas disponível)"
 # ── 4. Data directory (persistent SQLite storage) ─────────────
 # Create data/ if it does not exist. NEVER delete or reset the DB file —
 # it holds all users, posts, comments, etc. and must survive restarts.
-mkdir -p "$DATA_DIR"
+# uploads/ is the local file-storage root used when STORAGE_ENDPOINT is
+# empty (the @fastify/static plugin warns if the directory is missing).
+mkdir -p "$DATA_DIR" uploads
 ok "Diretório de dados pronto: $DATA_DIR/"
 if [ -f "$DB_FILE" ]; then
   ok "Banco SQLite existente detectado: $DB_FILE (dados preservados)"
@@ -193,23 +197,20 @@ else
 fi
 
 # ── 7. Validação de variáveis obrigatórias ─────────────────────
-# Validate the variables the server truly needs to run, reading them from
-# process.env (the panel source). Secrets are NEVER printed — only
-# "configurado"/"ausente". DATABASE_URL is NOT required (defaults to the
-# local SQLite file); JWT_SECRET and PORT are the only hard requirements.
+# JWT_SECRET is the ONLY hard requirement (it signs auth tokens). It is read
+# from process.env (injected by the panel). Secrets are NEVER printed —
+# only "configurado"/"ausente". The port is NEVER validated here: it always
+# resolves from PORT / SERVER_PORT / 3000 above, so the user does not need
+# to configure it manually. DATABASE_URL is NOT required (SQLite local).
 log "Validando variáveis de ambiente obrigatórias"
 VALIDATION_ERRORS=0
-validate_present() {
-  local name="$1" val="$2"
-  if [ -n "$val" ]; then
-    ok "$name configurado"
-  else
-    err "$name não configurado"
-    VALIDATION_ERRORS=$((VALIDATION_ERRORS + 1))
-  fi
-}
-validate_present "PORT"        "${PORT:-}"
-validate_present "JWT_SECRET"  "${JWT_SECRET:-}"
+if [ -n "${JWT_SECRET:-}" ]; then
+  ok "JWT_SECRET configurado"
+else
+  err "JWT_SECRET não configurado"
+  VALIDATION_ERRORS=$((VALIDATION_ERRORS + 1))
+fi
+info "PORT = ${PORT} (obtida automaticamente do ambiente — não precisa configurar)"
 # NODE_ENV is recommended but not fatal (defaults handled by the app).
 if [ -n "${NODE_ENV:-}" ]; then
   ok "NODE_ENV configurado (${NODE_ENV})"
@@ -233,15 +234,16 @@ fi
 
 if [ "$VALIDATION_ERRORS" -gt 0 ]; then
   err "=============================================================="
-  err "  Configuração incompleta — o MATRIX API não pode iniciar."
-  err "  Variáveis obrigatórias ausentes. Configure no painel da"
-  err "  Pterodactyl/Bronxys (Server → Variables) as seguintes:"
-  err "    JWT_SECRET    -> segredo longo e aleatório para assinar tokens"
-  err "    PORT          -> porta alocada pelo painel (ex: 4299)"
-  err "  Opcional: NODE_ENV=production, CORS_ORIGIN, AI_API_KEY/AI_PROVIDER."
+  err "  JWT_SECRET não configurado. Configure esta variável no painel"
+  err "  da Pterodactyl/Bronxys (Server → Variables):"
+  err "    JWT_SECRET -> segredo longo e aleatório para assinar tokens"
+  err "                (gere com: openssl rand -hex 32)"
+  err "  A porta é obtida automaticamente do ambiente — NÃO precisa"
+  err "  configurar PORT manualmente."
+  err "  Opcionais: NODE_ENV=production, CORS_ORIGIN, AI_API_KEY/AI_PROVIDER."
   err "  O banco é SQLite local (data/matrix.db) — NÃO precisa de DATABASE_URL."
   err "=============================================================="
-  die "Configuração incompleta — corrija as variáveis no painel e reinicie."
+  die "Configuração incompleta — defina JWT_SECRET no painel e reinicie."
 fi
 ok "Todas as variáveis obrigatórias estão configuradas"
 
@@ -302,8 +304,8 @@ fi
 # ── 11. Start server ──────────────────────────────────────────
 # `exec` replaces the shell with the Node process so it becomes PID 1 (the
 # container's main process) and receives signals for graceful shutdown.
+# The [MATRIX] startup banner (ambiente/banco/porta/host) is printed by the
+# app itself (dist/src/app.js) so it also appears with `npm run start:server`.
 info "Entrypoint: node $APP_ENTRY"
-info "Host: 0.0.0.0  |  Porta: ${PORT}"
-info "Banco: SQLite ($DB_FILE)"
-ok "Iniciando servidor MATRIX API"
+ok "Bootstrap concluído — iniciando servidor"
 exec node "$APP_ENTRY"

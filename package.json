@@ -2,7 +2,7 @@
   "name": "matrix-api",
   "version": "1.0.0",
   "private": true,
-  "description": "MATRIX 💤 — backend API (Node.js + Fastify + Prisma + PostgreSQL)",
+  "description": "MATRIX 💤 — backend API (Node.js + Fastify + Prisma + SQLite)",
   "type": "module",
   "main": "dist/src/app.js",
   "scripts": {

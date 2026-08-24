@@ -129,7 +129,7 @@ async function main() {
     prisma.post.create({
       data: {
         userId: joao.id,
-        text: 'Backend em Fastify + Prisma + PostgreSQL rodando liso. Migrações aplicadas, seed no ar. 🚀',
+        text: 'Backend em Fastify + Prisma + SQLite rodando liso. Migrações aplicadas, seed no ar. 🚀',
         imageUrl: null,
       },
     }),

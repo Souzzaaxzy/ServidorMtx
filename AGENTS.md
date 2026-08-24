@@ -58,7 +58,16 @@ PostgreSQL). Runs on Pterodactyl/Bronxys via `npm start` (self-provisions).
   no-override so panel vars win).
 - start.sh `npm install --include=dev` ensures devDeps (tsc, typescript) install
   even when NODE_ENV=production. NOT --force / --legacy-peer-deps.
-- Server binds `0.0.0.0:port` (app.ts). PORT wins; SERVER_PORT (Pterodactyl) fallback.
+- Server binds `0.0.0.0:port` (app.ts). PORT wins; SERVER_PORT (Pterodactyl)
+  fallback; 3000 last resort (dev only). Port is NEVER hardcoded/user-set.
+- `JWT_SECRET` is the ONLY required env var: in production (`NODE_ENV=production`)
+  `src/config/env.ts` throws "JWT_SECRET não configurado. Configure esta
+  variável no painel da Pterodactyl/Bronxys." if absent. Dev/test fall back to
+  an insecure placeholder. Never hardcode or auto-generate a secret.
+- Optional vars: NODE_ENV, CORS_ORIGIN, AI_API_KEY/AI_PROVIDER (absent key →
+  Akame mock provider; API keeps running).
+- Startup banner: app.ts prints `[MATRIX] ...` lines (ambiente/banco/porta/host/
+  SQLite conectado/iniciada). `GET /health` → 200 `{status, service, database}`.
 - SQLite DB file must NEVER be committed (.gitignore: `data/*.db*`).
 - `argon2` (native) is required for password hashing — verify it loads on the host.
 

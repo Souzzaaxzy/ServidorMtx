@@ -10,6 +10,7 @@ import swaggerUi from '@fastify/swagger-ui';
 
 import { env } from './config/env.js';
 import { logger } from './config/logger.js';
+import { prisma } from './config/prisma.js';
 import { ApiError, toApiError } from './utils/errors.js';
 import { authenticate, optionalAuth, requireRole } from './middleware/authenticate.js';
 
@@ -128,8 +129,19 @@ export async function buildServer() {
   await app.register(userRoutes, { prefix: '/api' });
   await app.register(uploadRoutes, { prefix: '/api' });
 
-  // Health check (unauthenticated, unrate-limited-friendly).
-  app.get('/health', async (_request, reply) => reply.status(200).send({ status: 'ok' }));
+  // Health check (unauthenticated, unrate-limited-friendly). Reports the
+  // database status without exposing any sensitive information: 200 when
+  // the API and the SQLite database are reachable, 503 otherwise.
+  app.get('/health', async (_request, reply) => {
+    try {
+      await prisma.$queryRaw`SELECT 1`;
+      return reply.status(200).send({ status: 'ok', service: 'MATRIX API', database: 'ok' });
+    } catch {
+      return reply
+        .status(503)
+        .send({ status: 'error', service: 'MATRIX API', database: 'unavailable' });
+    }
+  });
 
   return app;
 }
@@ -138,9 +150,34 @@ export async function buildServer() {
 import { fileURLToPath } from 'node:url';
 
 async function start() {
+  // Startup banner — plain console lines (not pino JSON) so the Pterodactyl/
+  // Bronxys console shows a readable summary. Secrets are NEVER printed.
+  console.log('[MATRIX] Iniciando API...');
+  console.log(`[MATRIX] Ambiente: ${process.env.NODE_ENV ?? 'production (padrão)'}`);
+  console.log('[MATRIX] Banco: SQLite');
+  console.log(`[MATRIX] Banco: ${env.databaseUrl.replace(/^file:/, '')}`);
+  console.log(`[MATRIX] Porta obtida do ambiente: ${env.port}`);
+  console.log('[MATRIX] Host: 0.0.0.0');
+
+  // Verify the SQLite database is reachable before accepting traffic.
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+    console.log('[MATRIX] SQLite conectado.');
+  } catch (err) {
+    console.error('[MATRIX] ERRO: não foi possível conectar ao banco SQLite.');
+    logger.error(
+      { err: err instanceof Error ? err.message : String(err) },
+      'database connection failed',
+    );
+    process.exit(1);
+  }
+
   const app = await buildServer();
   try {
+    // Bind 0.0.0.0 so the server is reachable inside the Pterodactyl
+    // container; the port comes from the environment (PORT / SERVER_PORT).
     await app.listen({ port: env.port, host: '0.0.0.0' });
+    console.log('[MATRIX] API iniciada com sucesso.');
   } catch (err) {
     logger.error(
       { err: err instanceof Error ? err.message : String(err) },
