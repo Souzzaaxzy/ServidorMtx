@@ -73,5 +73,15 @@ PostgreSQL). Runs on Pterodactyl/Bronxys via `npm start` (self-provisions).
 - SQLite DB file must NEVER be committed (.gitignore: `data/*.db*`).
 - `argon2` (native) is required for password hashing — verify it loads on the host.
 
+## Public URL (app connection)
+- The code NEVER creates a public URL. The panel exposes the allocated port
+  on the node's public IP/host (server page → allocation). `PUBLIC_API_URL`
+  (env.ts, optional/informational) holds that real address; the startup
+  banner prints it + the `/health` link, or panel instructions when absent.
+- HTTPS only if the panel provides a domain/proxy with valid SSL — never
+  invent `https://` for a raw IP:port. No tunnels (a trycloudflare URL was
+  previously used and removed — see CONEXAO_APP.md).
+- MatrixApp reads the same URL via `API_BASE_URL` (dart-define / CI secret).
+
 ## Git identity
 openhands / openhands@all-hands.dev
