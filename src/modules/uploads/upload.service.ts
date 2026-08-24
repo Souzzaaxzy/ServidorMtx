@@ -4,24 +4,26 @@ import { randomBytes } from 'node:crypto';
 import type { Readable } from 'node:stream';
 import { env } from '../../config/env.js';
 import { ApiError } from '../../utils/errors.js';
+import { validateImageBuffer } from '../../utils/storage.js';
 
 const UPLOAD_DIR = path.resolve(process.cwd(), 'uploads');
+
+// Only formats whose magic bytes we actually verify are accepted — the
+// client-supplied MIME/extension is NEVER trusted on its own.
 const ALLOWED_MIME = new Set([
   'image/png',
   'image/jpeg',
   'image/webp',
-  'image/gif',
-  'image/avif',
 ]);
 
-const ALLOWED_EXT = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif', '.avif']);
+const ALLOWED_EXT = new Set(['.png', '.jpg', '.jpeg', '.webp']);
 
 /** Strips any path components from a filename to prevent traversal. */
 function sanitizeFilename(name: string): string {
   const base = path.basename(name).toLowerCase();
   const ext = path.extname(base);
   if (!ALLOWED_EXT.has(ext)) {
-    throw ApiError.validation('Tipo de arquivo não permitido.');
+    throw ApiError.validation('Tipo de arquivo não permitido. Use PNG, JPG ou WebP.');
   }
   const stem = base.slice(0, base.length - ext.length).replace(/[^a-z0-9_-]+/g, '_');
   return `${stem || 'file'}-${randomBytes(6).toString('hex')}${ext}`;
@@ -34,35 +36,44 @@ export interface StoredFile {
   url: string;
 }
 
+async function readStream(stream: Readable): Promise<Buffer> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of stream) {
+    chunks.push(chunk as Buffer);
+  }
+  return Buffer.concat(chunks);
+}
+
+// Public base for uploaded-file URLs. Prefer the explicit storage URL;
+// fall back to the API's own public URL so the APK receives an ABSOLUTE
+// http(s) URL it can load directly. When neither is configured the path
+// stays relative (/static/...) and the app resolves it against the API
+// base URL — never a localhost/internal path.
+function publicBase(): string {
+  return (env.storage.publicBaseUrl || env.publicApiUrl || '').replace(/\/$/, '');
+}
+
 export async function saveLocalFile(
   filename: string,
   mimetype: string,
   stream: Readable,
 ): Promise<StoredFile> {
   if (!ALLOWED_MIME.has(mimetype)) {
-    throw ApiError.validation('Tipo de arquivo não permitido.');
+    throw ApiError.validation('Tipo de arquivo não permitido. Use PNG, JPG ou WebP.');
   }
-  await fs.mkdir(UPLOAD_DIR, { recursive: true });
   const safe = sanitizeFilename(filename);
+
+  const buffer = await readStream(stream);
+  // Validate the real bytes (magic numbers), not the declared type, and
+  // enforce the size limit. Throws 415/413/400 on invalid content.
+  validateImageBuffer(buffer);
+
+  await fs.mkdir(UPLOAD_DIR, { recursive: true });
   const dest = path.join(UPLOAD_DIR, safe);
+  await fs.writeFile(dest, buffer);
 
-  await new Promise<void>((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    stream.on('data', (c: Buffer) => chunks.push(c));
-    stream.on('end', async () => {
-      try {
-        await fs.writeFile(dest, Buffer.concat(chunks));
-        resolve();
-      } catch (err) {
-        reject(err);
-      }
-    });
-    stream.on('error', reject);
-  });
-
-  const stat = await fs.stat(dest);
-  const url = `${env.storage.publicBaseUrl || ''}/static/${safe}`;
-  return { filename: safe, mimetype, size: stat.size, url };
+  const url = `${publicBase()}/static/${safe}`;
+  return { filename: safe, mimetype, size: buffer.length, url };
 }
 
 /**

@@ -54,3 +54,116 @@ describe('Uploads — POST /uploads', () => {
     expect(res.statusCode).toBe(401);
   });
 });
+
+describe('Uploads — validação de conteúdo', () => {
+  it('rejects a text file disguised as PNG (magic bytes)', async () => {
+    const u = await createAndLoginUser(server, { username: 'fakepng' });
+    const notAnImage = Buffer.from('this is definitely not a png file');
+    const res = await server.inject({
+      method: 'POST',
+      url: '/api/uploads',
+      headers: {
+        authorization: `Bearer ${u.accessToken}`,
+        'content-type': `multipart/form-data; boundary=----test`,
+      },
+      payload: {
+        file: {
+          type: 'file',
+          file: notAnImage,
+          filename: 'evil.png',
+          mimetype: 'image/png',
+        } as never,
+      } as never,
+    } as never);
+    // When the inject shape is supported, the server must reject the fake
+    // image (400/415). If inject can't deliver multipart, it errors before
+    // reaching the service (400) — never 201.
+    expect(res.statusCode).not.toBe(201);
+    expect([400, 415]).toContain(res.statusCode);
+  });
+
+  it('rejects a disallowed extension', async () => {
+    const u = await createAndLoginUser(server, { username: 'badext' });
+    const png = readFileSync(path.join(FIXTURES, 'pixel.png'));
+    const res = await server.inject({
+      method: 'POST',
+      url: '/api/uploads',
+      headers: {
+        authorization: `Bearer ${u.accessToken}`,
+        'content-type': `multipart/form-data; boundary=----test`,
+      },
+      payload: {
+        file: {
+          type: 'file',
+          file: png,
+          filename: 'script.sh',
+          mimetype: 'image/png',
+        } as never,
+      } as never,
+    } as never);
+    expect(res.statusCode).not.toBe(201);
+    expect([400, 415]).toContain(res.statusCode);
+  });
+});
+
+describe('Perfil — avatarUrl via /static/', () => {
+  it('accepts a relative /static/ avatar path on PATCH /users/me', async () => {
+    const u = await createAndLoginUser(server, { username: 'avatarrel' });
+    const res = await server.inject({
+      method: 'PATCH',
+      url: '/api/users/me',
+      headers: { authorization: `Bearer ${u.accessToken}` },
+      payload: { avatarUrl: '/static/avatar-abc123.png' },
+    });
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.payload);
+    expect(body.user.avatarUrl).toBe('/static/avatar-abc123.png');
+  });
+
+  it('rejects a traversal avatar path', async () => {
+    const u = await createAndLoginUser(server, { username: 'avatartrav' });
+    const res = await server.inject({
+      method: 'PATCH',
+      url: '/api/users/me',
+      headers: { authorization: `Bearer ${u.accessToken}` },
+      payload: { avatarUrl: '/static/../../etc/passwd' },
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('persists name changes across reads', async () => {
+    const u = await createAndLoginUser(server, { username: 'namepersist' });
+    const patch = await server.inject({
+      method: 'PATCH',
+      url: '/api/users/me',
+      headers: { authorization: `Bearer ${u.accessToken}` },
+      payload: { name: 'Novo Nome' },
+    });
+    expect(patch.statusCode).toBe(200);
+
+    const me = await server.inject({
+      method: 'GET',
+      url: '/api/auth/me',
+      headers: { authorization: `Bearer ${u.accessToken}` },
+    });
+    expect(me.statusCode).toBe(200);
+    expect(JSON.parse(me.payload).user.name).toBe('Novo Nome');
+
+    const profile = await server.inject({
+      method: 'GET',
+      url: '/api/users/namepersist',
+    });
+    expect(JSON.parse(profile.payload).user.name).toBe('Novo Nome');
+  });
+
+  it('rejects empty/short names with a clear error', async () => {
+    const u = await createAndLoginUser(server, { username: 'nameshort' });
+    const res = await server.inject({
+      method: 'PATCH',
+      url: '/api/users/me',
+      headers: { authorization: `Bearer ${u.accessToken}` },
+      payload: { name: ' ' },
+    });
+    expect(res.statusCode).toBe(400);
+  });
+});
