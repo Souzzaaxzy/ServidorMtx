@@ -1,1 +1,7 @@
-Servidor conectado ao app MatrixApp.TESTE ok.
+# Conexão App ↔ API
+
+URL pública da API usada pelo MatrixApp (release):
+https://bar-integration-ball-examination.trycloudflare.com
+
+Verificada end-to-end (health, register, login, /api/auth/me, /api/posts).
+OBS: túnel temporário — substitua pela URL permanente do painel quando tiver.
