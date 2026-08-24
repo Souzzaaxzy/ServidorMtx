@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { readFileSync } from 'node:fs';
 
 function required(name: string, fallback?: string): string {
   const value = process.env[name] ?? fallback;
@@ -25,14 +26,27 @@ const isTest = process.env.NODE_ENV === 'test';
 const portFallback = process.env.PORT ?? process.env.SERVER_PORT ?? '3000';
 
 // JWT_SECRET is the only truly required variable (it signs auth tokens).
-// In production there is NO fallback: a missing secret must fail fast with
-// a clear message. A fixed or auto-generated secret is never used — a fixed
-// one would be insecure and a generated one would invalidate tokens on
-// every restart. Dev/test keep a convenience fallback so `npm run dev` and
-// `npm test` work out of the box.
+// Resolution order:
+//   1. process.env.JWT_SECRET (panel Variables or .env) — always wins;
+//   2. data/.jwt_secret — a persistent secret auto-generated ONCE by
+//      start.sh on the first boot (never committed, chmod 600). Reading it
+//      here keeps `npm run start:server` (which skips start.sh) working.
+//   3. production: fail fast with a clear panel-oriented message — a fixed
+//      or per-boot random secret is NEVER used (a fixed one is insecure and
+//      a random one would invalidate all tokens on every restart).
+// Dev/test keep a convenience fallback so `npm run dev`/`npm test` work.
 function jwtSecret(): string {
   const value = process.env.JWT_SECRET;
   if (value && value !== '') return value;
+  try {
+    const persisted = readFileSync(
+      `${process.cwd()}/data/.jwt_secret`,
+      'utf8',
+    ).trim();
+    if (persisted !== '') return persisted;
+  } catch {
+    // File absent (first boot before start.sh created it) — fall through.
+  }
   if (isProd) {
     throw new Error(
       'JWT_SECRET não configurado. Configure esta variável no painel da Pterodactyl/Bronxys.',

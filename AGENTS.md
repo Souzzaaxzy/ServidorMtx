@@ -60,10 +60,12 @@ PostgreSQL). Runs on Pterodactyl/Bronxys via `npm start` (self-provisions).
   even when NODE_ENV=production. NOT --force / --legacy-peer-deps.
 - Server binds `0.0.0.0:port` (app.ts). PORT wins; SERVER_PORT (Pterodactyl)
   fallback; 3000 last resort (dev only). Port is NEVER hardcoded/user-set.
-- `JWT_SECRET` is the ONLY required env var: in production (`NODE_ENV=production`)
-  `src/config/env.ts` throws "JWT_SECRET não configurado. Configure esta
-  variável no painel da Pterodactyl/Bronxys." if absent. Dev/test fall back to
-  an insecure placeholder. Never hardcode or auto-generate a secret.
+- `JWT_SECRET` resolution order: process.env (panel/.env) → persisted file
+  `data/.jwt_secret` (auto-generated ONCE by start.sh, chmod 600, gitignored)
+  → clear error. Never hardcode a secret; never regenerate per boot (that
+  would invalidate tokens). `src/config/env.ts` also reads `data/.jwt_secret`
+  so `npm run start:server` (no start.sh) works. Dev/test use an insecure
+  placeholder.
 - Optional vars: NODE_ENV, CORS_ORIGIN, AI_API_KEY/AI_PROVIDER (absent key →
   Akame mock provider; API keeps running).
 - Startup banner: app.ts prints `[MATRIX] ...` lines (ambiente/banco/porta/host/

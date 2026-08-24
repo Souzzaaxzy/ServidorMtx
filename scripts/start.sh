@@ -197,15 +197,33 @@ else
 fi
 
 # ── 7. Validação de variáveis obrigatórias ─────────────────────
-# JWT_SECRET is the ONLY hard requirement (it signs auth tokens). It is read
-# from process.env (injected by the panel). Secrets are NEVER printed —
-# only "configurado"/"ausente". The port is NEVER validated here: it always
-# resolves from PORT / SERVER_PORT / 3000 above, so the user does not need
-# to configure it manually. DATABASE_URL is NOT required (SQLite local).
+# JWT_SECRET is the ONLY hard requirement (it signs auth tokens). Priority:
+#   1. process.env (panel Variables or .env) — always wins;
+#   2. a secret PERSISTED at data/.jwt_secret (auto-generated ONCE on the
+#      first boot, chmod 600, gitignored — reused on every restart so
+#      existing tokens are never invalidated);
+#   3. clear error pointing to the panel (only if 1 and 2 are impossible,
+#      e.g. data/ is not writable — extremely unlikely).
+# Secrets are NEVER printed — only "configurado"/"gerado". The port is
+# NEVER validated here: it always resolves from PORT / SERVER_PORT / 3000
+# above, so the user does not need to configure it manually. DATABASE_URL
+# is NOT required (SQLite local).
 log "Validando variáveis de ambiente obrigatórias"
 VALIDATION_ERRORS=0
+JWT_SECRET_FILE="$DATA_DIR/.jwt_secret"
 if [ -n "${JWT_SECRET:-}" ]; then
-  ok "JWT_SECRET configurado"
+  ok "JWT_SECRET configurado (painel/.env)"
+elif [ -f "$JWT_SECRET_FILE" ] && [ -s "$JWT_SECRET_FILE" ]; then
+  JWT_SECRET="$(cat "$JWT_SECRET_FILE")"
+  export JWT_SECRET
+  ok "JWT_SECRET carregado de $JWT_SECRET_FILE (persistente)"
+elif SECRET="$(node -e 'process.stdout.write(require("node:crypto").randomBytes(32).toString("hex"))' 2>/dev/null)" \
+  && [ -n "$SECRET" ] \
+  && (umask 177; printf '%s' "$SECRET" > "$JWT_SECRET_FILE" 2>/dev/null); then
+  JWT_SECRET="$SECRET"
+  export JWT_SECRET
+  ok "JWT_SECRET gerado e salvo em $JWT_SECRET_FILE (persistente, chmod 600)"
+  unset SECRET
 else
   err "JWT_SECRET não configurado"
   VALIDATION_ERRORS=$((VALIDATION_ERRORS + 1))
@@ -234,10 +252,11 @@ fi
 
 if [ "$VALIDATION_ERRORS" -gt 0 ]; then
   err "=============================================================="
-  err "  JWT_SECRET não configurado. Configure esta variável no painel"
-  err "  da Pterodactyl/Bronxys (Server → Variables):"
-  err "    JWT_SECRET -> segredo longo e aleatório para assinar tokens"
-  err "                (gere com: openssl rand -hex 32)"
+  err "  JWT_SECRET não configurado e não foi possível gerar um segredo"
+  err "  persistente em $JWT_SECRET_FILE (diretório data/ sem escrita?)."
+  err "  Configure JWT_SECRET no painel da Pterodactyl/Bronxys"
+  err "  (Server → Variables) com uma string longa e aleatória"
+  err "  (gere com: openssl rand -hex 32)."
   err "  A porta é obtida automaticamente do ambiente — NÃO precisa"
   err "  configurar PORT manualmente."
   err "  Opcionais: NODE_ENV=production, CORS_ORIGIN, AI_API_KEY/AI_PROVIDER."

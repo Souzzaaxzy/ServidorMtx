@@ -15,6 +15,10 @@ data/*.db-journal
 data/*.db-shm
 data/*.db-wal
 
+# Auto-generated JWT secret fallback (persistent, server-local, chmod 600).
+# It is a SECRET — never commit it.
+data/.jwt_secret
+
 # Local upload storage (dev). Note: anchored to repo root so it does NOT
 # ignore the source module at src/modules/uploads/.
 /uploads/
