@@ -2,8 +2,10 @@
 // username consistently regardless of where they enter the system.
 
 // Usernames: lowercase, trim. Allow letters, numbers, underscores, dots, hyphens.
+// Any leading '@' symbols are stripped — the stored username NEVER carries
+// the '@' prefix (legacy clients/users may still prepend it).
 export function normalizeUsername(username: string): string {
-  return username.trim().toLowerCase();
+  return username.replace(/^@+/, '').trim().toLowerCase();
 }
 
 export function isValidUsername(username: string): boolean {

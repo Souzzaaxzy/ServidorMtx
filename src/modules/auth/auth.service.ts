@@ -129,6 +129,16 @@ export async function logout(refreshToken: string): Promise<void> {
   await revokeSession(refreshToken);
 }
 
+// ── Account deletion ──────────────────────────────────────────
+// Hard delete of the authenticated user. Every relation in the schema is
+// `onDelete: Cascade`, so posts, comments, likes, sessions, devices,
+// friendships, friend requests, notifications and the gamification/custom
+// rows are removed atomically with the user row — no orphans.
+export async function deleteAccount(userId: string): Promise<void> {
+  await revokeAllUserSessions(userId);
+  await prisma.user.delete({ where: { id: userId } });
+}
+
 export async function getCurrentUser(userId: string) {
   const user = await prisma.user.findUnique({ where: { id: userId } });
   if (!user) throw ApiError.unauthorized();

@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { buildTestServer, closeTestServer, login, createUser, createAndLoginUser } from './helpers.js';
+import { prisma } from '../src/config/prisma.js';
 import type { FastifyInstance } from 'fastify';
 
 let server: FastifyInstance;
@@ -74,6 +75,42 @@ describe('Auth — POST /api/auth/register', () => {
     });
     expect(res.statusCode).toBe(201);
     expect(JSON.parse(res.payload).user).not.toHaveProperty('email');
+  });
+});
+
+describe('Auth — username @-normalization', () => {
+  it('strips a leading "@" on register so storage never carries the prefix', async () => {
+    const res = await server.inject({
+      method: 'POST',
+      url: '/api/auth/register',
+      payload: { name: 'At Prefix', username: '@atprefix', password: 'Password123' },
+    });
+    expect(res.statusCode).toBe(201);
+    expect(JSON.parse(res.payload).user.username).toBe('atprefix');
+    const stored = await prisma.user.findUnique({ where: { username: 'atprefix' } });
+    expect(stored).not.toBeNull();
+    expect(stored!.username.startsWith('@')).toBe(false);
+  });
+
+  it('strips any amount of leading "@" symbols (never stores "@@x" or "@x")', async () => {
+    const res = await server.inject({
+      method: 'POST',
+      url: '/api/auth/register',
+      payload: { name: 'Double At', username: '@@doubleat', password: 'Password123' },
+    });
+    expect(res.statusCode).toBe(201);
+    expect(JSON.parse(res.payload).user.username).toBe('doubleat');
+  });
+
+  it('logs in successfully with "@" prefixed input', async () => {
+    await createUser({ username: 'plainuser' });
+    const res = await server.inject({
+      method: 'POST',
+      url: '/api/auth/login',
+      payload: { username: '@plainuser', password: 'Password123' },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.payload).user.username).toBe('plainuser');
   });
 });
 

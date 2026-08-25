@@ -4,13 +4,12 @@ import { ApiError } from '../../utils/errors.js';
 import { NotificationType } from '../../types/enums.js';
 
 // ── Push dispatch ────────────────────────────────────────────
-// The MATRIX push architecture is a pluggable transport, integrated into
-// ServidorMtx (no separate server):
+// The MATRIX push transport lives entirely inside ServidorMtx (no separate
+// server, no third-party SDK):
 //
 //   event (like/comment/friend) → SQLite notification row → dispatch →
-//   in-app realtime socket (native Android notification while the app
-//   process is alive) + device tokens stored for a future external
-//   provider slot (FCM-ready: registerExternalProvider()).
+//   in-app realtime WebSocket → the APK turns it into a native Android
+//   notification via NotificationManager (Goo-independent, 100% MATRIX).
 //
 // Dedupe: every persisted notification has a unique id; the dispatcher
 // keeps an LRU of already-dispatched ids so a retried event NEVER produces
@@ -116,25 +115,10 @@ export function buildMessage(
   };
 }
 
-// Optional external provider slot (e.g. Firebase Cloud Messaging). The
-// built-in realtime socket is always used; if a provider is registered at
-// boot, device tokens are sent through it as well. Kept as a function
-// reference so no third-party SDK is a hard dependency.
-export type ExternalPushSender = (
-  devices: { token: string; platform: string }[],
-  message: PushMessage,
-) => Promise<void>;
-
-let externalSender: ExternalPushSender | null = null;
-
-export function registerExternalProvider(sender: ExternalPushSender): void {
-  externalSender = sender;
-}
-
 /**
  * Dispatches one notification to its recipient. Returns true when the push
  * was actually dispatched; false when deduped. Caller decides how critical
- * it is — errors from sockets/providers are logged, not thrown.
+ * it is — errors from sockets are logged, not thrown.
  *
  * The actor's username is resolved from the notification row (one indexed
  * lookup) so callers only pass the persisted row.
@@ -170,17 +154,6 @@ export async function dispatchNotification(
     }
   }
 
-  if (externalSender) {
-    const devices = await prisma.device.findMany({
-      where: { userId: recipientId },
-      select: { token: true, platform: true },
-    });
-    if (devices.length > 0) {
-      await externalSender(devices, message).catch((err) =>
-        logger.warn({ err }, 'external push provider failed'),
-      );
-    }
-  }
   return true;
 }
 

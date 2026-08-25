@@ -7,10 +7,8 @@ import {
   buildMessage,
   composeBody,
   dispatchNotification,
-  registerExternalProvider,
   removeSocket,
   socketsOf,
-  type ExternalPushSender,
 } from '../src/modules/push/push.service.js';
 
 let server: FastifyInstance;
@@ -164,34 +162,6 @@ describe('Dispatch pipeline', () => {
     removeSocket(userId, socket);
   });
 
-  it('forwards device tokens to a registered external provider', async () => {
-    const user = await createAndLoginUser(server, { username: 'extprov' });
-    await prisma.device.create({
-      data: { userId: user.id, token: 'ext-token-1', platform: 'android' },
-    });
-
-    const sender = vi.fn().mockResolvedValue(undefined) as unknown as ExternalPushSender;
-    registerExternalProvider(sender);
-    try {
-      await dispatchNotification(user.id, {
-        id: 'note-ext-1',
-        actorId: user.id,
-        type: 'FRIEND_ACCEPTED',
-        postId: null,
-        commentId: null,
-        friendRequestId: null,
-      });
-      expect(sender).toHaveBeenCalledTimes(1);
-      const [devices, message] = (sender as ReturnType<typeof vi.fn>).mock.calls[0] as [
-        { token: string }[],
-        unknown,
-      ];
-      expect(devices.map((d) => d.token)).toContain('ext-token-1');
-      expect(message).toBeTruthy();
-    } finally {
-      registerExternalProvider(async () => {});
-    }
-  });
 });
 
 describe('Unread badge endpoint', () => {

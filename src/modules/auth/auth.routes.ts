@@ -2,7 +2,7 @@ import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import type { ZodType } from 'zod';
 import { ApiError, toApiError } from '../../utils/errors.js';
 import { logger } from '../../config/logger.js';
-import { register, login, refresh, logout, getCurrentUser, recoverAccount } from './auth.service.js';
+import { register, login, refresh, logout, getCurrentUser, recoverAccount, deleteAccount } from './auth.service.js';
 import { loginSchema, refreshSchema, registerSchema, recoverSchema } from './auth.schema.js';
 import { isLocked, recordFailure } from '../../utils/recovery_guard.js';
 
@@ -69,6 +69,13 @@ export const authRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     if (body.refreshToken) {
       await logout(body.refreshToken);
     }
+    return reply.status(204).send();
+  });
+
+  // Hard delete of the authenticated account. Identity ALWAYS comes from
+  // the validated bearer token — the client never sends a userId.
+  app.delete('/account', { onRequest: [app.authenticate] }, async (request, reply) => {
+    await deleteAccount(request.user!.id);
     return reply.status(204).send();
   });
 };
