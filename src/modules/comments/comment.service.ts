@@ -1,13 +1,13 @@
 import { prisma } from '../../config/prisma.js';
 import { ApiError } from '../../utils/errors.js';
-import { toPostComment, type PostComment } from '../../utils/dto.js';
+import { AUTHOR_SELECT, toPostComment, type PostComment } from '../../utils/dto.js';
 import type { CreateCommentInput, ListCommentsQuery } from './comment.schema.js';
 import { grantXp, XP_REWARDS, XpReason } from '../../gamification/xp.service.js';
 import { NotificationType } from '../../types/enums.js';
 import { dispatchNotification } from '../push/push.service.js';
 
 const COMMENT_INCLUDE = {
-  user: { select: { id: true, name: true, username: true, avatarUrl: true } },
+  user: { select: AUTHOR_SELECT },
 } as const;
 
 export async function createComment(

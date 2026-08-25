@@ -1,9 +1,9 @@
 import { prisma } from '../../config/prisma.js';
 import { ApiError } from '../../utils/errors.js';
-import { toNotificationItem, type NotificationItem } from '../../utils/dto.js';
+import { AUTHOR_SELECT, toNotificationItem, type NotificationItem } from '../../utils/dto.js';
 
 const NOTIFICATION_INCLUDE = {
-  actor: { select: { id: true, name: true, username: true, avatarUrl: true } },
+  actor: { select: AUTHOR_SELECT },
   friendRequest: { select: { id: true, status: true } },
 } as const;
 

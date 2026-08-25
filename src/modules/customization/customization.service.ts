@@ -1,6 +1,6 @@
 import { prisma } from '../../config/prisma.js';
 import { ApiError } from '../../utils/errors.js';
-import type { ItemType } from '../../types/enums.js';
+import { ItemType } from '../../types/enums.js';
 
 // ── Personalization Engine ─────────────────────────────────────
 // The APK renders generic item "types" (avatar_frame, profile_banner, …).
@@ -14,13 +14,17 @@ export interface CatalogItem {
   assetUrl: string;
   rarity: string;
   price: number;
+  category: string | null;
+  sortOrder: number;
   active: boolean;
 }
 
 export async function listCatalog(type?: ItemType): Promise<CatalogItem[]> {
   const items = await prisma.item.findMany({
     where: { active: true, ...(type ? { type } : {}) },
-    orderBy: [{ rarity: 'asc' }, { name: 'asc' }],
+    // Curated order: category groups first, then the explicit sortOrder
+    // inside each group (falls back to rarity/name for legacy rows).
+    orderBy: [{ category: 'asc' }, { sortOrder: 'asc' }, { rarity: 'asc' }, { name: 'asc' }],
   });
   return items.map((i) => ({
     id: i.id,
@@ -29,6 +33,8 @@ export async function listCatalog(type?: ItemType): Promise<CatalogItem[]> {
     assetUrl: i.assetUrl,
     rarity: i.rarity,
     price: i.price,
+    category: i.category,
+    sortOrder: i.sortOrder,
     active: i.active,
   }));
 }
@@ -92,19 +98,30 @@ export async function getEquipped(userId: string): Promise<EquippedSlot[]> {
   }));
 }
 
-// Equip an item the user owns. Enforces ownership + (for temporary items)
-// that the item has not expired.
+// Equip an item. The server is the ONLY authority on what can be equipped:
+//   1. the item must exist in the catalog;
+//   2. it must be active;
+//   3. its slot is ALWAYS derived from the item's own type — the client can
+//      never claim an item belongs to a different slot;
+//   4. ownership is enforced for collectible items (frames, banners, ...).
+//      NAME_COLOR entries are free palette colors, so ownership is not
+//      required — the validation above is what stops arbitrary values
+//      (a client-sent hex is meaningless here; only catalog ids equip).
 export async function equipItem(userId: string, itemId: string): Promise<EquippedSlot> {
-  const owned = await prisma.userItem.findUnique({
-    where: { userId_itemId: { userId, itemId } },
-    include: { item: true },
-  });
-  if (!owned) throw ApiError.notFound('Item não encontrado no inventário.');
-  if (owned.expiresAt && owned.expiresAt < new Date()) {
-    throw ApiError.invalidRequest('Item expirado.');
+  const item = await prisma.item.findUnique({ where: { id: itemId } });
+  if (!item || !item.active) throw ApiError.notFound('Item não encontrado.');
+
+  if (item.type !== ItemType.NAME_COLOR) {
+    const owned = await prisma.userItem.findUnique({
+      where: { userId_itemId: { userId, itemId } },
+    });
+    if (!owned) throw ApiError.notFound('Item não encontrado no inventário.');
+    if (owned.expiresAt && owned.expiresAt < new Date()) {
+      throw ApiError.invalidRequest('Item expirado.');
+    }
   }
 
-  const slot = owned.item.type;
+  const slot = item.type;
   await prisma.equippedItem.upsert({
     where: { userId_slot: { userId, slot } },
     update: { itemId },
@@ -112,10 +129,10 @@ export async function equipItem(userId: string, itemId: string): Promise<Equippe
   });
   return {
     slot,
-    itemId: owned.item.id,
-    name: owned.item.name,
-    assetUrl: owned.item.assetUrl,
-    rarity: owned.item.rarity,
+    itemId: item.id,
+    name: item.name,
+    assetUrl: item.assetUrl,
+    rarity: item.rarity,
   };
 }
 

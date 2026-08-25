@@ -2,13 +2,13 @@ import { Prisma } from '../../generated/index.js';
 import { prisma } from '../../config/prisma.js';
 import { deleteLocalFileByUrl } from '../uploads/upload.service.js';
 import { ApiError } from '../../utils/errors.js';
-import { toFeedPost, type FeedPost } from '../../utils/dto.js';
+import { AUTHOR_SELECT, toFeedPost, type FeedPost } from '../../utils/dto.js';
 import type { CreatePostInput, FeedQuery } from './post.schema.js';
 import { grantXp, XP_REWARDS, XpReason } from '../../gamification/xp.service.js';
 import { grantCoins, COIN_REWARDS, CoinReason } from '../../gamification/coin.service.js';
 
 const FEED_INCLUDE = {
-  user: { select: { id: true, name: true, username: true, avatarUrl: true } },
+  user: { select: AUTHOR_SELECT },
   _count: { select: { likes: true, comments: true } },
 } as const;
 
@@ -56,7 +56,7 @@ export async function getFeed(
     orderBy: { createdAt: 'desc' },
     take: limit + 1,
     include: {
-      user: { select: { id: true, name: true, username: true, avatarUrl: true } },
+      user: { select: AUTHOR_SELECT },
       _count: { select: { likes: true, comments: true } },
       ...(currentUserId
         ? { likes: { where: { userId: currentUserId }, select: { userId: true } } }
@@ -78,7 +78,7 @@ export async function getPostById(id: string, currentUserId?: string): Promise<F
   const post = await prisma.post.findUnique({
     where: { id },
     include: {
-      user: { select: { id: true, name: true, username: true, avatarUrl: true } },
+      user: { select: AUTHOR_SELECT },
       _count: { select: { likes: true, comments: true } },
       ...(currentUserId
         ? { likes: { where: { userId: currentUserId }, select: { userId: true } } }

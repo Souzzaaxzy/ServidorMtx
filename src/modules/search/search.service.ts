@@ -1,5 +1,5 @@
 import { prisma } from '../../config/prisma.js';
-import { toPublicUser, type PublicUser } from '../../utils/dto.js';
+import { AUTHOR_SELECT, toPublicUser, type PublicUser } from '../../utils/dto.js';
 import type { SearchQuery } from './search.schema.js';
 
 export async function searchUsers(query: SearchQuery): Promise<PublicUser[]> {
@@ -16,6 +16,7 @@ export async function searchUsers(query: SearchQuery): Promise<PublicUser[]> {
     },
     orderBy: { username: 'asc' },
     take: query.limit,
+    select: { ...AUTHOR_SELECT, bio: true, createdAt: true },
   });
   return users.map(toPublicUser);
 }

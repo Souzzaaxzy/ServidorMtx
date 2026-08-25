@@ -1,5 +1,41 @@
 import type { Comment, FriendRequest, Notification, Post, User } from '../generated/index.js';
 
+// ── Nickname colors ──────────────────────────────────────────
+// A user's nickname color is the cosmetic equipped in the NAME_COLOR slot;
+// the equipped item's assetUrl carries the hex value (the server owns the
+// palette — clients never send raw hex). Every payload that renders a
+// nickname embeds the OWNER's resolved color so each user keeps their own
+// color everywhere (feed, comments, friends, notifications, search, ...).
+export const NAME_COLOR_SLOT = 'NAME_COLOR';
+
+// Shared select for "user summary + equipped name color". Spreading this
+// into an author/actor select adds the one equipped NAME_COLOR row (if
+// any) with just the fields needed to resolve the hex.
+export const NAME_COLOR_SELECT = {
+  equippedItems: {
+    where: { slot: NAME_COLOR_SLOT },
+    select: { item: { select: { assetUrl: true } } },
+  },
+} as const;
+
+export const AUTHOR_SELECT = {
+  id: true,
+  name: true,
+  username: true,
+  avatarUrl: true,
+  ...NAME_COLOR_SELECT,
+} as const;
+
+export type WithNameColor = {
+  equippedItems?: { item: { assetUrl: string } }[];
+};
+
+// Resolves the equipped name color to its hex value, or null when the user
+// has none equipped (→ the app's default nickname color).
+export function nameColorHex(user: WithNameColor): string | null {
+  return user.equippedItems?.[0]?.item.assetUrl ?? null;
+}
+
 // Public user shape — never exposes passwordHash, recoveryCodeHash or role
 // internals to other users.
 export interface PublicUser {
@@ -9,9 +45,13 @@ export interface PublicUser {
   avatarUrl: string | null;
   bio: string;
   createdAt: string;
+  nameColor: string | null;
 }
 
-export function toPublicUser(user: User): PublicUser {
+export function toPublicUser(
+  user: Pick<User, 'id' | 'name' | 'username' | 'avatarUrl' | 'bio' | 'createdAt'> &
+    WithNameColor,
+): PublicUser {
   return {
     id: user.id,
     name: user.name,
@@ -19,6 +59,7 @@ export function toPublicUser(user: User): PublicUser {
     avatarUrl: user.avatarUrl,
     bio: user.bio,
     createdAt: user.createdAt.toISOString(),
+    nameColor: nameColorHex(user),
   };
 }
 
@@ -91,7 +132,7 @@ export interface FeedPost {
   text: string | null;
   imageUrl: string | null;
   createdAt: string;
-  author: Pick<PublicUser, 'id' | 'name' | 'username' | 'avatarUrl'>;
+  author: Pick<PublicUser, 'id' | 'name' | 'username' | 'avatarUrl' | 'nameColor'>;
   likeCount: number;
   liked: boolean;
   commentCount: number;
@@ -103,7 +144,7 @@ export interface PostDetail extends FeedPost {
 
 export function toFeedPost(
   post: Post & {
-    user: Pick<User, 'id' | 'name' | 'username' | 'avatarUrl'>;
+    user: Pick<User, 'id' | 'name' | 'username' | 'avatarUrl'> & WithNameColor;
     _count?: { likes: number; comments: number };
     likes?: { userId: string }[];
   },
@@ -122,6 +163,7 @@ export function toFeedPost(
       name: post.user.name,
       username: post.user.username,
       avatarUrl: post.user.avatarUrl,
+      nameColor: nameColorHex(post.user),
     },
     likeCount: post._count?.likes ?? 0,
     liked,
@@ -133,11 +175,13 @@ export interface PostComment {
   id: string;
   text: string;
   createdAt: string;
-  author: Pick<PublicUser, 'id' | 'name' | 'username' | 'avatarUrl'>;
+  author: Pick<PublicUser, 'id' | 'name' | 'username' | 'avatarUrl' | 'nameColor'>;
 }
 
 export function toPostComment(
-  comment: Comment & { user: Pick<User, 'id' | 'name' | 'username' | 'avatarUrl'> },
+  comment: Comment & {
+    user: Pick<User, 'id' | 'name' | 'username' | 'avatarUrl'> & WithNameColor;
+  },
 ): PostComment {
   return {
     id: comment.id,
@@ -148,6 +192,7 @@ export function toPostComment(
       name: comment.user.name,
       username: comment.user.username,
       avatarUrl: comment.user.avatarUrl,
+      nameColor: nameColorHex(comment.user),
     },
   };
 }
@@ -157,22 +202,21 @@ export function toPostComment(
 // notification so the client never needs a second lookup; friend request
 // status is embedded when the notification references one.
 
-const ACTOR_SELECT = {
-  id: true,
-  name: true,
-  username: true,
-  avatarUrl: true,
-} as const;
+// Actor/sender selects embed the actor's own name color too, so every
+// notification/request renders each user with THEIR color.
+const ACTOR_SELECT = AUTHOR_SELECT;
 
 export interface FriendRequestItem {
   id: string;
   status: string;
   createdAt: string;
-  sender: Pick<PublicUser, 'id' | 'name' | 'username' | 'avatarUrl'>;
+  sender: Pick<PublicUser, 'id' | 'name' | 'username' | 'avatarUrl' | 'nameColor'>;
 }
 
 export function toFriendRequestItem(
-  request: FriendRequest & { sender: Pick<User, 'id' | 'name' | 'username' | 'avatarUrl'> },
+  request: FriendRequest & {
+    sender: Pick<User, 'id' | 'name' | 'username' | 'avatarUrl'> & WithNameColor;
+  },
 ): FriendRequestItem {
   return {
     id: request.id,
@@ -183,6 +227,7 @@ export function toFriendRequestItem(
       name: request.sender.name,
       username: request.sender.username,
       avatarUrl: request.sender.avatarUrl,
+      nameColor: nameColorHex(request.sender),
     },
   };
 }
@@ -196,12 +241,12 @@ export interface NotificationItem {
   commentId: string | null;
   friendRequestId: string | null;
   friendRequestStatus: string | null;
-  actor: Pick<PublicUser, 'id' | 'name' | 'username' | 'avatarUrl'>;
+  actor: Pick<PublicUser, 'id' | 'name' | 'username' | 'avatarUrl' | 'nameColor'>;
 }
 
 export function toNotificationItem(
   notification: Notification & {
-    actor: Pick<User, 'id' | 'name' | 'username' | 'avatarUrl'>;
+    actor: Pick<User, 'id' | 'name' | 'username' | 'avatarUrl'> & WithNameColor;
     friendRequest?: { id: string; status: string } | null;
   },
 ): NotificationItem {
@@ -219,6 +264,7 @@ export function toNotificationItem(
       name: notification.actor.name,
       username: notification.actor.username,
       avatarUrl: notification.actor.avatarUrl,
+      nameColor: nameColorHex(notification.actor),
     },
   };
 }

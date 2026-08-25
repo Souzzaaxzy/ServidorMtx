@@ -1,7 +1,7 @@
 import { prisma } from '../../config/prisma.js';
 import { ApiError, toApiError } from '../../utils/errors.js';
 import { normalizeUsername } from '../../utils/normalize.js';
-import { toAuthUser, toFeedPost, toProfileUser, type AuthUser, type FeedPost, type ProfileUser } from '../../utils/dto.js';
+import { AUTHOR_SELECT, toAuthUser, toFeedPost, toProfileUser, type AuthUser, type FeedPost, type ProfileUser } from '../../utils/dto.js';
 import { getFriendshipState } from '../friends/friend.service.js';
 import type { FriendshipState } from '../../types/enums.js';
 
@@ -19,7 +19,7 @@ export async function getProfile(
         orderBy: { createdAt: 'desc' },
         take: 50,
         include: {
-          user: { select: { id: true, name: true, username: true, avatarUrl: true } },
+          user: { select: AUTHOR_SELECT },
           _count: { select: { likes: true, comments: true } },
           ...(currentUserId
             ? { likes: { where: { userId: currentUserId }, select: { userId: true } } }

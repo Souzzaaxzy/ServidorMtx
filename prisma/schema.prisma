@@ -340,9 +340,17 @@ model Item {
   id         String    @id
   type       String
   name       String
+  // For NAME_COLOR items this holds the hex color (e.g. "#0066FF") instead
+  // of an asset path — the "asset" of a color IS the color value.
   assetUrl   String
   rarity     String    @default("COMMON")
   price      Int       @default(0)
+  // Optional grouping key for the catalog UI (e.g. "reds", "special").
+  // Owned by the server so the app never hardcodes which colors exist.
+  category   String?
+  // Explicit ordering inside a category (catalogs are curated, not
+  // alphabetical).
+  sortOrder  Int       @default(0)
   active     Boolean   @default(true)
   createdAt  DateTime  @default(now())
   updatedAt  DateTime  @updatedAt

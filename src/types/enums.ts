@@ -49,6 +49,10 @@ export const ItemType = {
   BADGE: 'BADGE',
   PROFILE_EFFECT: 'PROFILE_EFFECT',
   THEME_ACCCENT: 'THEME_ACCCENT',
+  // A solid nickname color. The item's assetUrl carries the hex value
+  // (e.g. "#0066FF"); colors are free catalog entries — the server only
+  // validates id/active/type on equip, never a client-supplied hex.
+  NAME_COLOR: 'NAME_COLOR',
 } as const;
 export type ItemType = (typeof ItemType)[keyof typeof ItemType];
 

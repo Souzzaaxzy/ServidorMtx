@@ -9,7 +9,7 @@ import {
   type ItemType,
 } from './customization.service.js';
 
-const VALID_SLOTS: ItemType[] = ['AVATAR_FRAME', 'PROFILE_BANNER', 'BADGE', 'PROFILE_EFFECT', 'THEME_ACCCENT'];
+const VALID_SLOTS: ItemType[] = ['AVATAR_FRAME', 'PROFILE_BANNER', 'BADGE', 'PROFILE_EFFECT', 'THEME_ACCCENT', 'NAME_COLOR'];
 
 // Customization routes — all driven by server-owned data.
 //   GET    /customization/catalog          list active items

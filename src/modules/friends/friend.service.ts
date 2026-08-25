@@ -1,11 +1,11 @@
 import { prisma } from '../../config/prisma.js';
 import { ApiError } from '../../utils/errors.js';
-import { toFriendRequestItem, toPublicUser, type FriendRequestItem, type PublicUser } from '../../utils/dto.js';
+import { AUTHOR_SELECT, toFriendRequestItem, toPublicUser, type FriendRequestItem, type PublicUser } from '../../utils/dto.js';
 import { FriendRequestStatus, FriendshipState, NotificationType } from '../../types/enums.js';
 import { dispatchNotification } from '../push/push.service.js';
 
 const SENDER_INCLUDE = {
-  sender: { select: { id: true, name: true, username: true, avatarUrl: true } },
+  sender: { select: AUTHOR_SELECT },
 } as const;
 
 // Friendship is stored as an unordered pair (sorted ids) so one row always
@@ -194,8 +194,8 @@ export async function listFriends(
       skip: (safePage - 1) * safeSize,
       take: safeSize,
       include: {
-        userOne: true,
-        userTwo: true,
+        userOne: { select: { ...AUTHOR_SELECT, bio: true, createdAt: true } },
+        userTwo: { select: { ...AUTHOR_SELECT, bio: true, createdAt: true } },
       },
     }),
   ]);

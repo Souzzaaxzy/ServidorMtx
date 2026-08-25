@@ -22,11 +22,109 @@ const ITEMS = [
   { id: 'effect_glitch', type: 'PROFILE_EFFECT' as const, name: 'Glitch', assetUrl: 'effects/glitch', rarity: 'EPIC' as const, price: 600 },
 ];
 
+// ── Nickname color palette (NAME_COLOR) ──────────────────────
+// The official, server-owned palette. The app NEVER hardcodes which colors
+// exist — it renders whatever this catalog returns. `assetUrl` carries the
+// hex value (the "asset" of a color is the color itself), `category` groups
+// the palette for the picker UI and `sortOrder` keeps the curated order.
+// Colors are free (price 0): equipping validates id/active/type only.
+const NAME_COLORS = [
+  { id: 'red', type: 'NAME_COLOR' as const, name: 'Vermelho', assetUrl: '#E53935', rarity: 'COMMON' as const, price: 0, category: 'basic', sortOrder: 0 },
+  { id: 'orange', type: 'NAME_COLOR' as const, name: 'Laranja', assetUrl: '#FB8C00', rarity: 'COMMON' as const, price: 0, category: 'basic', sortOrder: 1 },
+  { id: 'yellow', type: 'NAME_COLOR' as const, name: 'Amarelo', assetUrl: '#FDD835', rarity: 'COMMON' as const, price: 0, category: 'basic', sortOrder: 2 },
+  { id: 'green', type: 'NAME_COLOR' as const, name: 'Verde', assetUrl: '#43A047', rarity: 'COMMON' as const, price: 0, category: 'basic', sortOrder: 3 },
+  { id: 'blue', type: 'NAME_COLOR' as const, name: 'Azul', assetUrl: '#1E88E5', rarity: 'COMMON' as const, price: 0, category: 'basic', sortOrder: 4 },
+  { id: 'purple', type: 'NAME_COLOR' as const, name: 'Roxo', assetUrl: '#8E24AA', rarity: 'COMMON' as const, price: 0, category: 'basic', sortOrder: 5 },
+  { id: 'pink', type: 'NAME_COLOR' as const, name: 'Rosa', assetUrl: '#EC407A', rarity: 'COMMON' as const, price: 0, category: 'basic', sortOrder: 6 },
+  { id: 'cyan', type: 'NAME_COLOR' as const, name: 'Ciano', assetUrl: '#00ACC1', rarity: 'COMMON' as const, price: 0, category: 'basic', sortOrder: 7 },
+  { id: 'gray', type: 'NAME_COLOR' as const, name: 'Cinza', assetUrl: '#757575', rarity: 'COMMON' as const, price: 0, category: 'basic', sortOrder: 8 },
+  { id: 'black', type: 'NAME_COLOR' as const, name: 'Preto', assetUrl: '#212121', rarity: 'COMMON' as const, price: 0, category: 'basic', sortOrder: 9 },
+  { id: 'white', type: 'NAME_COLOR' as const, name: 'Branco', assetUrl: '#FAFAFA', rarity: 'COMMON' as const, price: 0, category: 'basic', sortOrder: 10 },
+  { id: 'brown', type: 'NAME_COLOR' as const, name: 'Marrom', assetUrl: '#795548', rarity: 'COMMON' as const, price: 0, category: 'basic', sortOrder: 11 },
+  { id: 'dark_red', type: 'NAME_COLOR' as const, name: 'Vermelho Escuro', assetUrl: '#8E0000', rarity: 'COMMON' as const, price: 0, category: 'reds', sortOrder: 12 },
+  { id: 'bright_red', type: 'NAME_COLOR' as const, name: 'Vermelho Vivo', assetUrl: '#FF1744', rarity: 'COMMON' as const, price: 0, category: 'reds', sortOrder: 13 },
+  { id: 'crimson', type: 'NAME_COLOR' as const, name: 'Vermelho Carmesim', assetUrl: '#DC143C', rarity: 'COMMON' as const, price: 0, category: 'reds', sortOrder: 14 },
+  { id: 'ruby', type: 'NAME_COLOR' as const, name: 'Vermelho Rubi', assetUrl: '#C2185B', rarity: 'COMMON' as const, price: 0, category: 'reds', sortOrder: 15 },
+  { id: 'blood_red', type: 'NAME_COLOR' as const, name: 'Vermelho Sangue', assetUrl: '#6B0000', rarity: 'COMMON' as const, price: 0, category: 'reds', sortOrder: 16 },
+  { id: 'dark_orange', type: 'NAME_COLOR' as const, name: 'Laranja Escuro', assetUrl: '#E65100', rarity: 'COMMON' as const, price: 0, category: 'oranges', sortOrder: 17 },
+  { id: 'bright_orange', type: 'NAME_COLOR' as const, name: 'Laranja Vivo', assetUrl: '#FF6D00', rarity: 'COMMON' as const, price: 0, category: 'oranges', sortOrder: 18 },
+  { id: 'burnt_orange', type: 'NAME_COLOR' as const, name: 'Laranja Queimado', assetUrl: '#BF5700', rarity: 'COMMON' as const, price: 0, category: 'oranges', sortOrder: 19 },
+  { id: 'tangerine', type: 'NAME_COLOR' as const, name: 'Tangerina', assetUrl: '#FF8F00', rarity: 'COMMON' as const, price: 0, category: 'oranges', sortOrder: 20 },
+  { id: 'peach', type: 'NAME_COLOR' as const, name: 'Pêssego', assetUrl: '#FFAB91', rarity: 'COMMON' as const, price: 0, category: 'oranges', sortOrder: 21 },
+  { id: 'dark_yellow', type: 'NAME_COLOR' as const, name: 'Amarelo Escuro', assetUrl: '#C6A700', rarity: 'COMMON' as const, price: 0, category: 'yellows', sortOrder: 22 },
+  { id: 'bright_yellow', type: 'NAME_COLOR' as const, name: 'Amarelo Vivo', assetUrl: '#FFEA00', rarity: 'COMMON' as const, price: 0, category: 'yellows', sortOrder: 23 },
+  { id: 'gold', type: 'NAME_COLOR' as const, name: 'Dourado', assetUrl: '#D4AF37', rarity: 'COMMON' as const, price: 0, category: 'yellows', sortOrder: 24 },
+  { id: 'amber', type: 'NAME_COLOR' as const, name: 'Âmbar', assetUrl: '#FFC107', rarity: 'COMMON' as const, price: 0, category: 'yellows', sortOrder: 25 },
+  { id: 'lime', type: 'NAME_COLOR' as const, name: 'Limão', assetUrl: '#C6FF00', rarity: 'COMMON' as const, price: 0, category: 'yellows', sortOrder: 26 },
+  { id: 'dark_green', type: 'NAME_COLOR' as const, name: 'Verde Escuro', assetUrl: '#1B5E20', rarity: 'COMMON' as const, price: 0, category: 'greens', sortOrder: 27 },
+  { id: 'bright_green', type: 'NAME_COLOR' as const, name: 'Verde Vivo', assetUrl: '#00C853', rarity: 'COMMON' as const, price: 0, category: 'greens', sortOrder: 28 },
+  { id: 'emerald', type: 'NAME_COLOR' as const, name: 'Verde Esmeralda', assetUrl: '#009688', rarity: 'COMMON' as const, price: 0, category: 'greens', sortOrder: 29 },
+  { id: 'lime_green', type: 'NAME_COLOR' as const, name: 'Verde Limão', assetUrl: '#64DD17', rarity: 'COMMON' as const, price: 0, category: 'greens', sortOrder: 30 },
+  { id: 'mint', type: 'NAME_COLOR' as const, name: 'Verde Menta', assetUrl: '#69F0AE', rarity: 'COMMON' as const, price: 0, category: 'greens', sortOrder: 31 },
+  { id: 'olive', type: 'NAME_COLOR' as const, name: 'Verde Oliva', assetUrl: '#827717', rarity: 'COMMON' as const, price: 0, category: 'greens', sortOrder: 32 },
+  { id: 'dark_blue', type: 'NAME_COLOR' as const, name: 'Azul Escuro', assetUrl: '#0D47A1', rarity: 'COMMON' as const, price: 0, category: 'blues', sortOrder: 33 },
+  { id: 'bright_blue', type: 'NAME_COLOR' as const, name: 'Azul Vivo', assetUrl: '#2962FF', rarity: 'COMMON' as const, price: 0, category: 'blues', sortOrder: 34 },
+  { id: 'navy', type: 'NAME_COLOR' as const, name: 'Azul Marinho', assetUrl: '#1A237E', rarity: 'COMMON' as const, price: 0, category: 'blues', sortOrder: 35 },
+  { id: 'royal_blue', type: 'NAME_COLOR' as const, name: 'Azul Royal', assetUrl: '#4169E1', rarity: 'COMMON' as const, price: 0, category: 'blues', sortOrder: 36 },
+  { id: 'electric_blue', type: 'NAME_COLOR' as const, name: 'Azul Elétrico', assetUrl: '#00B0FF', rarity: 'COMMON' as const, price: 0, category: 'blues', sortOrder: 37 },
+  { id: 'sky_blue', type: 'NAME_COLOR' as const, name: 'Azul Celeste', assetUrl: '#4FC3F7', rarity: 'COMMON' as const, price: 0, category: 'blues', sortOrder: 38 },
+  { id: 'ice_blue', type: 'NAME_COLOR' as const, name: 'Azul Gelo', assetUrl: '#B3E5FC', rarity: 'COMMON' as const, price: 0, category: 'blues', sortOrder: 39 },
+  { id: 'dark_purple', type: 'NAME_COLOR' as const, name: 'Roxo Escuro', assetUrl: '#4A148C', rarity: 'COMMON' as const, price: 0, category: 'purples', sortOrder: 40 },
+  { id: 'bright_purple', type: 'NAME_COLOR' as const, name: 'Roxo Vivo', assetUrl: '#AA00FF', rarity: 'COMMON' as const, price: 0, category: 'purples', sortOrder: 41 },
+  { id: 'violet', type: 'NAME_COLOR' as const, name: 'Violeta', assetUrl: '#7C4DFF', rarity: 'COMMON' as const, price: 0, category: 'purples', sortOrder: 42 },
+  { id: 'indigo', type: 'NAME_COLOR' as const, name: 'Índigo', assetUrl: '#3949AB', rarity: 'COMMON' as const, price: 0, category: 'purples', sortOrder: 43 },
+  { id: 'amethyst', type: 'NAME_COLOR' as const, name: 'Ametista', assetUrl: '#9C64A6', rarity: 'COMMON' as const, price: 0, category: 'purples', sortOrder: 44 },
+  { id: 'lavender', type: 'NAME_COLOR' as const, name: 'Lavanda', assetUrl: '#B39DDB', rarity: 'COMMON' as const, price: 0, category: 'purples', sortOrder: 45 },
+  { id: 'dark_pink', type: 'NAME_COLOR' as const, name: 'Rosa Escuro', assetUrl: '#AD1457', rarity: 'COMMON' as const, price: 0, category: 'pinks', sortOrder: 46 },
+  { id: 'bright_pink', type: 'NAME_COLOR' as const, name: 'Rosa Vivo', assetUrl: '#F50057', rarity: 'COMMON' as const, price: 0, category: 'pinks', sortOrder: 47 },
+  { id: 'hot_pink', type: 'NAME_COLOR' as const, name: 'Rosa Choque', assetUrl: '#FF4081', rarity: 'COMMON' as const, price: 0, category: 'pinks', sortOrder: 48 },
+  { id: 'baby_pink', type: 'NAME_COLOR' as const, name: 'Rosa Bebê', assetUrl: '#F8BBD0', rarity: 'COMMON' as const, price: 0, category: 'pinks', sortOrder: 49 },
+  { id: 'magenta', type: 'NAME_COLOR' as const, name: 'Magenta', assetUrl: '#D500F9', rarity: 'COMMON' as const, price: 0, category: 'pinks', sortOrder: 50 },
+  { id: 'fuchsia', type: 'NAME_COLOR' as const, name: 'Fúcsia', assetUrl: '#E040FB', rarity: 'COMMON' as const, price: 0, category: 'pinks', sortOrder: 51 },
+  { id: 'turquoise', type: 'NAME_COLOR' as const, name: 'Turquesa', assetUrl: '#1DE9B6', rarity: 'COMMON' as const, price: 0, category: 'cyans', sortOrder: 52 },
+  { id: 'aqua', type: 'NAME_COLOR' as const, name: 'Azul Água', assetUrl: '#18FFFF', rarity: 'COMMON' as const, price: 0, category: 'cyans', sortOrder: 53 },
+  { id: 'pool_blue', type: 'NAME_COLOR' as const, name: 'Azul Piscina', assetUrl: '#00B8D4', rarity: 'COMMON' as const, price: 0, category: 'cyans', sortOrder: 54 },
+  { id: 'aqua_green', type: 'NAME_COLOR' as const, name: 'Verde-Água', assetUrl: '#64FFDA', rarity: 'COMMON' as const, price: 0, category: 'cyans', sortOrder: 55 },
+  { id: 'dark_gray', type: 'NAME_COLOR' as const, name: 'Cinza Escuro', assetUrl: '#424242', rarity: 'COMMON' as const, price: 0, category: 'grays', sortOrder: 56 },
+  { id: 'light_gray', type: 'NAME_COLOR' as const, name: 'Cinza Claro', assetUrl: '#BDBDBD', rarity: 'COMMON' as const, price: 0, category: 'grays', sortOrder: 57 },
+  { id: 'silver', type: 'NAME_COLOR' as const, name: 'Prata', assetUrl: '#E0E0E0', rarity: 'COMMON' as const, price: 0, category: 'grays', sortOrder: 58 },
+  { id: 'dark_brown', type: 'NAME_COLOR' as const, name: 'Marrom Escuro', assetUrl: '#3E2723', rarity: 'COMMON' as const, price: 0, category: 'browns', sortOrder: 59 },
+  { id: 'caramel', type: 'NAME_COLOR' as const, name: 'Caramelo', assetUrl: '#B87333', rarity: 'COMMON' as const, price: 0, category: 'browns', sortOrder: 60 },
+  { id: 'chocolate', type: 'NAME_COLOR' as const, name: 'Chocolate', assetUrl: '#5D4037', rarity: 'COMMON' as const, price: 0, category: 'browns', sortOrder: 61 },
+  { id: 'matrix_blue', type: 'NAME_COLOR' as const, name: 'Azul Matrix', assetUrl: '#0066FF', rarity: 'COMMON' as const, price: 0, category: 'special', sortOrder: 62 },
+  { id: 'neon_blue', type: 'NAME_COLOR' as const, name: 'Azul Neon', assetUrl: '#00E5FF', rarity: 'COMMON' as const, price: 0, category: 'special', sortOrder: 63 },
+  { id: 'electric_blue_special', type: 'NAME_COLOR' as const, name: 'Azul Elétrico Especial', assetUrl: '#2979FF', rarity: 'COMMON' as const, price: 0, category: 'special', sortOrder: 64 },
+  { id: 'neon_purple', type: 'NAME_COLOR' as const, name: 'Roxo Neon', assetUrl: '#B388FF', rarity: 'COMMON' as const, price: 0, category: 'special', sortOrder: 65 },
+  { id: 'neon_pink', type: 'NAME_COLOR' as const, name: 'Rosa Neon', assetUrl: '#FF80AB', rarity: 'COMMON' as const, price: 0, category: 'special', sortOrder: 66 },
+  { id: 'neon_green', type: 'NAME_COLOR' as const, name: 'Verde Neon', assetUrl: '#76FF03', rarity: 'COMMON' as const, price: 0, category: 'special', sortOrder: 67 },
+  { id: 'neon_yellow', type: 'NAME_COLOR' as const, name: 'Amarelo Neon', assetUrl: '#FFFF00', rarity: 'COMMON' as const, price: 0, category: 'special', sortOrder: 68 },
+  { id: 'neon_orange', type: 'NAME_COLOR' as const, name: 'Laranja Neon', assetUrl: '#FF9100', rarity: 'COMMON' as const, price: 0, category: 'special', sortOrder: 69 },
+  { id: 'neon_red', type: 'NAME_COLOR' as const, name: 'Vermelho Neon', assetUrl: '#FF5252', rarity: 'COMMON' as const, price: 0, category: 'special', sortOrder: 70 },
+  { id: 'neon_cyan', type: 'NAME_COLOR' as const, name: 'Ciano Neon', assetUrl: '#84FFFF', rarity: 'COMMON' as const, price: 0, category: 'special', sortOrder: 71 },
+];
+
 const GAMES = [
   { slug: 'quiz', name: 'MATRIX Quiz', description: 'Teste seu conhecimento.' },
   { slug: 'detective', name: 'Detetive', description: 'Resolva o mistério.' },
   { slug: 'enigmas', name: 'Enigmas', description: 'Decifre os enigmas.' },
 ];
+
+// The cosmetic catalog is server-owned configuration, not user data: it is
+// upserted on EVERY boot so palette updates reach existing databases without
+// migrations or manual steps.
+async function syncCatalog() {
+  await prisma.$transaction(ITEMS.map((i) => prisma.item.upsert({
+    where: { id: i.id },
+    update: i,
+    create: i,
+  })));
+  await prisma.$transaction(NAME_COLORS.map((c) => prisma.item.upsert({
+    where: { id: c.id },
+    update: c,
+    create: c,
+  })));
+  console.log(`🎨 Catalog synced: ${ITEMS.length} items + ${NAME_COLORS.length} name colors.`);
+}
 
 async function main() {
   console.log('🌱 Seeding MATRIX database…');
@@ -35,7 +133,8 @@ async function main() {
   // seed safe to run automatically on every start without destroying data.
   const existingUsers = await prisma.user.count();
   if (existingUsers > 0) {
-    console.log(`ℹ️  Database already has ${existingUsers} user(s). Skipping seed to preserve data.`);
+    await syncCatalog();
+    console.log(`ℹ️  Database already has ${existingUsers} user(s). Skipping demo seed to preserve data.`);
     return;
   }
 
@@ -55,16 +154,12 @@ async function main() {
     await (m as { deleteMany: () => Promise<unknown> }).deleteMany();
   }
 
+  await syncCatalog();
+
   await prisma.$transaction(LEVELS.map((l) => prisma.level.upsert({
     where: { id: l.id },
     update: l,
     create: l,
-  })));
-
-  await prisma.$transaction(ITEMS.map((i) => prisma.item.upsert({
-    where: { id: i.id },
-    update: i,
-    create: i,
   })));
 
   await prisma.$transaction(GAMES.map((g) => prisma.game.upsert({
