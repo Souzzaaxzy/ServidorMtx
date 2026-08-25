@@ -85,5 +85,13 @@ export function toApiError(err: unknown): ApiError {
     return ApiError.validation('Dados inválidos.', (err as unknown as { issues: unknown }).issues);
   }
 
+  // Fastify content-type parser failures (e.g. FST_ERR_CTP_EMPTY_JSON_BODY —
+  // 'Content-Type: application/json' with an empty body) are client errors,
+  // not server crashes. Surface them as 400 instead of a misleading 500.
+  const code = (err as { code?: unknown } | null)?.code;
+  if (typeof code === 'string' && code.startsWith('FST_ERR_CTP')) {
+    return ApiError.invalidRequest('Corpo da requisição inválido.');
+  }
+
   return ApiError.internal();
 }

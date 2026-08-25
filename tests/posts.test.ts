@@ -101,6 +101,56 @@ describe('Posts — feed + create + delete', () => {
     expect(res.statusCode).toBe(204);
   });
 
+  it('cascades likes and comments when a post is deleted', async () => {
+    const owner = await createAndLoginUser(server, { username: 'cascadeowner' });
+    const fan = await createAndLoginUser(server, { username: 'cascadefan' });
+    const created = await server.inject({
+      method: 'POST',
+      url: '/api/posts',
+      headers: { authorization: `Bearer ${owner.accessToken}` },
+      payload: { text: 'post with engagement' },
+    });
+    const postId = JSON.parse(created.payload).id as string;
+    await server.inject({
+      method: 'POST',
+      url: `/api/posts/${postId}/like`,
+      headers: { authorization: `Bearer ${fan.accessToken}` },
+    });
+    await server.inject({
+      method: 'POST',
+      url: `/api/posts/${postId}/comments`,
+      headers: { authorization: `Bearer ${fan.accessToken}` },
+      payload: { text: 'nice' },
+    });
+
+    const res = await server.inject({
+      method: 'DELETE',
+      url: `/api/posts/${postId}`,
+      headers: { authorization: `Bearer ${owner.accessToken}` },
+    });
+    expect(res.statusCode).toBe(204);
+
+    const { prisma } = await import('../src/config/prisma.js');
+    expect(await prisma.like.count({ where: { postId } })).toBe(0);
+    expect(await prisma.comment.count({ where: { postId } })).toBe(0);
+    expect(await prisma.post.findUnique({ where: { id: postId } })).toBeNull();
+  });
+
+  it('returns 404 when deleting a nonexistent post', async () => {
+    const u = await createAndLoginUser(server, { username: 'ghostdeleter' });
+    const res = await server.inject({
+      method: 'DELETE',
+      url: '/api/posts/does-not-exist',
+      headers: { authorization: `Bearer ${u.accessToken}` },
+    });
+    expect(res.statusCode).toBe(404);
+  });
+
+  it('rejects unauthenticated deletion', async () => {
+    const res = await server.inject({ method: 'DELETE', url: '/api/posts/whatever' });
+    expect(res.statusCode).toBe(401);
+  });
+
   it('forbids deleting another user post', async () => {
     const owner = await createAndLoginUser(server, { username: 'ownera' });
     const other = await createAndLoginUser(server, { username: 'othera' });
