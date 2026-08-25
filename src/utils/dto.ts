@@ -23,6 +23,21 @@ export function toPublicUser(user: User): PublicUser {
 }
 
 // Authenticated user — includes role (only the current user's own data).
+// Profile user — a public user plus real aggregate counters. The profile
+// screen renders Amigos/Posts from these; counting is done server-side
+// (accepted friendships only, all posts of the user).
+export interface ProfileUser extends PublicUser {
+  friendsCount: number;
+  postsCount: number;
+}
+
+export function toProfileUser(
+  user: User,
+  counts: { friendsCount: number; postsCount: number },
+): ProfileUser {
+  return { ...toPublicUser(user), ...counts };
+}
+
 export interface AuthUser extends PublicUser {
   role: string;
   updatedAt: string;

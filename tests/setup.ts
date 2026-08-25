@@ -45,6 +45,7 @@ const TABLES = [
   'notifications',
   'friend_requests',
   'friendships',
+  'devices',
   'game_results',
   'game_sessions',
   'games',

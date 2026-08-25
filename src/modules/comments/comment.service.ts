@@ -4,6 +4,7 @@ import { toPostComment, type PostComment } from '../../utils/dto.js';
 import type { CreateCommentInput, ListCommentsQuery } from './comment.schema.js';
 import { grantXp, XP_REWARDS, XpReason } from '../../gamification/xp.service.js';
 import { NotificationType } from '../../types/enums.js';
+import { dispatchNotification } from '../push/push.service.js';
 
 const COMMENT_INCLUDE = {
   user: { select: { id: true, name: true, username: true, avatarUrl: true } },
@@ -27,7 +28,7 @@ export async function createComment(
 
   // Notify the post author — never the commenter themselves.
   if (post.userId !== userId) {
-    await prisma.notification.create({
+    const note = await prisma.notification.create({
       data: {
         recipientId: post.userId,
         actorId: userId,
@@ -36,6 +37,7 @@ export async function createComment(
         commentId: comment.id,
       },
     });
+    await dispatchNotification(post.userId, note);
   }
 
   return toPostComment(comment);

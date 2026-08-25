@@ -2,6 +2,7 @@ import { prisma } from '../../config/prisma.js';
 import { ApiError } from '../../utils/errors.js';
 import { grantXp, XP_REWARDS, XpReason } from '../../gamification/xp.service.js';
 import { NotificationType } from '../../types/enums.js';
+import { dispatchNotification } from '../push/push.service.js';
 
 // Toggle like: if the user has already liked the post, remove the like;
 // otherwise create it. Returns the resulting state + updated count. When a
@@ -29,9 +30,11 @@ export async function toggleLike(userId: string, postId: string): Promise<{ like
     if (post.userId !== userId) {
       await grantXp({ userId: post.userId, amount: XP_REWARDS.LIKE_RECEIVED, reason: XpReason.LIKE_RECEIVED, source: `like:${postId}` }).catch(() => void 0);
       // Persistence: the LIKE notification lives in SQLite, not the APK.
-      await prisma.notification.create({
+      // The same row then feeds the push dispatcher (socket + provider).
+      const note = await prisma.notification.create({
         data: { recipientId: post.userId, actorId: userId, type: NotificationType.LIKE, postId },
       });
+      await dispatchNotification(post.userId, note);
     }
   }
 

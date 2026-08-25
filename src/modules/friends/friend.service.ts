@@ -1,7 +1,8 @@
 import { prisma } from '../../config/prisma.js';
 import { ApiError } from '../../utils/errors.js';
-import { toFriendRequestItem, type FriendRequestItem } from '../../utils/dto.js';
+import { toFriendRequestItem, toPublicUser, type FriendRequestItem, type PublicUser } from '../../utils/dto.js';
 import { FriendRequestStatus, FriendshipState, NotificationType } from '../../types/enums.js';
+import { dispatchNotification } from '../push/push.service.js';
 
 const SENDER_INCLUDE = {
   sender: { select: { id: true, name: true, username: true, avatarUrl: true } },
@@ -81,7 +82,7 @@ export async function sendFriendRequest(senderId: string, receiverId: string): P
     include: SENDER_INCLUDE,
   });
 
-  await prisma.notification.create({
+  const note = await prisma.notification.create({
     data: {
       recipientId: receiverId,
       actorId: senderId,
@@ -89,6 +90,7 @@ export async function sendFriendRequest(senderId: string, receiverId: string): P
       friendRequestId: request.id,
     },
   });
+  await dispatchNotification(receiverId, note);
 
   return toFriendRequestItem(request);
 }
@@ -121,27 +123,42 @@ async function loadOwnedRequest(userId: string, requestId: string) {
 export async function acceptRequest(userId: string, requestId: string): Promise<void> {
   const request = await loadOwnedRequest(userId, requestId);
   const [one, two] = orderedPair(request.senderId, request.receiverId);
-  await prisma.$transaction([
-    prisma.friendRequest.update({
+  // Accept notifies BOTH sides: the sender learns the request was accepted,
+  // and the acceptor gets their own persistent "Agora vocês são amigos"
+  // entry. Each notification carries the OTHER user as its actor, so the
+  // tap target (profile of the other side) is correct on both ends.
+  const created = await prisma.$transaction(async (tx) => {
+    await tx.friendRequest.update({
       where: { id: request.id },
       data: { status: FriendRequestStatus.ACCEPTED },
-    }),
-    prisma.friendship.create({
+    });
+    await tx.friendship.create({
       data: { userOneId: one, userTwoId: two },
-    }),
-    // The actionable FRIEND_REQUEST notification disappears once answered;
-    // the sender is informed with a FRIEND_ACCEPTED one instead.
-    prisma.notification.deleteMany({
+    });
+    // The actionable FRIEND_REQUEST notification disappears once answered.
+    await tx.notification.deleteMany({
       where: { friendRequestId: request.id },
-    }),
-    prisma.notification.create({
+    });
+    const forSender = await tx.notification.create({
       data: {
         recipientId: request.senderId,
         actorId: userId,
         type: NotificationType.FRIEND_ACCEPTED,
       },
-    }),
-  ]);
+    });
+    const forAcceptor = await tx.notification.create({
+      data: {
+        recipientId: userId,
+        actorId: request.senderId,
+        type: NotificationType.FRIEND_ACCEPTED,
+      },
+    });
+    return [forSender, forAcceptor];
+  });
+  // Push dispatch is post-commit fire-and-forget (never blocks the 204).
+  for (const note of created) {
+    await dispatchNotification(note.recipientId, note).catch(() => void 0);
+  }
 }
 
 export async function rejectRequest(userId: string, requestId: string): Promise<void> {
@@ -150,3 +167,42 @@ export async function rejectRequest(userId: string, requestId: string): Promise<
   // removing the actionable card. A retry from the sender stays possible.
   await prisma.friendRequest.delete({ where: { id: request.id } });
 }
+
+// ── Friends list (accepted friendships only) ────────────────
+// The profile's "Amigos" bottom sheet reads this page-by-page; the counter
+// uses the same query shape with a count, so list and number ALWAYS agree.
+export interface FriendsPage {
+  friends: PublicUser[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+export async function listFriends(
+  userId: string,
+  page: number,
+  pageSize: number,
+): Promise<FriendsPage> {
+  const safePage = Math.max(1, page);
+  const safeSize = Math.min(Math.max(1, pageSize), 50);
+  const where = { OR: [{ userOneId: userId }, { userTwoId: userId }] };
+  const [total, rows] = await prisma.$transaction([
+    prisma.friendship.count({ where }),
+    prisma.friendship.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      skip: (safePage - 1) * safeSize,
+      take: safeSize,
+      include: {
+        userOne: true,
+        userTwo: true,
+      },
+    }),
+  ]);
+  // Friendship stores the sorted pair; pick the side that is NOT userId.
+  const friends = rows.map((row) =>
+    toPublicUser(row.userOneId === userId ? row.userTwo : row.userOne),
+  );
+  return { friends, total, page: safePage, pageSize: safeSize };
+}
+

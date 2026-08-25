@@ -49,3 +49,9 @@ export async function markAllRead(userId: string): Promise<void> {
     data: { read: true },
   });
 }
+
+// Lightweight badge counter — the APK polls this instead of fetching the
+// whole list when it only needs the unread number.
+export async function unreadCount(userId: string): Promise<number> {
+  return prisma.notification.count({ where: { recipientId: userId, read: false } });
+}

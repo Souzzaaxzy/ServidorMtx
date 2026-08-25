@@ -1,14 +1,14 @@
 import { prisma } from '../../config/prisma.js';
 import { ApiError, toApiError } from '../../utils/errors.js';
 import { normalizeUsername } from '../../utils/normalize.js';
-import { toAuthUser, toFeedPost, toPublicUser, type AuthUser, type FeedPost, type PublicUser } from '../../utils/dto.js';
+import { toAuthUser, toFeedPost, toProfileUser, type AuthUser, type FeedPost, type ProfileUser } from '../../utils/dto.js';
 import { getFriendshipState } from '../friends/friend.service.js';
 import type { FriendshipState } from '../../types/enums.js';
 
 export async function getProfile(
   username: string,
   currentUserId?: string,
-): Promise<{ user: PublicUser; posts: FeedPost[]; friendship: FriendshipState | null }> {
+): Promise<{ user: ProfileUser; posts: FeedPost[]; friendship: FriendshipState | null }> {
   const user = await prisma.user.findUnique({
     where: { username: normalizeUsername(username) },
     include: {
@@ -26,6 +26,14 @@ export async function getProfile(
     },
   });
   if (!user) throw ApiError.notFound('Usuário não encontrado.');
+  // Real counters: postsCount = all posts of this user; friendsCount =
+  // accepted friendships only (pending/rejected requests never count).
+  const [postsCount, friendsCount] = await prisma.$transaction([
+    prisma.post.count({ where: { userId: user.id } }),
+    prisma.friendship.count({
+      where: { OR: [{ userOneId: user.id }, { userTwoId: user.id }] },
+    }),
+  ]);
   // The friendship state is only meaningful for an authenticated viewer
   // looking at someone else's profile — the APK never asks for its own.
   let friendship: FriendshipState | null = null;
@@ -33,7 +41,7 @@ export async function getProfile(
     friendship = await getFriendshipState(currentUserId, user.id);
   }
   return {
-    user: toPublicUser(user),
+    user: toProfileUser(user, { friendsCount, postsCount }),
     posts: user.posts.map((p) => toFeedPost(p, currentUserId)),
     friendship,
   };

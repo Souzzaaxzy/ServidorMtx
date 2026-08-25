@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import { toApiError } from '../../utils/errors.js';
 import {
   acceptRequest,
+  listFriends,
   listPendingRequests,
   rejectRequest,
   sendFriendRequest,
@@ -52,5 +53,17 @@ export const friendRoutes: FastifyPluginAsync = async (app: FastifyInstance) => 
     } catch (err) {
       throw toApiError(err);
     }
+  });
+
+  // Friends of ANY user (own accepted list on the own profile; another
+  // user's list on their profile). Page-based pagination; the same query
+  // backs the profile "Amigos" counter, so list/number never diverge.
+  app.get('/users/:id/friends', { onRequest: [app.authenticate] }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const query = request.query as { page?: string; pageSize?: string };
+    const page = Number.parseInt(query.page ?? '1', 10) || 1;
+    const pageSize = Number.parseInt(query.pageSize ?? '20', 10) || 20;
+    const result = await listFriends(id, page, pageSize);
+    return reply.send(result);
   });
 };

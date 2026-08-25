@@ -31,6 +31,8 @@ import { configRoutes } from './modules/config/config.routes.js';
 import { adminRoutes } from './modules/admin/admin.routes.js';
 import { friendRoutes } from './modules/friends/friend.routes.js';
 import { notificationRoutes } from './modules/notifications/notification.routes.js';
+import { pushRoutes } from './modules/push/push.routes.js';
+import websocket from '@fastify/websocket';
 
 export async function buildServer() {
   const app = Fastify({
@@ -113,6 +115,10 @@ export async function buildServer() {
   // IMPORTANT: register /users/search BEFORE /users/:username so the
   // static "search" path isn't captured as a username param.
   //
+  // Realtime push channel (WebSocket) must be registered BEFORE any route
+  // that uses { websocket: true }.
+  await app.register(websocket);
+
   // All app-facing routes are mounted under /api so the server can later
   // host the staff admin web panel on a separate prefix without collision.
   await app.register(authRoutes, { prefix: '/api/auth' });
@@ -131,6 +137,7 @@ export async function buildServer() {
   await app.register(userRoutes, { prefix: '/api' });
   await app.register(friendRoutes, { prefix: '/api' });
   await app.register(notificationRoutes, { prefix: '/api' });
+  await app.register(pushRoutes, { prefix: '/api' });
   await app.register(uploadRoutes, { prefix: '/api' });
 
   // Health check (unauthenticated, unrate-limited-friendly). Reports the

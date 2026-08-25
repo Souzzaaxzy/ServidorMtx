@@ -47,6 +47,7 @@ model User {
   likes        Like[]
   comments     Comment[]
   sessions     Session[]
+  devices      Device[]
 
   sentFriendRequests     FriendRequest[] @relation("sentFriendRequests")
   receivedFriendRequests FriendRequest[] @relation("receivedFriendRequests")
@@ -130,6 +131,24 @@ model Session {
 
   @@index([userId])
   @@map("sessions")
+}
+
+// Push notification device tokens. One row per device/install; the token is
+// unique globally and bound to a user so the push dispatcher can resolve
+// "which devices belong to recipient X" without ever treating a token as an
+// identity. Platform is free-form ("android", "ios") for future clients.
+model Device {
+  id        String   @id @default(cuid())
+  userId    String
+  token     String   @unique
+  platform  String   @default("android")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("devices")
 }
 
 // ── Social: friend requests, friendships & notifications ──────
