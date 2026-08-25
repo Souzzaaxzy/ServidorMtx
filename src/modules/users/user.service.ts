@@ -12,6 +12,9 @@ export async function getProfile(
   const user = await prisma.user.findUnique({
     where: { username: normalizeUsername(username) },
     include: {
+      // Equipped cosmetics ride along so any profile (own or someone
+      // else's) can render frames/badges without an extra request.
+      equippedItems: { include: { item: true } },
       posts: {
         orderBy: { createdAt: 'desc' },
         take: 50,

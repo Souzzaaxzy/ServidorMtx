@@ -23,19 +23,54 @@ export function toPublicUser(user: User): PublicUser {
 }
 
 // Authenticated user — includes role (only the current user's own data).
+
+// A cosmetic equipped in a slot (AVATAR_FRAME, BADGE, PROFILE_EFFECT, …).
+// Generic by design: new cosmetic types are data, not code — the app maps
+// slots to renderers (AvatarFrame, Badge, …) without a server change.
+export interface EquippedCosmetic {
+  itemId: string;
+  name: string;
+  assetUrl: string;
+  rarity: string;
+}
+
+export type CustomizationMap = Record<string, EquippedCosmetic>;
+
+type WithEquippedItems = {
+  equippedItems?: {
+    slot: string;
+    item: { id: string; name: string; assetUrl: string; rarity: string };
+  }[];
+};
+
+export function customizationMap(user: WithEquippedItems): CustomizationMap {
+  const map: CustomizationMap = {};
+  for (const e of user.equippedItems ?? []) {
+    map[e.slot] = {
+      itemId: e.item.id,
+      name: e.item.name,
+      assetUrl: e.item.assetUrl,
+      rarity: e.item.rarity,
+    };
+  }
+  return map;
+}
+
 // Profile user — a public user plus real aggregate counters. The profile
 // screen renders Amigos/Posts from these; counting is done server-side
-// (accepted friendships only, all posts of the user).
+// (accepted friendships only, all posts of the user). `customization`
+// carries the VIEWED user's equipped cosmetics so any profile renders them.
 export interface ProfileUser extends PublicUser {
   friendsCount: number;
   postsCount: number;
+  customization: CustomizationMap;
 }
 
 export function toProfileUser(
-  user: User,
+  user: User & WithEquippedItems,
   counts: { friendsCount: number; postsCount: number },
 ): ProfileUser {
-  return { ...toPublicUser(user), ...counts };
+  return { ...toPublicUser(user), ...counts, customization: customizationMap(user) };
 }
 
 export interface AuthUser extends PublicUser {

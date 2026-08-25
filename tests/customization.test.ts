@@ -135,4 +135,50 @@ describe('Customization — Personalization Engine', () => {
     });
     expect(res.statusCode).toBe(404);
   });
+
+  it('embeds the viewed user customization in the profile payload', async () => {
+    const owner = await createAndLoginUser(server, { username: 'cosme_owner' });
+    const viewer = await createAndLoginUser(server, { username: 'cosme_viewer' });
+
+    // Default profile: an empty customization map (nothing equipped).
+    const plain = await server.inject({
+      method: 'GET',
+      url: `/api/users/${owner.username}`,
+      headers: { authorization: `Bearer ${viewer.accessToken}` },
+    });
+    expect(plain.statusCode).toBe(200);
+    expect(JSON.parse(plain.payload).user.customization).toEqual({});
+
+    // Owner equips a frame — anyone viewing the profile sees it.
+    await prisma.item.upsert({
+      where: { id: 'frame_profile_embed' },
+      update: {},
+      create: {
+        id: 'frame_profile_embed',
+        type: 'AVATAR_FRAME',
+        name: 'Profile Frame',
+        assetUrl: 'frames/profile',
+        rarity: 'EPIC',
+        price: 0,
+      },
+    });
+    await grantItem(owner.id, 'frame_profile_embed');
+    await server.inject({
+      method: 'POST',
+      url: '/api/customization/equip/frame_profile_embed',
+      headers: { authorization: `Bearer ${owner.accessToken}` },
+    });
+
+    const res = await server.inject({
+      method: 'GET',
+      url: `/api/users/${owner.username}`,
+      headers: { authorization: `Bearer ${viewer.accessToken}` },
+    });
+    const customization = JSON.parse(res.payload).user.customization;
+    expect(customization.AVATAR_FRAME).toMatchObject({
+      itemId: 'frame_profile_embed',
+      name: 'Profile Frame',
+      rarity: 'EPIC',
+    });
+  });
 });

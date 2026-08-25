@@ -103,4 +103,73 @@ describe('Likes', () => {
     });
     expect(res.statusCode).toBe(404);
   });
+
+  it('profile posts: liked reflects the AUTHENTICATED VIEWER, never the author', async () => {
+    const author = await createAndLoginUser(server, { username: 'likeauthor5' });
+    const viewer = await createAndLoginUser(server, { username: 'viewer5' });
+    const post = await seedPost(author.id);
+
+    // The AUTHOR likes their own post.
+    await server.inject({
+      method: 'POST',
+      url: `/api/posts/${post.id}/like`,
+      headers: { authorization: `Bearer ${author.accessToken}` },
+    });
+
+    // The viewer opens the author's profile: the heart must be EMPTY for
+    // them — the author's own like must not leak into the viewer's state.
+    const viewed = await server.inject({
+      method: 'GET',
+      url: `/api/users/${author.username}`,
+      headers: { authorization: `Bearer ${viewer.accessToken}` },
+    });
+    const viewedBody = JSON.parse(viewed.payload);
+    expect(viewedBody.posts[0].liked).toBe(false);
+    expect(viewedBody.posts[0].likeCount).toBe(1);
+
+    // Same guarantee on the post detail endpoint.
+    const detail = await server.inject({
+      method: 'GET',
+      url: `/api/posts/${post.id}`,
+      headers: { authorization: `Bearer ${viewer.accessToken}` },
+    });
+    expect(JSON.parse(detail.payload).liked).toBe(false);
+
+    // The author, looking at their own profile, sees their own like.
+    const own = await server.inject({
+      method: 'GET',
+      url: `/api/users/${author.username}`,
+      headers: { authorization: `Bearer ${author.accessToken}` },
+    });
+    expect(JSON.parse(own.payload).posts[0].liked).toBe(true);
+
+    // After the viewer likes it, BOTH profile and detail reflect it — and
+    // the state survives a fresh request (persisted server-side).
+    await server.inject({
+      method: 'POST',
+      url: `/api/posts/${post.id}/like`,
+      headers: { authorization: `Bearer ${viewer.accessToken}` },
+    });
+    const viewedAgain = await server.inject({
+      method: 'GET',
+      url: `/api/users/${author.username}`,
+      headers: { authorization: `Bearer ${viewer.accessToken}` },
+    });
+    expect(JSON.parse(viewedAgain.payload).posts[0].liked).toBe(true);
+    const detailAgain = await server.inject({
+      method: 'GET',
+      url: `/api/posts/${post.id}`,
+      headers: { authorization: `Bearer ${viewer.accessToken}` },
+    });
+    const detailBody = JSON.parse(detailAgain.payload);
+    expect(detailBody.liked).toBe(true);
+    expect(detailBody.likeCount).toBe(2);
+
+    // Unauthenticated requests never get a personalized liked=true.
+    const anonymous = await server.inject({
+      method: 'GET',
+      url: `/api/posts/${post.id}`,
+    });
+    expect(JSON.parse(anonymous.payload).liked).toBe(false);
+  });
 });
