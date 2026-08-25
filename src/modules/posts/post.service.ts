@@ -1,5 +1,6 @@
 import { Prisma } from '../../generated/index.js';
 import { prisma } from '../../config/prisma.js';
+import { deleteLocalFileByUrl } from '../uploads/upload.service.js';
 import { ApiError } from '../../utils/errors.js';
 import { toFeedPost, type FeedPost } from '../../utils/dto.js';
 import type { CreatePostInput, FeedQuery } from './post.schema.js';
@@ -99,4 +100,16 @@ export async function deletePost(userId: string, postId: string): Promise<void> 
     throw ApiError.forbidden('Você não pode excluir a publicação de outro usuário.');
   }
   await prisma.post.delete({ where: { id: postId } });
+
+  // Clean up the stored image, but only when nothing else references the
+  // same URL (another post, or the owner's avatar). Likes and comments are
+  // removed by the Prisma onDelete: Cascade relations.
+  if (post.imageUrl) {
+    const stillUsed =
+      (await prisma.post.count({ where: { imageUrl: post.imageUrl } })) > 0 ||
+      (await prisma.user.count({ where: { avatarUrl: post.imageUrl } })) > 0;
+    if (!stillUsed) {
+      await deleteLocalFileByUrl(post.imageUrl).catch(() => void 0);
+    }
+  }
 }

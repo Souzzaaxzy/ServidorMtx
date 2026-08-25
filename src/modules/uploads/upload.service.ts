@@ -77,6 +77,28 @@ export async function saveLocalFile(
 }
 
 /**
+ * Best-effort deletion of a locally stored upload referenced by a
+ * `/static/<file>` URL (relative or absolute). Only the basename is used and
+ * the resolved path is verified to stay inside the upload directory, so a
+ * crafted URL can never reach outside it. URLs that don't point to a local
+ * /static file are ignored.
+ */
+export async function deleteLocalFileByUrl(url: string): Promise<void> {
+  const marker = '/static/';
+  const idx = url.indexOf(marker);
+  if (idx === -1) return;
+  const name = path.basename(url.slice(idx + marker.length));
+  if (!name) return;
+  const fullPath = path.join(UPLOAD_DIR, name);
+  if (path.dirname(fullPath) !== UPLOAD_DIR) return;
+  try {
+    await fs.unlink(fullPath);
+  } catch {
+    // File may already be gone — deletion is best-effort.
+  }
+}
+
+/**
  * Stores an uploaded file. Uses local filesystem when no S3-compatible
  * endpoint is configured (env.storage.useLocal). The S3 path is a stub for
  * a future implementation — the local path is the default.

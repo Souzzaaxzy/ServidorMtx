@@ -17,6 +17,27 @@ async function seedPost(userId: string) {
 }
 
 describe('Likes', () => {
+  it('rejects a bodyless POST carrying a JSON content-type with 400 (not 500)', async () => {
+    // Regression: a client that globally sets 'Content-Type: application/json'
+    // and then POSTs without a body (the old MatrixApp like bug) must get a
+    // clear 400, never an opaque 500.
+    const author = await createAndLoginUser(server, { username: 'likeauthor0' });
+    const liker = await createAndLoginUser(server, { username: 'liker0' });
+    const post = await seedPost(author.id);
+
+    const res = await server.inject({
+      method: 'POST',
+      url: `/api/posts/${post.id}/like`,
+      headers: {
+        authorization: `Bearer ${liker.accessToken}`,
+        'content-type': 'application/json',
+      },
+      // no payload — body is empty
+    });
+    expect(res.statusCode).toBe(400);
+    expect(JSON.parse(res.payload).error.code).toBe('INVALID_REQUEST');
+  });
+
   it('likes a post and returns likeCount', async () => {
     const author = await createAndLoginUser(server, { username: 'likeauthor' });
     const liker = await createAndLoginUser(server, { username: 'liker1' });
