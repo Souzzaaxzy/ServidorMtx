@@ -16,6 +16,33 @@ export const UserRole = {
 } as const;
 export type UserRole = (typeof UserRole)[keyof typeof UserRole];
 
+export const FriendRequestStatus = {
+  PENDING: 'PENDING',
+  ACCEPTED: 'ACCEPTED',
+  REJECTED: 'REJECTED',
+} as const;
+export type FriendRequestStatus =
+  (typeof FriendRequestStatus)[keyof typeof FriendRequestStatus];
+
+// Friendship relationship as seen by the viewer on a other user's profile.
+export const FriendshipState = {
+  NONE: 'NONE',
+  OUTGOING_PENDING: 'OUTGOING_PENDING',
+  INCOMING_PENDING: 'INCOMING_PENDING',
+  FRIENDS: 'FRIENDS',
+} as const;
+export type FriendshipState =
+  (typeof FriendshipState)[keyof typeof FriendshipState];
+
+export const NotificationType = {
+  LIKE: 'LIKE',
+  COMMENT: 'COMMENT',
+  FRIEND_REQUEST: 'FRIEND_REQUEST',
+  FRIEND_ACCEPTED: 'FRIEND_ACCEPTED',
+} as const;
+export type NotificationType =
+  (typeof NotificationType)[keyof typeof NotificationType];
+
 export const ItemType = {
   AVATAR_FRAME: 'AVATAR_FRAME',
   PROFILE_BANNER: 'PROFILE_BANNER',

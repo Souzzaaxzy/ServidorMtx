@@ -48,6 +48,13 @@ model User {
   comments     Comment[]
   sessions     Session[]
 
+  sentFriendRequests     FriendRequest[] @relation("sentFriendRequests")
+  receivedFriendRequests FriendRequest[] @relation("receivedFriendRequests")
+  friendshipOnes         Friendship[]    @relation("friendshipOne")
+  friendshipTwos         Friendship[]    @relation("friendshipTwo")
+  notificationsReceived  Notification[]  @relation("notificationsReceived")
+  notificationsSent      Notification[]  @relation("notificationsSent")
+
   xpTransactions     XpTransaction[]
   coinTransactions   CoinTransaction[]
   userCoins          MatrixCoin?
@@ -123,6 +130,70 @@ model Session {
 
   @@index([userId])
   @@map("sessions")
+}
+
+// ── Social: friend requests, friendships & notifications ──────
+// FriendRequest tracks the pending/accepted/rejected lifecycle. The pair
+// (senderId, receiverId) is unique, so duplicate requests are impossible.
+// On REJECT the row is deleted (allowing a future retry); on ACCEPT a
+// Friendship row is created.
+
+model FriendRequest {
+  id         String   @id @default(cuid())
+  senderId   String
+  receiverId String
+  // PENDING | ACCEPTED | REJECTED (plain string — SQLite has no enums).
+  status     String   @default("PENDING")
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  sender   User @relation("sentFriendRequests", fields: [senderId], references: [id], onDelete: Cascade)
+  receiver User @relation("receivedFriendRequests", fields: [receiverId], references: [id], onDelete: Cascade)
+
+  notifications Notification[]
+
+  @@unique([senderId, receiverId])
+  @@index([receiverId, status])
+  @@map("friend_requests")
+}
+
+// Friendship stores a single unordered pair (ids sorted at insert) so
+// A→B and B→A never duplicate. The relation is mutual by construction.
+model Friendship {
+  id        String   @id @default(cuid())
+  userOneId String
+  userTwoId String
+  createdAt DateTime @default(now())
+
+  userOne User @relation("friendshipOne", fields: [userOneId], references: [id], onDelete: Cascade)
+  userTwo User @relation("friendshipTwo", fields: [userTwoId], references: [id], onDelete: Cascade)
+
+  @@unique([userOneId, userTwoId])
+  @@map("friendships")
+}
+
+// Notifications are persistent (SQLite) and always scoped to their
+// recipient. postId/commentId/friendRequestId point at the related entity
+// when relevant, otherwise stay null.
+model Notification {
+  id              String        @id @default(cuid())
+  recipientId     String
+  actorId         String
+  // LIKE | COMMENT | FRIEND_REQUEST | FRIEND_ACCEPTED (extensible).
+  type            String
+  postId          String?
+  commentId       String?
+  friendRequestId String?
+  read            Boolean       @default(false)
+  createdAt       DateTime      @default(now())
+
+  recipient    User           @relation("notificationsReceived", fields: [recipientId], references: [id], onDelete: Cascade)
+  actor        User           @relation("notificationsSent", fields: [actorId], references: [id], onDelete: Cascade)
+  friendRequest FriendRequest? @relation(fields: [friendRequestId], references: [id], onDelete: Cascade)
+
+  @@index([recipientId, read])
+  @@index([createdAt])
+  @@map("notifications")
 }
 
 // ── Gamification ─────────────────────────────────────────────

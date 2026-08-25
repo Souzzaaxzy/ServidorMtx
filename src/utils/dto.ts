@@ -1,5 +1,4 @@
-import type { Post, User } from '../generated/index.js';
-import type { Comment } from '../generated/index.js';
+import type { Comment, FriendRequest, Notification, Post, User } from '../generated/index.js';
 
 // Public user shape — never exposes passwordHash, recoveryCodeHash or role
 // internals to other users.
@@ -102,3 +101,76 @@ export function toPostComment(
     },
   };
 }
+
+// ── Social: friend requests & notifications ──────────────────
+// The shapes the APK consumes. The actor (other user) is embedded in every
+// notification so the client never needs a second lookup; friend request
+// status is embedded when the notification references one.
+
+const ACTOR_SELECT = {
+  id: true,
+  name: true,
+  username: true,
+  avatarUrl: true,
+} as const;
+
+export interface FriendRequestItem {
+  id: string;
+  status: string;
+  createdAt: string;
+  sender: Pick<PublicUser, 'id' | 'name' | 'username' | 'avatarUrl'>;
+}
+
+export function toFriendRequestItem(
+  request: FriendRequest & { sender: Pick<User, 'id' | 'name' | 'username' | 'avatarUrl'> },
+): FriendRequestItem {
+  return {
+    id: request.id,
+    status: request.status,
+    createdAt: request.createdAt.toISOString(),
+    sender: {
+      id: request.sender.id,
+      name: request.sender.name,
+      username: request.sender.username,
+      avatarUrl: request.sender.avatarUrl,
+    },
+  };
+}
+
+export interface NotificationItem {
+  id: string;
+  type: string;
+  read: boolean;
+  createdAt: string;
+  postId: string | null;
+  commentId: string | null;
+  friendRequestId: string | null;
+  friendRequestStatus: string | null;
+  actor: Pick<PublicUser, 'id' | 'name' | 'username' | 'avatarUrl'>;
+}
+
+export function toNotificationItem(
+  notification: Notification & {
+    actor: Pick<User, 'id' | 'name' | 'username' | 'avatarUrl'>;
+    friendRequest?: { id: string; status: string } | null;
+  },
+): NotificationItem {
+  return {
+    id: notification.id,
+    type: notification.type,
+    read: notification.read,
+    createdAt: notification.createdAt.toISOString(),
+    postId: notification.postId,
+    commentId: notification.commentId,
+    friendRequestId: notification.friendRequestId,
+    friendRequestStatus: notification.friendRequest?.status ?? null,
+    actor: {
+      id: notification.actor.id,
+      name: notification.actor.name,
+      username: notification.actor.username,
+      avatarUrl: notification.actor.avatarUrl,
+    },
+  };
+}
+
+export { ACTOR_SELECT as NOTIFICATION_ACTOR_SELECT };

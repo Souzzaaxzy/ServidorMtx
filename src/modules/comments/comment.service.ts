@@ -3,6 +3,7 @@ import { ApiError } from '../../utils/errors.js';
 import { toPostComment, type PostComment } from '../../utils/dto.js';
 import type { CreateCommentInput, ListCommentsQuery } from './comment.schema.js';
 import { grantXp, XP_REWARDS, XpReason } from '../../gamification/xp.service.js';
+import { NotificationType } from '../../types/enums.js';
 
 const COMMENT_INCLUDE = {
   user: { select: { id: true, name: true, username: true, avatarUrl: true } },
@@ -13,7 +14,7 @@ export async function createComment(
   postId: string,
   input: CreateCommentInput,
 ): Promise<PostComment> {
-  const post = await prisma.post.findUnique({ where: { id: postId }, select: { id: true } });
+  const post = await prisma.post.findUnique({ where: { id: postId }, select: { id: true, userId: true } });
   if (!post) throw ApiError.notFound('Publicação não encontrada.');
 
   const comment = await prisma.comment.create({
@@ -23,6 +24,19 @@ export async function createComment(
 
   // Server-controlled reward for engagement.
   await grantXp({ userId, amount: XP_REWARDS.COMMENT_CREATED, reason: XpReason.COMMENT_CREATED, source: `comment:${postId}` }).catch(() => void 0);
+
+  // Notify the post author — never the commenter themselves.
+  if (post.userId !== userId) {
+    await prisma.notification.create({
+      data: {
+        recipientId: post.userId,
+        actorId: userId,
+        type: NotificationType.COMMENT,
+        postId,
+        commentId: comment.id,
+      },
+    });
+  }
 
   return toPostComment(comment);
 }
