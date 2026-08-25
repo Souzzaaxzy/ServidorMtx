@@ -16,7 +16,21 @@ export interface CatalogItem {
   price: number;
   category: string | null;
   sortOrder: number;
+  config: Record<string, unknown>;
   active: boolean;
+}
+
+// The catalog stores `config` as a JSON string (SQLite has no Json type).
+// A malformed row must never break the whole catalog — fall back to {}.
+function parseConfig(raw: string): Record<string, unknown> {
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {};
+  } catch {
+    return {};
+  }
 }
 
 export async function listCatalog(type?: ItemType): Promise<CatalogItem[]> {
@@ -35,6 +49,7 @@ export async function listCatalog(type?: ItemType): Promise<CatalogItem[]> {
     price: i.price,
     category: i.category,
     sortOrder: i.sortOrder,
+    config: parseConfig(i.config),
     active: i.active,
   }));
 }
@@ -82,6 +97,7 @@ export interface EquippedSlot {
   name: string;
   assetUrl: string;
   rarity: string;
+  config: Record<string, unknown>;
 }
 
 export async function getEquipped(userId: string): Promise<EquippedSlot[]> {
@@ -95,8 +111,15 @@ export async function getEquipped(userId: string): Promise<EquippedSlot[]> {
     name: r.item.name,
     assetUrl: r.item.assetUrl,
     rarity: r.item.rarity,
+    config: parseConfig(r.item.config),
   }));
 }
+
+// Free cosmetic types: no ownership required. NAME_COLOR entries are free
+// palette colors and NAME_EFFECT entries are free catalog effects — the
+// id/active/type validation is what stops arbitrary values (a client-sent
+// hex, CSS or animation name is meaningless here; only catalog ids equip).
+const FREE_EQUIP_TYPES: ItemType[] = [ItemType.NAME_COLOR, ItemType.NAME_EFFECT];
 
 // Equip an item. The server is the ONLY authority on what can be equipped:
 //   1. the item must exist in the catalog;
@@ -104,14 +127,11 @@ export async function getEquipped(userId: string): Promise<EquippedSlot[]> {
 //   3. its slot is ALWAYS derived from the item's own type — the client can
 //      never claim an item belongs to a different slot;
 //   4. ownership is enforced for collectible items (frames, banners, ...).
-//      NAME_COLOR entries are free palette colors, so ownership is not
-//      required — the validation above is what stops arbitrary values
-//      (a client-sent hex is meaningless here; only catalog ids equip).
 export async function equipItem(userId: string, itemId: string): Promise<EquippedSlot> {
   const item = await prisma.item.findUnique({ where: { id: itemId } });
   if (!item || !item.active) throw ApiError.notFound('Item não encontrado.');
 
-  if (item.type !== ItemType.NAME_COLOR) {
+  if (!FREE_EQUIP_TYPES.includes(item.type as ItemType)) {
     const owned = await prisma.userItem.findUnique({
       where: { userId_itemId: { userId, itemId } },
     });
@@ -133,11 +153,76 @@ export async function equipItem(userId: string, itemId: string): Promise<Equippe
     name: item.name,
     assetUrl: item.assetUrl,
     rarity: item.rarity,
+    config: parseConfig(item.config),
   };
 }
 
 export async function unequipSlot(userId: string, slot: ItemType): Promise<void> {
   await prisma.equippedItem.deleteMany({ where: { userId, slot } });
+}
+
+// ── Consolidated nickname cosmetics ──────────────────────────
+// The app sends the WHOLE pending personalization in one operation ("SALVAR
+// ALTERAÇÕES") instead of saving each slot individually. nameColorId and
+// nameEffectId are fully independent — any color combines with any effect.
+//   - string id → equip (must exist, be active and have the right type);
+//   - null      → unequip the slot ("nenhum efeito" / default color);
+//   - absent    → leave the slot untouched.
+// Future slots (frameId, badgeId, …) extend this same shape.
+export interface NicknameCosmeticsInput {
+  nameColorId?: string | null;
+  nameEffectId?: string | null;
+}
+
+export interface NicknameCosmetics {
+  nameColorId: string | null;
+  nameEffectId: string | null;
+}
+
+async function validateCatalogId(itemId: string, expectedType: ItemType): Promise<void> {
+  const item = await prisma.item.findUnique({ where: { id: itemId } });
+  if (!item || !item.active || item.type !== expectedType) {
+    throw ApiError.invalidRequest('Personalização inválida.');
+  }
+}
+
+export async function saveCosmetics(
+  userId: string,
+  input: NicknameCosmeticsInput,
+): Promise<NicknameCosmetics> {
+  if (input.nameColorId != null) await validateCatalogId(input.nameColorId, ItemType.NAME_COLOR);
+  if (input.nameEffectId != null) await validateCatalogId(input.nameEffectId, ItemType.NAME_EFFECT);
+
+  await prisma.$transaction(async (tx) => {
+    const apply = async (slot: ItemType, itemId: string | null | undefined) => {
+      if (itemId === undefined) return;
+      if (itemId === null) {
+        await tx.equippedItem.deleteMany({ where: { userId, slot } });
+      } else {
+        await tx.equippedItem.upsert({
+          where: { userId_slot: { userId, slot } },
+          update: { itemId },
+          create: { userId, itemId, slot },
+        });
+      }
+    };
+    await apply(ItemType.NAME_COLOR, input.nameColorId);
+    await apply(ItemType.NAME_EFFECT, input.nameEffectId);
+  });
+
+  return getCosmetics(userId);
+}
+
+export async function getCosmetics(userId: string): Promise<NicknameCosmetics> {
+  const rows = await prisma.equippedItem.findMany({
+    where: { userId, slot: { in: [ItemType.NAME_COLOR, ItemType.NAME_EFFECT] } },
+    select: { slot: true, itemId: true },
+  });
+  const bySlot = new Map(rows.map((r) => [r.slot, r.itemId]));
+  return {
+    nameColorId: bySlot.get(ItemType.NAME_COLOR) ?? null,
+    nameEffectId: bySlot.get(ItemType.NAME_EFFECT) ?? null,
+  };
 }
 
 export { ItemType } from '../../types/enums.js';

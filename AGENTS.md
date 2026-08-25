@@ -85,3 +85,18 @@ PostgreSQL). Runs on Pterodactyl/Bronxys via `npm start` (self-provisions).
 
 ## Git identity
 openhands / openhands@all-hands.dev
+
+## Nickname cosmetics (colors + effects)
+- Two INDEPENDENT slots: `NAME_COLOR` (hex in `assetUrl`) and `NAME_EFFECT`
+  (render contract in `items.config` as JSON string — SQLite has no Json).
+- Effects catalog: `prisma/name-effects.ts` (88 effects, 9 categories),
+  upserted on every boot by `syncCatalog()` in seed.ts. Both types are
+  free (no ownership) — see FREE_EQUIP_TYPES in customization.service.ts.
+- Consolidated save: `PUT /api/customization/cosmetics` accepts
+  `{ nameColorId?, nameEffectId? }` (string=equip, null=unequip, absent=
+  untouched) in ONE transaction; strict allow-list rejects CSS/JS/unknown
+  fields. `GET /api/customization/cosmetics` returns the saved pair.
+- Every nickname payload (feed, comments, profile, search, friends,
+  notifications) embeds the OWNER's `nameColor/nameColorId/nameEffectId/
+  nameEffect` via `NICKNAME_COSMETICS_SELECT` + `nicknameCosmetics()` in
+  src/utils/dto.ts.

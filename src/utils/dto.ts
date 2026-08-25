@@ -1,51 +1,108 @@
 import type { Comment, FriendRequest, Notification, Post, User } from '../generated/index.js';
 
-// ── Nickname colors ──────────────────────────────────────────
-// A user's nickname color is the cosmetic equipped in the NAME_COLOR slot;
-// the equipped item's assetUrl carries the hex value (the server owns the
-// palette — clients never send raw hex). Every payload that renders a
-// nickname embeds the OWNER's resolved color so each user keeps their own
-// color everywhere (feed, comments, friends, notifications, search, ...).
+// ── Nickname cosmetics (color + effect) ──────────────────────
+// A user's nickname color is the cosmetic equipped in the NAME_COLOR slot
+// (assetUrl carries the hex — the server owns the palette) and the nickname
+// effect is the cosmetic equipped in the NAME_EFFECT slot (config carries
+// the JSON render contract — the server owns the effects catalog). Both are
+// FULLY independent: any color combines with any effect. Every payload that
+// renders a nickname embeds the OWNER's resolved cosmetics so each user
+// keeps their own look everywhere (feed, comments, friends, notifications,
+// search, ...).
 export const NAME_COLOR_SLOT = 'NAME_COLOR';
+export const NAME_EFFECT_SLOT = 'NAME_EFFECT';
 
-// Shared select for "user summary + equipped name color". Spreading this
-// into an author/actor select adds the one equipped NAME_COLOR row (if
-// any) with just the fields needed to resolve the hex.
-export const NAME_COLOR_SELECT = {
+// Shared select for "user summary + equipped nickname cosmetics". Spreading
+// this into an author/actor select adds the equipped NAME_COLOR/NAME_EFFECT
+// rows (if any) with just the fields needed to resolve color + effect.
+export const NICKNAME_COSMETICS_SELECT = {
   equippedItems: {
-    where: { slot: NAME_COLOR_SLOT },
-    select: { item: { select: { assetUrl: true } } },
+    where: { slot: { in: [NAME_COLOR_SLOT, NAME_EFFECT_SLOT] as string[] } },
+    select: { slot: true, item: { select: { id: true, name: true, assetUrl: true, config: true } } },
   },
 } as const;
+
+// Backwards-compatible alias (older call sites only asked for the color).
+export const NAME_COLOR_SELECT = NICKNAME_COSMETICS_SELECT;
 
 export const AUTHOR_SELECT = {
   id: true,
   name: true,
   username: true,
   avatarUrl: true,
-  ...NAME_COLOR_SELECT,
+  ...NICKNAME_COSMETICS_SELECT,
 } as const;
 
 export type WithNameColor = {
-  equippedItems?: { item: { assetUrl: string } }[];
+  equippedItems?: {
+    slot: string;
+    item: { id: string; name: string; assetUrl: string; config: string };
+  }[];
 };
+
+// Parses the catalog item's JSON render config (SQLite stores it as text).
+function parseEffectConfig(raw: string): Record<string, unknown> {
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {};
+  } catch {
+    return {};
+  }
+}
 
 // Resolves the equipped name color to its hex value, or null when the user
 // has none equipped (→ the app's default nickname color).
 export function nameColorHex(user: WithNameColor): string | null {
-  return user.equippedItems?.[0]?.item.assetUrl ?? null;
+  return user.equippedItems?.find((e) => e.slot === NAME_COLOR_SLOT)?.item.assetUrl ?? null;
+}
+
+export function nameColorId(user: WithNameColor): string | null {
+  return user.equippedItems?.find((e) => e.slot === NAME_COLOR_SLOT)?.item.id ?? null;
+}
+
+// The equipped name effect with everything the app's NicknameRenderer needs
+// to draw it — or null for "nenhum efeito" (the plain colored nickname).
+export interface NameEffectPayload {
+  id: string;
+  name: string;
+  config: Record<string, unknown>;
+}
+
+export function nameEffect(user: WithNameColor): NameEffectPayload | null {
+  const row = user.equippedItems?.find((e) => e.slot === NAME_EFFECT_SLOT);
+  if (!row) return null;
+  return { id: row.item.id, name: row.item.name, config: parseEffectConfig(row.item.config) };
+}
+
+// The nickname cosmetics fragment embedded in every author/actor payload.
+export interface NicknameCosmeticsPayload {
+  nameColor: string | null;
+  nameColorId: string | null;
+  nameEffectId: string | null;
+  nameEffect: NameEffectPayload | null;
+}
+
+export function nicknameCosmetics(user: WithNameColor): NicknameCosmeticsPayload {
+  const effect = nameEffect(user);
+  return {
+    nameColor: nameColorHex(user),
+    nameColorId: nameColorId(user),
+    nameEffectId: effect?.id ?? null,
+    nameEffect: effect,
+  };
 }
 
 // Public user shape — never exposes passwordHash, recoveryCodeHash or role
 // internals to other users.
-export interface PublicUser {
+export interface PublicUser extends NicknameCosmeticsPayload {
   id: string;
   name: string;
   username: string;
   avatarUrl: string | null;
   bio: string;
   createdAt: string;
-  nameColor: string | null;
 }
 
 export function toPublicUser(
@@ -59,7 +116,7 @@ export function toPublicUser(
     avatarUrl: user.avatarUrl,
     bio: user.bio,
     createdAt: user.createdAt.toISOString(),
-    nameColor: nameColorHex(user),
+    ...nicknameCosmetics(user),
   };
 }
 
@@ -73,6 +130,7 @@ export interface EquippedCosmetic {
   name: string;
   assetUrl: string;
   rarity: string;
+  config: Record<string, unknown>;
 }
 
 export type CustomizationMap = Record<string, EquippedCosmetic>;
@@ -80,7 +138,7 @@ export type CustomizationMap = Record<string, EquippedCosmetic>;
 type WithEquippedItems = {
   equippedItems?: {
     slot: string;
-    item: { id: string; name: string; assetUrl: string; rarity: string };
+    item: { id: string; name: string; assetUrl: string; rarity: string; config: string };
   }[];
 };
 
@@ -92,6 +150,7 @@ export function customizationMap(user: WithEquippedItems): CustomizationMap {
       name: e.item.name,
       assetUrl: e.item.assetUrl,
       rarity: e.item.rarity,
+      config: parseEffectConfig(e.item.config),
     };
   }
   return map;
@@ -132,7 +191,7 @@ export interface FeedPost {
   text: string | null;
   imageUrl: string | null;
   createdAt: string;
-  author: Pick<PublicUser, 'id' | 'name' | 'username' | 'avatarUrl' | 'nameColor'>;
+  author: Pick<PublicUser, 'id' | 'name' | 'username' | 'avatarUrl'> & NicknameCosmeticsPayload;
   likeCount: number;
   liked: boolean;
   commentCount: number;
@@ -163,7 +222,7 @@ export function toFeedPost(
       name: post.user.name,
       username: post.user.username,
       avatarUrl: post.user.avatarUrl,
-      nameColor: nameColorHex(post.user),
+      ...nicknameCosmetics(post.user),
     },
     likeCount: post._count?.likes ?? 0,
     liked,
@@ -175,7 +234,7 @@ export interface PostComment {
   id: string;
   text: string;
   createdAt: string;
-  author: Pick<PublicUser, 'id' | 'name' | 'username' | 'avatarUrl' | 'nameColor'>;
+  author: Pick<PublicUser, 'id' | 'name' | 'username' | 'avatarUrl'> & NicknameCosmeticsPayload;
 }
 
 export function toPostComment(
@@ -192,7 +251,7 @@ export function toPostComment(
       name: comment.user.name,
       username: comment.user.username,
       avatarUrl: comment.user.avatarUrl,
-      nameColor: nameColorHex(comment.user),
+      ...nicknameCosmetics(comment.user),
     },
   };
 }
@@ -210,7 +269,7 @@ export interface FriendRequestItem {
   id: string;
   status: string;
   createdAt: string;
-  sender: Pick<PublicUser, 'id' | 'name' | 'username' | 'avatarUrl' | 'nameColor'>;
+  sender: Pick<PublicUser, 'id' | 'name' | 'username' | 'avatarUrl'> & NicknameCosmeticsPayload;
 }
 
 export function toFriendRequestItem(
@@ -227,7 +286,7 @@ export function toFriendRequestItem(
       name: request.sender.name,
       username: request.sender.username,
       avatarUrl: request.sender.avatarUrl,
-      nameColor: nameColorHex(request.sender),
+      ...nicknameCosmetics(request.sender),
     },
   };
 }
@@ -241,7 +300,7 @@ export interface NotificationItem {
   commentId: string | null;
   friendRequestId: string | null;
   friendRequestStatus: string | null;
-  actor: Pick<PublicUser, 'id' | 'name' | 'username' | 'avatarUrl' | 'nameColor'>;
+  actor: Pick<PublicUser, 'id' | 'name' | 'username' | 'avatarUrl'> & NicknameCosmeticsPayload;
 }
 
 export function toNotificationItem(
@@ -264,7 +323,7 @@ export function toNotificationItem(
       name: notification.actor.name,
       username: notification.actor.username,
       avatarUrl: notification.actor.avatarUrl,
-      nameColor: nameColorHex(notification.actor),
+      ...nicknameCosmetics(notification.actor),
     },
   };
 }

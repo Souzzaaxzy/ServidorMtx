@@ -1,5 +1,6 @@
 import { PrismaClient } from '../src/generated/index.js';
 import { hashPassword, generateRecoveryCode, hashRecoveryCode } from '../src/utils/auth.js';
+import { NAME_EFFECTS } from './name-effects.js';
 
 const prisma = new PrismaClient();
 
@@ -123,7 +124,24 @@ async function syncCatalog() {
     update: c,
     create: c,
   })));
-  console.log(`🎨 Catalog synced: ${ITEMS.length} items + ${NAME_COLORS.length} name colors.`);
+  await prisma.$transaction(NAME_EFFECTS.map((e) => prisma.item.upsert({
+    where: { id: e.id },
+    update: { ...e, config: JSON.stringify(e.config) },
+    create: {
+      id: e.id,
+      type: 'NAME_EFFECT',
+      name: e.name,
+      // A name effect has no visual asset — the render contract lives in
+      // `config`; assetUrl stays empty by design.
+      assetUrl: '',
+      rarity: e.rarity,
+      price: 0,
+      category: e.category,
+      sortOrder: 0,
+      config: JSON.stringify(e.config),
+    },
+  })));
+  console.log(`🎨 Catalog synced: ${ITEMS.length} items + ${NAME_COLORS.length} name colors + ${NAME_EFFECTS.length} name effects.`);
 }
 
 async function main() {

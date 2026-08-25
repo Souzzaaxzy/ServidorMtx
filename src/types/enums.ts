@@ -53,6 +53,12 @@ export const ItemType = {
   // (e.g. "#0066FF"); colors are free catalog entries — the server only
   // validates id/active/type on equip, never a client-supplied hex.
   NAME_COLOR: 'NAME_COLOR',
+  // A nickname visual effect (glow, glitch, fire, …). Fully independent
+  // from NAME_COLOR: any color combines with any effect. The item's
+  // `config` JSON describes how the app renders it; effects are free
+  // catalog entries — the server only validates id/active/type on equip,
+  // never a client-supplied animation/CSS.
+  NAME_EFFECT: 'NAME_EFFECT',
 } as const;
 export type ItemType = (typeof ItemType)[keyof typeof ItemType];
 

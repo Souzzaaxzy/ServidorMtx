@@ -351,6 +351,11 @@ model Item {
   // Explicit ordering inside a category (catalogs are curated, not
   // alphabetical).
   sortOrder  Int       @default(0)
+  // JSON-serialized render configuration (SQLite has no Json type). For
+  // NAME_EFFECT items this tells the app HOW to render the effect
+  // (animation, intensity, speed, particles, colors) so render settings
+  // live in the server-owned catalog, not scattered across APK components.
+  config     String    @default("{}")
   active     Boolean   @default(true)
   createdAt  DateTime  @default(now())
   updatedAt  DateTime  @updatedAt
