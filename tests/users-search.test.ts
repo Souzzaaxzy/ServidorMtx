@@ -13,7 +13,7 @@ afterAll(async () => {
 
 describe('Users — profile', () => {
   it('returns a public profile with the user posts', async () => {
-    const u = await createAndLoginUser(server, { username: 'profileuser', name: 'Profile User' });
+    const u = await createAndLoginUser(server, { nickname: 'profileuser', name: 'Profile User' });
     await server.inject({
       method: 'POST',
       url: '/api/posts',
@@ -23,7 +23,7 @@ describe('Users — profile', () => {
     const res = await server.inject({ method: 'GET', url: '/api/users/profileuser' });
     expect(res.statusCode).toBe(200);
     const body = JSON.parse(res.payload);
-    expect(body.user.username).toBe('profileuser');
+    expect(body.user.nickname).toBe('profileuser');
     expect(body.user).not.toHaveProperty('email');
     expect(body.posts).toHaveLength(1);
     expect(body.posts[0].text).toBe('profile post');
@@ -35,15 +35,15 @@ describe('Users — profile', () => {
   });
 
   it('updates the current user profile', async () => {
-    const u = await createAndLoginUser(server, { username: 'updateme' });
+    const u = await createAndLoginUser(server, { nickname: 'updateme' });
     const res = await server.inject({
       method: 'PATCH',
       url: '/api/users/me',
       headers: { authorization: `Bearer ${u.accessToken}` },
-      payload: { name: 'Nome Atualizado', bio: 'Nova bio' },
+      payload: { nickname: 'nomeatualizado', bio: 'Nova bio' },
     });
     expect(res.statusCode).toBe(200);
-    expect(JSON.parse(res.payload).user.name).toBe('Nome Atualizado');
+    expect(JSON.parse(res.payload).user.nickname).toBe('nomeatualizado');
     expect(JSON.parse(res.payload).user.bio).toBe('Nova bio');
   });
 
@@ -54,21 +54,20 @@ describe('Users — profile', () => {
 });
 
 describe('Search — GET /users/search', () => {
-  it('finds users by username substring', async () => {
-    await createAndLoginUser(server, { username: 'searchable', name: 'Alice Search' });
+  it('finds users by nickname substring', async () => {
+    await createAndLoginUser(server, { nickname: 'searchable' });
     const res = await server.inject({ method: 'GET', url: '/api/users/search?q=searc' });
     expect(res.statusCode).toBe(200);
     const body = JSON.parse(res.payload);
-    expect(body.users.map((u: { username: string }) => u.username)).toContain('searchable');
+    expect(body.users.map((u: { nickname: string }) => u.nickname)).toContain('searchable');
   });
 
-  it('finds users by name substring', async () => {
-    await createAndLoginUser(server, { username: 'nameuser', name: 'Zoe Unique' });
-    const res = await server.inject({ method: 'GET', url: '/api/users/search?q=unique' });
+  it('does not return users without match', async () => {
+    await createAndLoginUser(server, { nickname: 'nameuser' });
+    const res = await server.inject({ method: 'GET', url: '/api/users/search?q=zoeunique' });
     expect(res.statusCode).toBe(200);
     const body = JSON.parse(res.payload);
-    expect(body.users).toHaveLength(1);
-    expect(body.users[0].name).toBe('Zoe Unique');
+    expect(body.users).toHaveLength(0);
   });
 
   it('returns empty list for no matches', async () => {

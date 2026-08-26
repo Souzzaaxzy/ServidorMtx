@@ -33,8 +33,9 @@ datasource db {
 
 model User {
   id                String    @id @default(cuid())
-  name              String
-  username          String    @unique
+  // Single visual identity (Phase 5): only `nickname`. Legacy `name`/
+  // `username` were merged by the 20260826_unify_identity_nickname migration.
+  nickname          String    @unique
   passwordHash      String
   recoveryCodeHash  String
   role              String    @default("USER")
@@ -68,7 +69,7 @@ model User {
   gameSessions       GameSession[]
   musicVotes         MusicVote[]
 
-  @@index([username])
+  @@index([nickname])
   @@map("users")
 }
 

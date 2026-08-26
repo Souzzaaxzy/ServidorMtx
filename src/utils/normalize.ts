@@ -1,20 +1,20 @@
-// Input normalization helpers. Centralized so every endpoint treats
-// username consistently regardless of where they enter the system.
+// Input normalization helpers. Centralized so every endpoint treats the
+// nickname consistently regardless of where it enters the system.
 
-// Usernames: lowercase, trim. Allow letters, numbers, underscores, dots, hyphens.
-// Any leading '@' symbols are stripped — the stored username NEVER carries
-// the '@' prefix (legacy clients/users may still prepend it).
-export function normalizeUsername(username: string): string {
-  return username.replace(/^@+/, '').trim().toLowerCase();
+// Nicknames: lowercase, trim. Any leading '@' symbols are stripped — the
+// stored nickname NEVER carries the '@' prefix (legacy clients/users may
+// still prepend it).
+export function normalizeNickname(nickname: string): string {
+  return nickname.replace(/^@+/, '').trim().toLowerCase();
 }
 
-export function isValidUsername(username: string): boolean {
-  const normalized = normalizeUsername(username);
-  // 3-20 chars, start with a letter/digit, allow _ . -
-  return /^[a-z0-9._-]{3,20}$/.test(normalized) && /^[a-z0-9]/.test(normalized);
+export function isValidNickname(nickname: string): boolean {
+  const normalized = normalizeNickname(nickname);
+  // 3-30 chars, start with a letter/digit, allow _ . - and spaces.
+  return /^[a-z0-9._ -]{3,30}$/.test(normalized) && /^[a-z0-9]/.test(normalized);
 }
 
-// MATRIX ID / identifier used during account recovery — accepts a username
+// MATRIX ID / identifier used during account recovery — accepts a nickname
 // or the raw internal id. We don't expose whether a lookup matched so the
 // endpoint can't be used for user enumeration.
 export function normalizeIdentifier(identifier: string): string {

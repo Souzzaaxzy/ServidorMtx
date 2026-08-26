@@ -14,7 +14,7 @@ afterAll(async () => {
 
 describe('Staff admin — role authorization', () => {
   it('forbids a regular USER from the staff panel', async () => {
-    const user = await createAndLoginUser(server, { username: 'plain_user' });
+    const user = await createAndLoginUser(server, { nickname: 'plain_user' });
     const res = await server.inject({
       method: 'GET',
       url: '/api/admin/users',
@@ -29,7 +29,7 @@ describe('Staff admin — role authorization', () => {
   });
 
   it('allows a MODERATOR to list users', async () => {
-    const mod = await createAndLoginUser(server, { username: 'mod_user', role: 'MODERATOR' });
+    const mod = await createAndLoginUser(server, { nickname: 'mod_user', role: 'MODERATOR' });
     const res = await server.inject({
       method: 'GET',
       url: '/api/admin/users',
@@ -39,8 +39,8 @@ describe('Staff admin — role authorization', () => {
   });
 
   it('allows an ADMIN to grant XP and coins (audited)', async () => {
-    const admin = await createAndLoginUser(server, { username: 'admin_user', role: 'ADMIN' });
-    const target = await createAndLoginUser(server, { username: 'target_user' });
+    const admin = await createAndLoginUser(server, { nickname: 'admin_user', role: 'ADMIN' });
+    const target = await createAndLoginUser(server, { nickname: 'target_user' });
 
     const xpRes = await server.inject({
       method: 'POST',
@@ -68,8 +68,8 @@ describe('Staff admin — role authorization', () => {
   });
 
   it('allows an ADMIN to change a user role', async () => {
-    const admin = await createAndLoginUser(server, { username: 'role_admin', role: 'ADMIN' });
-    const target = await createAndLoginUser(server, { username: 'role_target' });
+    const admin = await createAndLoginUser(server, { nickname: 'role_admin', role: 'ADMIN' });
+    const target = await createAndLoginUser(server, { nickname: 'role_target' });
     const res = await server.inject({
       method: 'PATCH',
       url: `/api/admin/users/${target.id}/role`,

@@ -191,8 +191,7 @@ async function main() {
   const users = await prisma.$transaction([
     prisma.user.create({
       data: {
-        name: 'Leonardo Souza',
-        username: 'leonardo',
+        nickname: 'leonardo',
         passwordHash: password,
         recoveryCodeHash: hashRecoveryCode(generateRecoveryCode()),
         role: 'OWNER',
@@ -202,8 +201,7 @@ async function main() {
     }),
     prisma.user.create({
       data: {
-        name: 'Maria Silva',
-        username: 'maria',
+        nickname: 'maria',
         passwordHash: password,
         recoveryCodeHash: hashRecoveryCode(generateRecoveryCode()),
         bio: 'Designer | Futurista | 💜 cyberpunk',
@@ -212,8 +210,7 @@ async function main() {
     }),
     prisma.user.create({
       data: {
-        name: 'João Pedro',
-        username: 'joao',
+        nickname: 'joao',
         passwordHash: password,
         recoveryCodeHash: hashRecoveryCode(generateRecoveryCode()),
         bio: 'Dev backend. Coffee-driven.',

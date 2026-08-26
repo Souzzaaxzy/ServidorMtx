@@ -18,8 +18,7 @@ describe('Auth — POST /api/auth/register', () => {
       method: 'POST',
       url: '/api/auth/register',
       payload: {
-        name: 'Novo Usuário',
-        username: 'novouser',
+        nickname: 'novouser',
         password: 'Senha1234',
       },
     });
@@ -27,7 +26,7 @@ describe('Auth — POST /api/auth/register', () => {
     const body = JSON.parse(res.payload);
     expect(body.accessToken).toBeTypeOf('string');
     expect(body.refreshToken).toBeTypeOf('string');
-    expect(body.user.username).toBe('novouser');
+    expect(body.user.nickname).toBe('novouser');
     expect(body.recoveryCode).toBeTypeOf('string');
     expect(body.recoveryCode).toHaveLength(12);
     expect(body.user).not.toHaveProperty('passwordHash');
@@ -35,14 +34,13 @@ describe('Auth — POST /api/auth/register', () => {
     expect(body.user).not.toHaveProperty('email');
   });
 
-  it('rejects duplicate username with 409', async () => {
-    await createUser({ username: 'dupuser' });
+  it('rejects duplicate nickname with 409', async () => {
+    await createUser({ nickname: 'dupuser' });
     const res = await server.inject({
       method: 'POST',
       url: '/api/auth/register',
       payload: {
-        name: 'Dup',
-        username: 'dupuser',
+        nickname: 'dupuser',
         password: 'Senha1234',
       },
     });
@@ -54,21 +52,19 @@ describe('Auth — POST /api/auth/register', () => {
       method: 'POST',
       url: '/api/auth/register',
       payload: {
-        name: 'Weak',
-        username: 'weakuser',
+        nickname: 'weakuser',
         password: 'short',
       },
     });
     expect(res.statusCode).toBe(400);
   });
 
-  it('does not accept email as a field (username-only)', async () => {
+  it('does not accept email as a field (nickname-only)', async () => {
     const res = await server.inject({
       method: 'POST',
       url: '/api/auth/register',
       payload: {
-        name: 'Has Email',
-        username: 'hasemail',
+        nickname: 'hasemail',
         password: 'Senha1234',
         email: 'should@be.ignored',
       },
@@ -78,56 +74,56 @@ describe('Auth — POST /api/auth/register', () => {
   });
 });
 
-describe('Auth — username @-normalization', () => {
+describe('Auth — nickname @-normalization', () => {
   it('strips a leading "@" on register so storage never carries the prefix', async () => {
     const res = await server.inject({
       method: 'POST',
       url: '/api/auth/register',
-      payload: { name: 'At Prefix', username: '@atprefix', password: 'Password123' },
+      payload: { nickname: '@atprefix', password: 'Password123' },
     });
     expect(res.statusCode).toBe(201);
-    expect(JSON.parse(res.payload).user.username).toBe('atprefix');
-    const stored = await prisma.user.findUnique({ where: { username: 'atprefix' } });
+    expect(JSON.parse(res.payload).user.nickname).toBe('atprefix');
+    const stored = await prisma.user.findUnique({ where: { nickname: 'atprefix' } });
     expect(stored).not.toBeNull();
-    expect(stored!.username.startsWith('@')).toBe(false);
+    expect(stored!.nickname.startsWith('@')).toBe(false);
   });
 
   it('strips any amount of leading "@" symbols (never stores "@@x" or "@x")', async () => {
     const res = await server.inject({
       method: 'POST',
       url: '/api/auth/register',
-      payload: { name: 'Double At', username: '@@doubleat', password: 'Password123' },
+      payload: { nickname: '@@doubleat', password: 'Password123' },
     });
     expect(res.statusCode).toBe(201);
-    expect(JSON.parse(res.payload).user.username).toBe('doubleat');
+    expect(JSON.parse(res.payload).user.nickname).toBe('doubleat');
   });
 
   it('logs in successfully with "@" prefixed input', async () => {
-    await createUser({ username: 'plainuser' });
+    await createUser({ nickname: 'plainuser' });
     const res = await server.inject({
       method: 'POST',
       url: '/api/auth/login',
-      payload: { username: '@plainuser', password: 'Password123' },
+      payload: { nickname: '@plainuser', password: 'Password123' },
     });
     expect(res.statusCode).toBe(200);
-    expect(JSON.parse(res.payload).user.username).toBe('plainuser');
+    expect(JSON.parse(res.payload).user.nickname).toBe('plainuser');
   });
 });
 
 describe('Auth — POST /api/auth/login', () => {
   it('logs in with username', async () => {
-    await createUser({ username: 'loginuser', password: 'Password123' });
+    await createUser({ nickname: 'loginuser', password: 'Password123' });
     const auth = await login(server, 'loginuser', 'Password123');
     expect(auth.accessToken).toBeTypeOf('string');
-    expect(auth.user.username).toBe('loginuser');
+    expect(auth.user.nickname).toBe('loginuser');
   });
 
   it('rejects wrong password with 401', async () => {
-    await createUser({ username: 'wrongpass', password: 'Password123' });
+    await createUser({ nickname: 'wrongpass', password: 'Password123' });
     const res = await server.inject({
       method: 'POST',
       url: '/api/auth/login',
-      payload: { username: 'wrongpass', password: 'WrongPass1' },
+      payload: { nickname: 'wrongpass', password: 'WrongPass1' },
     });
     expect(res.statusCode).toBe(401);
   });
@@ -136,7 +132,7 @@ describe('Auth — POST /api/auth/login', () => {
     const res = await server.inject({
       method: 'POST',
       url: '/api/auth/login',
-      payload: { username: 'ghost', password: 'Password123' },
+      payload: { nickname: 'ghost', password: 'Password123' },
     });
     expect(res.statusCode).toBe(401);
     const body = JSON.parse(res.payload);
@@ -146,7 +142,7 @@ describe('Auth — POST /api/auth/login', () => {
 
 describe('Auth — account recovery (POST /api/auth/recover)', () => {
   it('resets the password using the recovery code', async () => {
-    const u = await createAndLoginUser(server, { username: 'recoveruser', password: 'OldPass123' });
+    const u = await createAndLoginUser(server, { nickname: 'recoveruser', password: 'OldPass123' });
     expect(u.recoveryCode).toHaveLength(12);
 
     const res = await server.inject({
@@ -164,7 +160,7 @@ describe('Auth — account recovery (POST /api/auth/recover)', () => {
     const oldLogin = await server.inject({
       method: 'POST',
       url: '/api/auth/login',
-      payload: { username: 'recoveruser', password: 'OldPass123' },
+      payload: { nickname: 'recoveruser', password: 'OldPass123' },
     });
     expect(oldLogin.statusCode).toBe(401);
 
@@ -174,7 +170,7 @@ describe('Auth — account recovery (POST /api/auth/recover)', () => {
   });
 
   it('rejects recovery with a wrong code (generic message)', async () => {
-    await createUser({ username: 'wrongcode' });
+    await createUser({ nickname: 'wrongcode' });
     const res = await server.inject({
       method: 'POST',
       url: '/api/auth/recover',
@@ -205,14 +201,14 @@ describe('Auth — account recovery (POST /api/auth/recover)', () => {
 
 describe('Auth — GET /api/auth/me', () => {
   it('returns current user when authenticated', async () => {
-    const u = await createAndLoginUser(server, { username: 'meuser' });
+    const u = await createAndLoginUser(server, { nickname: 'meuser' });
     const res = await server.inject({
       method: 'GET',
       url: '/api/auth/me',
       headers: { authorization: `Bearer ${u.accessToken}` },
     });
     expect(res.statusCode).toBe(200);
-    expect(JSON.parse(res.payload).user.username).toBe('meuser');
+    expect(JSON.parse(res.payload).user.nickname).toBe('meuser');
   });
 
   it('rejects unauthenticated access with 401', async () => {

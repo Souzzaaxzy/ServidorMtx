@@ -1,16 +1,16 @@
 import { prisma } from '../../config/prisma.js';
 import { ApiError, toApiError } from '../../utils/errors.js';
-import { normalizeUsername } from '../../utils/normalize.js';
+import { normalizeNickname } from '../../utils/normalize.js';
 import { AUTHOR_SELECT, toAuthUser, toFeedPost, toProfileUser, type AuthUser, type FeedPost, type ProfileUser } from '../../utils/dto.js';
 import { getFriendshipState } from '../friends/friend.service.js';
 import type { FriendshipState } from '../../types/enums.js';
 
 export async function getProfile(
-  username: string,
+  nickname: string,
   currentUserId?: string,
 ): Promise<{ user: ProfileUser; posts: FeedPost[]; friendship: FriendshipState | null }> {
   const user = await prisma.user.findUnique({
-    where: { username: normalizeUsername(username) },
+    where: { nickname: normalizeNickname(nickname) },
     include: {
       // Equipped cosmetics ride along so any profile (own or someone
       // else's) can render frames/badges without an extra request.
@@ -52,12 +52,11 @@ export async function getProfile(
 
 export async function updateProfile(
   userId: string,
-  input: Partial<{ name: string; username: string; bio: string | null; avatarUrl: string | null }>,
+  input: Partial<{ nickname: string; bio: string | null; avatarUrl: string | null }>,
 ): Promise<AuthUser> {
   try {
     const data: Record<string, unknown> = {};
-    if (input.name !== undefined) data.name = input.name;
-    if (input.username !== undefined) data.username = normalizeUsername(input.username);
+    if (input.nickname !== undefined) data.nickname = normalizeNickname(input.nickname);
     if (input.bio !== undefined) data.bio = input.bio ?? '';
     if (input.avatarUrl !== undefined) data.avatarUrl = input.avatarUrl;
 

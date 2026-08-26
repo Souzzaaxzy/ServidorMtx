@@ -4,10 +4,10 @@ import { getProfile, updateProfile } from './user.service.js';
 import { updateProfileSchema } from './user.schema.js';
 
 export const userRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
-  app.get('/users/:username', { onRequest: [app.optionalAuth] }, async (request, reply) => {
-    const { username } = request.params as { username: string };
+  app.get('/users/:nickname', { onRequest: [app.optionalAuth] }, async (request, reply) => {
+    const { nickname } = request.params as { nickname: string };
     try {
-      const profile = await getProfile(username, request.user?.id);
+      const profile = await getProfile(nickname, request.user?.id);
       return reply.send(profile);
     } catch (err) {
       throw toApiError(err);

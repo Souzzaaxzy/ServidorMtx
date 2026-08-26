@@ -22,12 +22,12 @@ afterAll(async () => {
 
 describe('Push message composition', () => {
   it('renders the canonical PT-BR body for each notification type', () => {
-    expect(composeBody('LIKE', 'joao')).toBe('@joao curtiu sua publicação.');
-    expect(composeBody('COMMENT', 'joao')).toBe('@joao comentou na sua publicação.');
+    expect(composeBody('LIKE', 'joao')).toBe('joao curtiu sua publicação.');
+    expect(composeBody('COMMENT', 'joao')).toBe('joao comentou na sua publicação.');
     expect(composeBody('FRIEND_REQUEST', 'joao')).toBe(
-      '@joao enviou uma solicitação de amizade.',
+      'joao enviou uma solicitação de amizade.',
     );
-    expect(composeBody('FRIEND_ACCEPTED', 'joao')).toBe('Agora você e @joao são amigos.');
+    expect(composeBody('FRIEND_ACCEPTED', 'joao')).toBe('Agora você e joao são amigos.');
   });
 
   it('buildMessage embeds routing data for the client', () => {
@@ -54,7 +54,7 @@ describe('Realtime socket hub', () => {
 
 describe('Device token endpoints', () => {
   it('registers and unregisters a device token (upsert is idempotent)', async () => {
-    const user = await createAndLoginUser(server, { username: 'devreg' });
+    const user = await createAndLoginUser(server, { nickname: 'devreg' });
 
     for (let i = 0; i < 2; i += 1) {
       const res = await server.inject({
@@ -79,8 +79,8 @@ describe('Device token endpoints', () => {
   });
 
   it('SECURITY: cannot unregister a token owned by another user (403)', async () => {
-    const owner = await createAndLoginUser(server, { username: 'tok_owner' });
-    const other = await createAndLoginUser(server, { username: 'tok_thief' });
+    const owner = await createAndLoginUser(server, { nickname: 'tok_owner' });
+    const other = await createAndLoginUser(server, { nickname: 'tok_thief' });
 
     await server.inject({
       method: 'POST',
@@ -99,7 +99,7 @@ describe('Device token endpoints', () => {
   });
 
   it('rejects a device registration without a token (400)', async () => {
-    const user = await createAndLoginUser(server, { username: 'devbadreq' });
+    const user = await createAndLoginUser(server, { nickname: 'devbadreq' });
     const res = await server.inject({
       method: 'POST',
       url: '/api/devices/register',
@@ -166,8 +166,8 @@ describe('Dispatch pipeline', () => {
 
 describe('Unread badge endpoint', () => {
   it('returns only the unread number', async () => {
-    const a = await createAndLoginUser(server, { username: 'badge_a' });
-    const b = await createAndLoginUser(server, { username: 'badge_b' });
+    const a = await createAndLoginUser(server, { nickname: 'badge_a' });
+    const b = await createAndLoginUser(server, { nickname: 'badge_b' });
     const post = await server.inject({
       method: 'POST',
       url: '/api/posts',

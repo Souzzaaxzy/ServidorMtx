@@ -30,7 +30,7 @@ export async function verifyPassword(plain: string, hash: string): Promise<boole
 
 export interface AccessTokenPayload {
   sub: string;
-  username: string;
+  nickname: string;
 }
 
 // Convert human-readable expiry strings ("15m", "30d") to seconds so the
@@ -39,8 +39,8 @@ function toSeconds(value: string): number {
   return Math.floor((ms as unknown as (v: string) => number)(value) / 1000);
 }
 
-export function signAccessToken(user: Pick<User, 'id' | 'username'>): string {
-  return jwt.sign({ sub: user.id, username: user.username }, env.jwt.secret, {
+export function signAccessToken(user: Pick<User, 'id' | 'nickname'>): string {
+  return jwt.sign({ sub: user.id, nickname: user.nickname }, env.jwt.secret, {
     expiresIn: toSeconds(env.jwt.accessExpiresIn),
   });
 }

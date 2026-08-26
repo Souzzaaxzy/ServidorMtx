@@ -1,6 +1,6 @@
 import { prisma } from '../../config/prisma.js';
 import { ApiError } from '../../utils/errors.js';
-import { normalizeUsername } from '../../utils/normalize.js';
+import { normalizeNickname } from '../../utils/normalize.js';
 import {
   createSession,
   generateRecoveryCode,
@@ -29,8 +29,7 @@ export interface RegisterResult extends AuthResult {
 
 function serializeUser(user: {
   id: string;
-  name: string;
-  username: string;
+  nickname: string;
   avatarUrl: string | null;
   bio: string;
   role: string;
@@ -39,8 +38,7 @@ function serializeUser(user: {
 }) {
   return {
     id: user.id,
-    name: user.name,
-    username: user.username,
+    nickname: user.nickname,
     avatarUrl: user.avatarUrl,
     bio: user.bio,
     role: user.role,
@@ -50,10 +48,10 @@ function serializeUser(user: {
 }
 
 export async function register(input: RegisterInput): Promise<RegisterResult> {
-  const username = normalizeUsername(input.username);
+  const nickname = normalizeNickname(input.nickname);
 
   const existing = await prisma.user.findFirst({
-    where: { username },
+    where: { nickname },
     select: { id: true },
   });
   if (existing) {
@@ -67,8 +65,7 @@ export async function register(input: RegisterInput): Promise<RegisterResult> {
 
   const user = await prisma.user.create({
     data: {
-      name: input.name.trim(),
-      username,
+      nickname,
       passwordHash,
       recoveryCodeHash,
       bio: '',
@@ -87,8 +84,8 @@ export async function register(input: RegisterInput): Promise<RegisterResult> {
 }
 
 export async function login(input: LoginInput): Promise<AuthResult> {
-  const username = normalizeUsername(input.username);
-  const user = await prisma.user.findUnique({ where: { username } });
+  const nickname = normalizeNickname(input.nickname);
+  const user = await prisma.user.findUnique({ where: { nickname } });
 
   // Always perform a hash compare to keep timing roughly constant even when
   // the user does not exist, mitigating user enumeration via timing.
@@ -146,7 +143,7 @@ export async function getCurrentUser(userId: string) {
 }
 
 // ── Account recovery ────────────────────────────────────────────
-// Recovers an account using a username/MATRIX ID + recovery code + new
+// Recovers an account using a nickname/MATRIX ID + recovery code + new
 // password. Brute-force protection (attempt tracking + lockout) is enforced
 // by the `checkRecoveryAttempt`/`recordRecoveryFailure` helpers wired into
 // the route. This function deliberately performs a constant-time-ish hash
@@ -161,9 +158,9 @@ export async function recoverAccount(
     throw ApiError.tooManyRecoveryAttempts();
   }
 
-  // Normalize the identifier to a username form for lookup.
-  const username = normalizeUsername(input.identifier);
-  const user = await prisma.user.findUnique({ where: { username } });
+  // Normalize the identifier to a nickname form for lookup.
+  const nickname = normalizeNickname(input.identifier);
+  const user = await prisma.user.findUnique({ where: { nickname } });
 
   // Always run a verification against a dummy hash so timing does not leak
   // whether the identifier exists.

@@ -14,7 +14,7 @@ afterAll(async () => {
 
 describe('Posts — feed + create + delete', () => {
   it('creates a post when authenticated', async () => {
-    const u = await createAndLoginUser(server, { username: 'poster1' });
+    const u = await createAndLoginUser(server, { nickname: 'poster1' });
     const res = await server.inject({
       method: 'POST',
       url: '/api/posts',
@@ -24,13 +24,13 @@ describe('Posts — feed + create + delete', () => {
     expect(res.statusCode).toBe(201);
     const body = JSON.parse(res.payload);
     expect(body.text).toBe('Meu primeiro post real!');
-    expect(body.author.username).toBe('poster1');
+    expect(body.author.nickname).toBe('poster1');
     expect(body.likeCount).toBe(0);
     expect(body.liked).toBe(false);
   });
 
   it('rejects empty post text', async () => {
-    const u = await createAndLoginUser(server, { username: 'poster2' });
+    const u = await createAndLoginUser(server, { nickname: 'poster2' });
     const res = await server.inject({
       method: 'POST',
       url: '/api/posts',
@@ -50,8 +50,8 @@ describe('Posts — feed + create + delete', () => {
   });
 
   it('lists posts in reverse-chronological order with author + counts', async () => {
-    const a = await createAndLoginUser(server, { username: 'feeda' });
-    const b = await createAndLoginUser(server, { username: 'feedb' });
+    const a = await createAndLoginUser(server, { nickname: 'feeda' });
+    const b = await createAndLoginUser(server, { nickname: 'feedb' });
 
     await prisma.post.create({ data: { userId: a.id, text: 'primeiro (mais antigo)' } });
     await new Promise((r) => setTimeout(r, 10));
@@ -66,7 +66,7 @@ describe('Posts — feed + create + delete', () => {
   });
 
   it('paginates with a cursor', async () => {
-    const u = await createAndLoginUser(server, { username: 'pager' });
+    const u = await createAndLoginUser(server, { nickname: 'pager' });
     for (let i = 0; i < 5; i++) {
       await prisma.post.create({ data: { userId: u.id, text: `post ${i}` } });
       await new Promise((r) => setTimeout(r, 5));
@@ -85,7 +85,7 @@ describe('Posts — feed + create + delete', () => {
   });
 
   it('lets the owner delete their own post', async () => {
-    const u = await createAndLoginUser(server, { username: 'deleter' });
+    const u = await createAndLoginUser(server, { nickname: 'deleter' });
     const created = await server.inject({
       method: 'POST',
       url: '/api/posts',
@@ -102,8 +102,8 @@ describe('Posts — feed + create + delete', () => {
   });
 
   it('cascades likes and comments when a post is deleted', async () => {
-    const owner = await createAndLoginUser(server, { username: 'cascadeowner' });
-    const fan = await createAndLoginUser(server, { username: 'cascadefan' });
+    const owner = await createAndLoginUser(server, { nickname: 'cascadeowner' });
+    const fan = await createAndLoginUser(server, { nickname: 'cascadefan' });
     const created = await server.inject({
       method: 'POST',
       url: '/api/posts',
@@ -137,7 +137,7 @@ describe('Posts — feed + create + delete', () => {
   });
 
   it('returns 404 when deleting a nonexistent post', async () => {
-    const u = await createAndLoginUser(server, { username: 'ghostdeleter' });
+    const u = await createAndLoginUser(server, { nickname: 'ghostdeleter' });
     const res = await server.inject({
       method: 'DELETE',
       url: '/api/posts/does-not-exist',
@@ -152,8 +152,8 @@ describe('Posts — feed + create + delete', () => {
   });
 
   it('forbids deleting another user post', async () => {
-    const owner = await createAndLoginUser(server, { username: 'ownera' });
-    const other = await createAndLoginUser(server, { username: 'othera' });
+    const owner = await createAndLoginUser(server, { nickname: 'ownera' });
+    const other = await createAndLoginUser(server, { nickname: 'othera' });
     const created = await server.inject({
       method: 'POST',
       url: '/api/posts',

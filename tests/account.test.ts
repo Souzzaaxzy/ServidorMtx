@@ -19,8 +19,8 @@ afterAll(async () => {
 
 describe('Account — DELETE /api/auth/account', () => {
   it('removes the user AND cascades owned rows (posts/comments/likes/…)', async () => {
-    const owner = await createAndLoginUser(server, { username: 'del_owner' });
-    const actor = await createAndLoginUser(server, { username: 'del_actor' });
+    const owner = await createAndLoginUser(server, { nickname: 'del_owner' });
+    const actor = await createAndLoginUser(server, { nickname: 'del_actor' });
 
     const post = await server.inject({
       method: 'POST',
@@ -58,7 +58,7 @@ describe('Account — DELETE /api/auth/account', () => {
   });
 
   it('never lets a deleted account authenticate again', async () => {
-    const user = await createAndLoginUser(server, { username: 'del_login' });
+    const user = await createAndLoginUser(server, { nickname: 'del_login' });
     await server.inject({
       method: 'DELETE',
       url: '/api/auth/account',
@@ -68,7 +68,7 @@ describe('Account — DELETE /api/auth/account', () => {
     const res = await server.inject({
       method: 'POST',
       url: '/api/auth/login',
-      payload: { username: 'del_login', password: user.password },
+      payload: { nickname: 'del_login', password: user.password },
     });
     expect(res.statusCode).toBe(401);
   });
@@ -79,8 +79,8 @@ describe('Account — DELETE /api/auth/account', () => {
   });
 
   it('removes friendships and notifications tied to the deleted user', async () => {
-    const a = await createAndLoginUser(server, { username: 'del_a' });
-    const b = await createAndLoginUser(server, { username: 'del_b' });
+    const a = await createAndLoginUser(server, { nickname: 'del_a' });
+    const b = await createAndLoginUser(server, { nickname: 'del_b' });
 
     // b sends a friend request to a, a accepts → friendship + notifications.
     await server.inject({

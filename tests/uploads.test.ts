@@ -19,7 +19,7 @@ const FIXTURES = path.resolve(__dirname, 'fixtures');
 
 describe('Uploads — POST /uploads', () => {
   it('accepts a valid PNG image when authenticated', async () => {
-    const u = await createAndLoginUser(server, { username: 'uploader' });
+    const u = await createAndLoginUser(server, { nickname: 'uploader' });
     const png = readFileSync(path.join(FIXTURES, 'pixel.png'));
     const res = await server.inject({
       method: 'POST',
@@ -57,7 +57,7 @@ describe('Uploads — POST /uploads', () => {
 
 describe('Uploads — validação de conteúdo', () => {
   it('rejects a text file disguised as PNG (magic bytes)', async () => {
-    const u = await createAndLoginUser(server, { username: 'fakepng' });
+    const u = await createAndLoginUser(server, { nickname: 'fakepng' });
     const notAnImage = Buffer.from('this is definitely not a png file');
     const res = await server.inject({
       method: 'POST',
@@ -83,7 +83,7 @@ describe('Uploads — validação de conteúdo', () => {
   });
 
   it('rejects a disallowed extension', async () => {
-    const u = await createAndLoginUser(server, { username: 'badext' });
+    const u = await createAndLoginUser(server, { nickname: 'badext' });
     const png = readFileSync(path.join(FIXTURES, 'pixel.png'));
     const res = await server.inject({
       method: 'POST',
@@ -108,7 +108,7 @@ describe('Uploads — validação de conteúdo', () => {
 
 describe('Perfil — avatarUrl via /static/', () => {
   it('accepts a relative /static/ avatar path on PATCH /users/me', async () => {
-    const u = await createAndLoginUser(server, { username: 'avatarrel' });
+    const u = await createAndLoginUser(server, { nickname: 'avatarrel' });
     const res = await server.inject({
       method: 'PATCH',
       url: '/api/users/me',
@@ -121,7 +121,7 @@ describe('Perfil — avatarUrl via /static/', () => {
   });
 
   it('rejects a traversal avatar path', async () => {
-    const u = await createAndLoginUser(server, { username: 'avatartrav' });
+    const u = await createAndLoginUser(server, { nickname: 'avatartrav' });
     const res = await server.inject({
       method: 'PATCH',
       url: '/api/users/me',
@@ -131,13 +131,13 @@ describe('Perfil — avatarUrl via /static/', () => {
     expect(res.statusCode).toBe(400);
   });
 
-  it('persists name changes across reads', async () => {
-    const u = await createAndLoginUser(server, { username: 'namepersist' });
+  it('persists nickname changes across reads', async () => {
+    const u = await createAndLoginUser(server, { nickname: 'namepersist' });
     const patch = await server.inject({
       method: 'PATCH',
       url: '/api/users/me',
       headers: { authorization: `Bearer ${u.accessToken}` },
-      payload: { name: 'Novo Nome' },
+      payload: { nickname: 'novonome' },
     });
     expect(patch.statusCode).toBe(200);
 
@@ -147,22 +147,22 @@ describe('Perfil — avatarUrl via /static/', () => {
       headers: { authorization: `Bearer ${u.accessToken}` },
     });
     expect(me.statusCode).toBe(200);
-    expect(JSON.parse(me.payload).user.name).toBe('Novo Nome');
+    expect(JSON.parse(me.payload).user.nickname).toBe('novonome');
 
     const profile = await server.inject({
       method: 'GET',
-      url: '/api/users/namepersist',
+      url: '/api/users/novonome',
     });
-    expect(JSON.parse(profile.payload).user.name).toBe('Novo Nome');
+    expect(JSON.parse(profile.payload).user.nickname).toBe('novonome');
   });
 
-  it('rejects empty/short names with a clear error', async () => {
-    const u = await createAndLoginUser(server, { username: 'nameshort' });
+  it('rejects empty/short nicknames with a clear error', async () => {
+    const u = await createAndLoginUser(server, { nickname: 'nameshort' });
     const res = await server.inject({
       method: 'PATCH',
       url: '/api/users/me',
       headers: { authorization: `Bearer ${u.accessToken}` },
-      payload: { name: ' ' },
+      payload: { nickname: ' ' },
     });
     expect(res.statusCode).toBe(400);
   });

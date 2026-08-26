@@ -14,8 +14,8 @@ afterAll(async () => {
 
 describe('Friend requests', () => {
   it('sends a request and notifies the receiver', async () => {
-    const a = await createAndLoginUser(server, { username: 'sendera' });
-    const b = await createAndLoginUser(server, { username: 'receiverb' });
+    const a = await createAndLoginUser(server, { nickname: 'sendera' });
+    const b = await createAndLoginUser(server, { nickname: 'receiverb' });
 
     const res = await server.inject({
       method: 'POST',
@@ -31,7 +31,7 @@ describe('Friend requests', () => {
   });
 
   it('rejects a request to yourself with 400', async () => {
-    const a = await createAndLoginUser(server, { username: 'selfish' });
+    const a = await createAndLoginUser(server, { nickname: 'selfish' });
 
     const res = await server.inject({
       method: 'POST',
@@ -42,8 +42,8 @@ describe('Friend requests', () => {
   });
 
   it('rejects duplicates with 409 and keeps state pending', async () => {
-    const a = await createAndLoginUser(server, { username: 'dupsender' });
-    const b = await createAndLoginUser(server, { username: 'dupreceiver' });
+    const a = await createAndLoginUser(server, { nickname: 'dupsender' });
+    const b = await createAndLoginUser(server, { nickname: 'dupreceiver' });
 
     for (let i = 0; i < 2; i += 1) {
       const res = await server.inject({
@@ -60,8 +60,8 @@ describe('Friend requests', () => {
   });
 
   it('accept flow: creates one mutual friendship, notifies sender', async () => {
-    const a = await createAndLoginUser(server, { username: 'acesender' });
-    const b = await createAndLoginUser(server, { username: 'acereceiver' });
+    const a = await createAndLoginUser(server, { nickname: 'acesender' });
+    const b = await createAndLoginUser(server, { nickname: 'acereceiver' });
 
     const send = await server.inject({
       method: 'POST',
@@ -102,8 +102,8 @@ describe('Friend requests', () => {
   });
 
   it('reject flow: removes the request, no friendship, state back to NONE', async () => {
-    const a = await createAndLoginUser(server, { username: 'rejsender' });
-    const b = await createAndLoginUser(server, { username: 'rejreceiver' });
+    const a = await createAndLoginUser(server, { nickname: 'rejsender' });
+    const b = await createAndLoginUser(server, { nickname: 'rejreceiver' });
 
     const send = await server.inject({
       method: 'POST',
@@ -131,8 +131,8 @@ describe('Friend requests', () => {
   });
 
   it('lists pending requests with sender info', async () => {
-    const a = await createAndLoginUser(server, { username: 'listsender' });
-    const b = await createAndLoginUser(server, { username: 'listreceiver' });
+    const a = await createAndLoginUser(server, { nickname: 'listsender' });
+    const b = await createAndLoginUser(server, { nickname: 'listreceiver' });
     await server.inject({
       method: 'POST',
       url: `/api/friend-requests/${b.id}`,
@@ -147,14 +147,14 @@ describe('Friend requests', () => {
     expect(res.statusCode).toBe(200);
     const { requests } = JSON.parse(res.payload);
     expect(requests).toHaveLength(1);
-    expect(requests[0].sender.username).toBe('listsender');
+    expect(requests[0].sender.nickname).toBe('listsender');
     expect(requests[0].status).toBe('PENDING');
   });
 
   it('SECURITY: a third user cannot accept a request they did not receive (403)', async () => {
-    const a = await createAndLoginUser(server, { username: 'secsender' });
-    const b = await createAndLoginUser(server, { username: 'secreceiver' });
-    const eve = await createAndLoginUser(server, { username: 'seceve' });
+    const a = await createAndLoginUser(server, { nickname: 'secsender' });
+    const b = await createAndLoginUser(server, { nickname: 'secreceiver' });
+    const eve = await createAndLoginUser(server, { nickname: 'seceve' });
 
     const send = await server.inject({
       method: 'POST',
@@ -176,8 +176,8 @@ describe('Friend requests', () => {
   });
 
   it('SECURITY: sender cannot accept their own request (403)', async () => {
-    const a = await createAndLoginUser(server, { username: 'evilsender' });
-    const b = await createAndLoginUser(server, { username: 'plainreceiver' });
+    const a = await createAndLoginUser(server, { nickname: 'evilsender' });
+    const b = await createAndLoginUser(server, { nickname: 'plainreceiver' });
 
     const send = await server.inject({
       method: 'POST',
@@ -201,8 +201,8 @@ describe('Friend requests', () => {
   });
 
   it('reports OUTGOING_PENDING for the sender and INCOMING_PENDING for the receiver', async () => {
-    const a = await createAndLoginUser(server, { username: 'dirsender' });
-    const b = await createAndLoginUser(server, { username: 'dirreceiver' });
+    const a = await createAndLoginUser(server, { nickname: 'dirsender' });
+    const b = await createAndLoginUser(server, { nickname: 'dirreceiver' });
 
     await server.inject({
       method: 'POST',
@@ -226,8 +226,8 @@ describe('Friend requests', () => {
   });
 
   it('reports FRIENDS when a friendship already exists (no duplicate request)', async () => {
-    const a = await createAndLoginUser(server, { username: 'frienda' });
-    const b = await createAndLoginUser(server, { username: 'friendb' });
+    const a = await createAndLoginUser(server, { nickname: 'frienda' });
+    const b = await createAndLoginUser(server, { nickname: 'friendb' });
 
     const send = await server.inject({
       method: 'POST',

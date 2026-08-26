@@ -41,7 +41,7 @@ describe('Customization — Personalization Engine', () => {
   });
 
   it('returns a user inventory excluding expired items', async () => {
-    const u = await createAndLoginUser(server, { username: 'inv_user' });
+    const u = await createAndLoginUser(server, { nickname: 'inv_user' });
     await prisma.item.upsert({
       where: { id: 'banner_inv' },
       update: {},
@@ -83,7 +83,7 @@ describe('Customization — Personalization Engine', () => {
   });
 
   it('equips an owned item and unequips it', async () => {
-    const u = await createAndLoginUser(server, { username: 'equip_user' });
+    const u = await createAndLoginUser(server, { nickname: 'equip_user' });
     await prisma.item.upsert({
       where: { id: 'frame_equip' },
       update: {},
@@ -115,7 +115,7 @@ describe('Customization — Personalization Engine', () => {
   });
 
   it('refuses to equip an item the user does not own', async () => {
-    const u = await createAndLoginUser(server, { username: 'no_own' });
+    const u = await createAndLoginUser(server, { nickname: 'no_own' });
     await prisma.item.upsert({
       where: { id: 'frame_notowned' },
       update: {},
@@ -137,13 +137,13 @@ describe('Customization — Personalization Engine', () => {
   });
 
   it('embeds the viewed user customization in the profile payload', async () => {
-    const owner = await createAndLoginUser(server, { username: 'cosme_owner' });
-    const viewer = await createAndLoginUser(server, { username: 'cosme_viewer' });
+    const owner = await createAndLoginUser(server, { nickname: 'cosme_owner' });
+    const viewer = await createAndLoginUser(server, { nickname: 'cosme_viewer' });
 
     // Default profile: an empty customization map (nothing equipped).
     const plain = await server.inject({
       method: 'GET',
-      url: `/api/users/${owner.username}`,
+      url: `/api/users/${owner.nickname}`,
       headers: { authorization: `Bearer ${viewer.accessToken}` },
     });
     expect(plain.statusCode).toBe(200);
@@ -171,7 +171,7 @@ describe('Customization — Personalization Engine', () => {
 
     const res = await server.inject({
       method: 'GET',
-      url: `/api/users/${owner.username}`,
+      url: `/api/users/${owner.nickname}`,
       headers: { authorization: `Bearer ${viewer.accessToken}` },
     });
     const customization = JSON.parse(res.payload).user.customization;

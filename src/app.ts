@@ -112,8 +112,8 @@ export async function buildServer() {
     });
   });
   // ── Routes ──────────────────────────────────────────────────
-  // IMPORTANT: register /users/search BEFORE /users/:username so the
-  // static "search" path isn't captured as a username param.
+  // IMPORTANT: register /users/search BEFORE /users/:nickname so the
+  // static "search" path isn't captured as a nickname param.
   //
   // Realtime push channel (WebSocket) must be registered BEFORE any route
   // that uses { websocket: true }.

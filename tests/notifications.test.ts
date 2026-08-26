@@ -14,8 +14,8 @@ afterAll(async () => {
 
 describe('Notifications', () => {
   it('like creates a LIKE notification for the post author', async () => {
-    const author = await createAndLoginUser(server, { username: 'nauthor' });
-    const liker = await createAndLoginUser(server, { username: 'nliker' });
+    const author = await createAndLoginUser(server, { nickname: 'nauthor' });
+    const liker = await createAndLoginUser(server, { nickname: 'nliker' });
     const post = await prisma.post.create({ data: { userId: author.id, text: 'hello' } });
 
     await server.inject({
@@ -33,13 +33,13 @@ describe('Notifications', () => {
     expect(body.unreadCount).toBe(1);
     expect(body.notifications[0].type).toBe('LIKE');
     expect(body.notifications[0].postId).toBe(post.id);
-    expect(body.notifications[0].actor.username).toBe('nliker');
+    expect(body.notifications[0].actor.nickname).toBe('nliker');
     expect(body.notifications[0].read).toBe(false);
   });
 
   it('unlike removes the LIKE notification (no phantom notifications)', async () => {
-    const author = await createAndLoginUser(server, { username: 'unauthor' });
-    const liker = await createAndLoginUser(server, { username: 'unliker' });
+    const author = await createAndLoginUser(server, { nickname: 'unauthor' });
+    const liker = await createAndLoginUser(server, { nickname: 'unliker' });
     const post = await prisma.post.create({ data: { userId: author.id, text: 'hello' } });
 
     for (let i = 0; i < 2; i += 1) {
@@ -57,7 +57,7 @@ describe('Notifications', () => {
   });
 
   it('liking your own post never notifies you', async () => {
-    const author = await createAndLoginUser(server, { username: 'selfliker' });
+    const author = await createAndLoginUser(server, { nickname: 'selfliker' });
     const post = await prisma.post.create({ data: { userId: author.id, text: 'hello' } });
 
     await server.inject({
@@ -69,8 +69,8 @@ describe('Notifications', () => {
   });
 
   it('comment notifies the post author with post + comment references', async () => {
-    const author = await createAndLoginUser(server, { username: 'cauthor' });
-    const commenter = await createAndLoginUser(server, { username: 'ccommenter' });
+    const author = await createAndLoginUser(server, { nickname: 'cauthor' });
+    const commenter = await createAndLoginUser(server, { nickname: 'ccommenter' });
     const post = await prisma.post.create({ data: { userId: author.id, text: 'hello' } });
 
     await server.inject({
@@ -92,7 +92,7 @@ describe('Notifications', () => {
   });
 
   it('commenting on your own post never notifies you', async () => {
-    const author = await createAndLoginUser(server, { username: 'selfcommenter' });
+    const author = await createAndLoginUser(server, { nickname: 'selfcommenter' });
     const post = await prisma.post.create({ data: { userId: author.id, text: 'hello' } });
 
     await server.inject({
@@ -105,8 +105,8 @@ describe('Notifications', () => {
   });
 
   it('marks a notification as read (unread counter drops) and re-read is fine', async () => {
-    const author = await createAndLoginUser(server, { username: 'rauthor' });
-    const liker = await createAndLoginUser(server, { username: 'rliker' });
+    const author = await createAndLoginUser(server, { nickname: 'rauthor' });
+    const liker = await createAndLoginUser(server, { nickname: 'rliker' });
     const post = await prisma.post.create({ data: { userId: author.id, text: 'hello' } });
     await server.inject({
       method: 'POST',
@@ -137,8 +137,8 @@ describe('Notifications', () => {
   });
 
   it('read-all marks every notification as read', async () => {
-    const author = await createAndLoginUser(server, { username: 'rallauthor' });
-    const liker = await createAndLoginUser(server, { username: 'rallliker' });
+    const author = await createAndLoginUser(server, { nickname: 'rallauthor' });
+    const liker = await createAndLoginUser(server, { nickname: 'rallliker' });
     const post = await prisma.post.create({ data: { userId: author.id, text: 'hello' } });
     await server.inject({
       method: 'POST',
@@ -159,9 +159,9 @@ describe('Notifications', () => {
   });
 
   it('SECURITY: you cannot read another user\'s notification (403)', async () => {
-    const author = await createAndLoginUser(server, { username: 'secauthor2' });
-    const liker = await createAndLoginUser(server, { username: 'secliker2' });
-    const eve = await createAndLoginUser(server, { username: 'seceve2' });
+    const author = await createAndLoginUser(server, { nickname: 'secauthor2' });
+    const liker = await createAndLoginUser(server, { nickname: 'secliker2' });
+    const eve = await createAndLoginUser(server, { nickname: 'seceve2' });
     const post = await prisma.post.create({ data: { userId: author.id, text: 'hello' } });
     await server.inject({
       method: 'POST',
@@ -179,9 +179,9 @@ describe('Notifications', () => {
   });
 
   it('SECURITY: notifications are scoped — Eve never sees other users\' notifications', async () => {
-    const author = await createAndLoginUser(server, { username: 'scopeauthor' });
-    const liker = await createAndLoginUser(server, { username: 'scopeliker' });
-    const eve = await createAndLoginUser(server, { username: 'scopeeve' });
+    const author = await createAndLoginUser(server, { nickname: 'scopeauthor' });
+    const liker = await createAndLoginUser(server, { nickname: 'scopeliker' });
+    const eve = await createAndLoginUser(server, { nickname: 'scopeeve' });
     const post = await prisma.post.create({ data: { userId: author.id, text: 'hello' } });
     await server.inject({
       method: 'POST',
@@ -197,8 +197,8 @@ describe('Notifications', () => {
   });
 
   it('friend request notification disappears once accepted (card closes)', async () => {
-    const a = await createAndLoginUser(server, { username: 'closesender' });
-    const b = await createAndLoginUser(server, { username: 'closereceiver' });
+    const a = await createAndLoginUser(server, { nickname: 'closesender' });
+    const b = await createAndLoginUser(server, { nickname: 'closereceiver' });
     const send = await server.inject({
       method: 'POST',
       url: `/api/friend-requests/${b.id}`,

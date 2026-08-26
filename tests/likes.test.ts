@@ -21,8 +21,8 @@ describe('Likes', () => {
     // Regression: a client that globally sets 'Content-Type: application/json'
     // and then POSTs without a body (the old MatrixApp like bug) must get a
     // clear 400, never an opaque 500.
-    const author = await createAndLoginUser(server, { username: 'likeauthor0' });
-    const liker = await createAndLoginUser(server, { username: 'liker0' });
+    const author = await createAndLoginUser(server, { nickname: 'likeauthor0' });
+    const liker = await createAndLoginUser(server, { nickname: 'liker0' });
     const post = await seedPost(author.id);
 
     const res = await server.inject({
@@ -39,8 +39,8 @@ describe('Likes', () => {
   });
 
   it('likes a post and returns likeCount', async () => {
-    const author = await createAndLoginUser(server, { username: 'likeauthor' });
-    const liker = await createAndLoginUser(server, { username: 'liker1' });
+    const author = await createAndLoginUser(server, { nickname: 'likeauthor' });
+    const liker = await createAndLoginUser(server, { nickname: 'liker1' });
     const post = await seedPost(author.id);
 
     const res = await server.inject({
@@ -55,8 +55,8 @@ describe('Likes', () => {
   });
 
   it('toggles unlike when liking again', async () => {
-    const author = await createAndLoginUser(server, { username: 'likeauthor2' });
-    const liker = await createAndLoginUser(server, { username: 'liker2' });
+    const author = await createAndLoginUser(server, { nickname: 'likeauthor2' });
+    const liker = await createAndLoginUser(server, { nickname: 'liker2' });
     const post = await seedPost(author.id);
 
     await server.inject({ method: 'POST', url: `/api/posts/${post.id}/like`, headers: { authorization: `Bearer ${liker.accessToken}` } });
@@ -72,8 +72,8 @@ describe('Likes', () => {
   });
 
   it('reflects liked=true for the requesting user in the feed', async () => {
-    const author = await createAndLoginUser(server, { username: 'likeauthor3' });
-    const liker = await createAndLoginUser(server, { username: 'liker3' });
+    const author = await createAndLoginUser(server, { nickname: 'likeauthor3' });
+    const liker = await createAndLoginUser(server, { nickname: 'liker3' });
     const post = await seedPost(author.id);
     await server.inject({ method: 'POST', url: `/api/posts/${post.id}/like`, headers: { authorization: `Bearer ${liker.accessToken}` } });
 
@@ -88,14 +88,14 @@ describe('Likes', () => {
   });
 
   it('requires authentication', async () => {
-    const author = await createAndLoginUser(server, { username: 'likeauthor4' });
+    const author = await createAndLoginUser(server, { nickname: 'likeauthor4' });
     const post = await seedPost(author.id);
     const res = await server.inject({ method: 'POST', url: `/api/posts/${post.id}/like` });
     expect(res.statusCode).toBe(401);
   });
 
   it('returns 404 when post does not exist', async () => {
-    const liker = await createAndLoginUser(server, { username: 'liker4' });
+    const liker = await createAndLoginUser(server, { nickname: 'liker4' });
     const res = await server.inject({
       method: 'POST',
       url: '/api/posts/nonexistent-id/like',
@@ -105,8 +105,8 @@ describe('Likes', () => {
   });
 
   it('profile posts: liked reflects the AUTHENTICATED VIEWER, never the author', async () => {
-    const author = await createAndLoginUser(server, { username: 'likeauthor5' });
-    const viewer = await createAndLoginUser(server, { username: 'viewer5' });
+    const author = await createAndLoginUser(server, { nickname: 'likeauthor5' });
+    const viewer = await createAndLoginUser(server, { nickname: 'viewer5' });
     const post = await seedPost(author.id);
 
     // The AUTHOR likes their own post.
@@ -120,7 +120,7 @@ describe('Likes', () => {
     // them — the author's own like must not leak into the viewer's state.
     const viewed = await server.inject({
       method: 'GET',
-      url: `/api/users/${author.username}`,
+      url: `/api/users/${author.nickname}`,
       headers: { authorization: `Bearer ${viewer.accessToken}` },
     });
     const viewedBody = JSON.parse(viewed.payload);
@@ -138,7 +138,7 @@ describe('Likes', () => {
     // The author, looking at their own profile, sees their own like.
     const own = await server.inject({
       method: 'GET',
-      url: `/api/users/${author.username}`,
+      url: `/api/users/${author.nickname}`,
       headers: { authorization: `Bearer ${author.accessToken}` },
     });
     expect(JSON.parse(own.payload).posts[0].liked).toBe(true);
@@ -152,7 +152,7 @@ describe('Likes', () => {
     });
     const viewedAgain = await server.inject({
       method: 'GET',
-      url: `/api/users/${author.username}`,
+      url: `/api/users/${author.nickname}`,
       headers: { authorization: `Bearer ${viewer.accessToken}` },
     });
     expect(JSON.parse(viewedAgain.payload).posts[0].liked).toBe(true);

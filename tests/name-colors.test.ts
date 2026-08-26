@@ -40,7 +40,7 @@ async function equip(app: FastifyInstance, token: string, itemId: string) {
 
 describe('Name colors — nickname color customization', () => {
   it('equips a NAME_COLOR without requiring ownership (free palette)', async () => {
-    const u = await createAndLoginUser(server, { username: 'color_user' });
+    const u = await createAndLoginUser(server, { nickname: 'color_user' });
     await seedColor('matrix_blue');
 
     const res = await equip(server, u.accessToken, 'matrix_blue');
@@ -52,7 +52,7 @@ describe('Name colors — nickname color customization', () => {
   });
 
   it('rejects unknown, inactive and non-color ids', async () => {
-    const u = await createAndLoginUser(server, { username: 'color_guard' });
+    const u = await createAndLoginUser(server, { nickname: 'color_guard' });
     await seedColor('ghost_color', '#123456', false);
     await prisma.item.upsert({
       where: { id: 'frame_guard' },
@@ -76,7 +76,7 @@ describe('Name colors — nickname color customization', () => {
   });
 
   it('unequips the NAME_COLOR slot (back to default)', async () => {
-    const u = await createAndLoginUser(server, { username: 'color_reset' });
+    const u = await createAndLoginUser(server, { nickname: 'color_reset' });
     await seedColor('crimson', '#DC143C');
     await equip(server, u.accessToken, 'crimson');
 
@@ -89,15 +89,15 @@ describe('Name colors — nickname color customization', () => {
 
     const profile = await server.inject({
       method: 'GET',
-      url: `/api/users/${u.username}`,
+      url: `/api/users/${u.nickname}`,
       headers: { authorization: `Bearer ${u.accessToken}` },
     });
     expect(JSON.parse(profile.payload).user.nameColor).toBeNull();
   });
 
   it('embeds the OWN user color in the profile — never the viewer color', async () => {
-    const owner = await createAndLoginUser(server, { username: 'nc_owner' });
-    const viewer = await createAndLoginUser(server, { username: 'nc_viewer' });
+    const owner = await createAndLoginUser(server, { nickname: 'nc_owner' });
+    const viewer = await createAndLoginUser(server, { nickname: 'nc_viewer' });
     await seedColor('matrix_blue');
     await seedColor('crimson', '#DC143C');
     await equip(server, owner.accessToken, 'matrix_blue');
@@ -105,7 +105,7 @@ describe('Name colors — nickname color customization', () => {
 
     const res = await server.inject({
       method: 'GET',
-      url: `/api/users/${owner.username}`,
+      url: `/api/users/${owner.nickname}`,
       headers: { authorization: `Bearer ${viewer.accessToken}` },
     });
     const user = JSON.parse(res.payload).user;
@@ -117,8 +117,8 @@ describe('Name colors — nickname color customization', () => {
   });
 
   it('propagates each author color across feed, comments, search, friends and notifications', async () => {
-    const a = await createAndLoginUser(server, { username: 'nc_a' });
-    const b = await createAndLoginUser(server, { username: 'nc_b' });
+    const a = await createAndLoginUser(server, { nickname: 'nc_a' });
+    const b = await createAndLoginUser(server, { nickname: 'nc_b' });
     await seedColor('neon_red', '#FF5252');
     await seedColor('neon_blue', '#00E5FF');
     await equip(server, a.accessToken, 'neon_red');
@@ -163,8 +163,8 @@ describe('Name colors — nickname color customization', () => {
       headers: { authorization: `Bearer ${a.accessToken}` },
     });
     const users = JSON.parse(search.payload).users;
-    expect(users.find((u: { username: string }) => u.username === 'nc_a').nameColor).toBe('#FF5252');
-    expect(users.find((u: { username: string }) => u.username === 'nc_b').nameColor).toBe('#00E5FF');
+    expect(users.find((u: { nickname: string }) => u.nickname === 'nc_a').nameColor).toBe('#FF5252');
+    expect(users.find((u: { nickname: string }) => u.nickname === 'nc_b').nameColor).toBe('#00E5FF');
 
     // Friend request B → A: sender embeds B's color; A's notification actor too.
     await server.inject({
@@ -203,7 +203,7 @@ describe('Name colors — nickname color customization', () => {
   });
 
   it('persists the color across sessions (re-login keeps the equipped color)', async () => {
-    const u = await createAndLoginUser(server, { username: 'nc_persist', password: 'Password123' });
+    const u = await createAndLoginUser(server, { nickname: 'nc_persist', password: 'Password123' });
     await seedColor('gold', '#D4AF37');
     await equip(server, u.accessToken, 'gold');
 
@@ -211,7 +211,7 @@ describe('Name colors — nickname color customization', () => {
     const login = await server.inject({
       method: 'POST',
       url: '/api/auth/login',
-      payload: { username: 'nc_persist', password: 'Password123' },
+      payload: { nickname: 'nc_persist', password: 'Password123' },
     });
     const token = JSON.parse(login.payload).accessToken;
     const profile = await server.inject({

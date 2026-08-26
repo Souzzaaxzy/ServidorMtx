@@ -91,7 +91,7 @@ describe('Name effects — nickname effect customization', () => {
   });
 
   it('saves color + effect in one consolidated operation', async () => {
-    const u = await createAndLoginUser(server, { username: 'fx_both' });
+    const u = await createAndLoginUser(server, { nickname: 'fx_both' });
     await seedColor('matrix_blue');
     await seedEffect('glow');
 
@@ -113,7 +113,7 @@ describe('Name effects — nickname effect customization', () => {
   });
 
   it('saves only the effect, keeping the previously saved color', async () => {
-    const u = await createAndLoginUser(server, { username: 'fx_effect_only' });
+    const u = await createAndLoginUser(server, { nickname: 'fx_effect_only' });
     await seedColor('red', '#E53935');
     await seedEffect('glitch', { animation: 'glitch', intensity: 0.5, speed: 1, particles: false });
     await saveCosmetics(server, u.accessToken, { nameColorId: 'red' });
@@ -127,7 +127,7 @@ describe('Name effects — nickname effect customization', () => {
   });
 
   it('saves only the color, keeping the previously saved effect', async () => {
-    const u = await createAndLoginUser(server, { username: 'fx_color_only' });
+    const u = await createAndLoginUser(server, { nickname: 'fx_color_only' });
     await seedColor('green', '#43A047');
     await seedColor('purple', '#8E24AA');
     await seedEffect('fire');
@@ -142,7 +142,7 @@ describe('Name effects — nickname effect customization', () => {
   });
 
   it('removes the effect with nameEffectId = null, keeping the color', async () => {
-    const u = await createAndLoginUser(server, { username: 'fx_remove' });
+    const u = await createAndLoginUser(server, { nickname: 'fx_remove' });
     await seedColor('red', '#E53935');
     await seedEffect('electric');
     await saveCosmetics(server, u.accessToken, { nameColorId: 'red', nameEffectId: 'electric' });
@@ -156,7 +156,7 @@ describe('Name effects — nickname effect customization', () => {
   });
 
   it('rejects arbitrary/CSS payloads and unknown or mistyped ids', async () => {
-    const u = await createAndLoginUser(server, { username: 'fx_guard' });
+    const u = await createAndLoginUser(server, { nickname: 'fx_guard' });
     await seedColor('matrix_blue');
     await seedEffect('ghost_fx', {}, false);
 
@@ -185,8 +185,8 @@ describe('Name effects — nickname effect customization', () => {
   });
 
   it('embeds the OWN user cosmetics in the profile — never the viewer ones', async () => {
-    const owner = await createAndLoginUser(server, { username: 'fx_owner' });
-    const viewer = await createAndLoginUser(server, { username: 'fx_viewer' });
+    const owner = await createAndLoginUser(server, { nickname: 'fx_owner' });
+    const viewer = await createAndLoginUser(server, { nickname: 'fx_viewer' });
     await seedColor('matrix_blue');
     await seedColor('crimson', '#DC143C');
     await seedEffect('glow');
@@ -196,7 +196,7 @@ describe('Name effects — nickname effect customization', () => {
 
     const res = await server.inject({
       method: 'GET',
-      url: `/api/users/${owner.username}`,
+      url: `/api/users/${owner.nickname}`,
       headers: { authorization: `Bearer ${viewer.accessToken}` },
     });
     const user = JSON.parse(res.payload).user;
@@ -211,8 +211,8 @@ describe('Name effects — nickname effect customization', () => {
   });
 
   it('propagates each author cosmetics across feed, comments, search, friends and notifications', async () => {
-    const a = await createAndLoginUser(server, { username: 'fx_a' });
-    const b = await createAndLoginUser(server, { username: 'fx_b' });
+    const a = await createAndLoginUser(server, { nickname: 'fx_a' });
+    const b = await createAndLoginUser(server, { nickname: 'fx_b' });
     await seedColor('neon_red', '#FF5252');
     await seedColor('neon_blue', '#00E5FF');
     await seedEffect('fire');
@@ -263,11 +263,11 @@ describe('Name effects — nickname effect customization', () => {
       headers: { authorization: `Bearer ${a.accessToken}` },
     });
     const users = JSON.parse(search.payload).users;
-    expect(users.find((u: { username: string }) => u.username === 'fx_a')).toMatchObject({
+    expect(users.find((u: { nickname: string }) => u.nickname === 'fx_a')).toMatchObject({
       nameColorId: 'neon_red',
       nameEffectId: 'fire',
     });
-    expect(users.find((u: { username: string }) => u.username === 'fx_b')).toMatchObject({
+    expect(users.find((u: { nickname: string }) => u.nickname === 'fx_b')).toMatchObject({
       nameColorId: 'neon_blue',
       nameEffectId: 'ice',
     });
@@ -303,13 +303,13 @@ describe('Name effects — nickname effect customization', () => {
   });
 
   it('returns null effect for users without one (color keeps working)', async () => {
-    const u = await createAndLoginUser(server, { username: 'fx_none' });
+    const u = await createAndLoginUser(server, { nickname: 'fx_none' });
     await seedColor('white', '#FAFAFA');
     await saveCosmetics(server, u.accessToken, { nameColorId: 'white' });
 
     const res = await server.inject({
       method: 'GET',
-      url: `/api/users/${u.username}`,
+      url: `/api/users/${u.nickname}`,
       headers: { authorization: `Bearer ${u.accessToken}` },
     });
     const user = JSON.parse(res.payload).user;

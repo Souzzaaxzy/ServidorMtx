@@ -14,8 +14,8 @@ afterAll(async () => {
 
 describe('Profile counters (Amigos / Posts)', () => {
   it('returns real postsCount and friendsCount for the viewed user', async () => {
-    const a = await createAndLoginUser(server, { username: 'stats_a' });
-    const b = await createAndLoginUser(server, { username: 'stats_b' });
+    const a = await createAndLoginUser(server, { nickname: 'stats_a' });
+    const b = await createAndLoginUser(server, { nickname: 'stats_b' });
 
     // a creates two posts so the counter must be 2.
     for (const text of ['post one', 'post two']) {
@@ -43,7 +43,7 @@ describe('Profile counters (Amigos / Posts)', () => {
 
     const profile = await server.inject({
       method: 'GET',
-      url: `/api/users/${a.username}`,
+      url: `/api/users/${a.nickname}`,
       headers: { authorization: `Bearer ${b.accessToken}` },
     });
     expect(profile.statusCode).toBe(200);
@@ -63,7 +63,7 @@ describe('Profile counters (Amigos / Posts)', () => {
   });
 
   it('posts count drops after deleting a post', async () => {
-    const a = await createAndLoginUser(server, { username: 'delcount' });
+    const a = await createAndLoginUser(server, { nickname: 'delcount' });
     const createRes = await server.inject({
       method: 'POST',
       url: '/api/posts',
@@ -87,8 +87,8 @@ describe('Profile counters (Amigos / Posts)', () => {
   });
 
   it('pending friend requests do NOT count as friends', async () => {
-    const a = await createAndLoginUser(server, { username: 'pending_a' });
-    const b = await createAndLoginUser(server, { username: 'pending_b' });
+    const a = await createAndLoginUser(server, { nickname: 'pending_a' });
+    const b = await createAndLoginUser(server, { nickname: 'pending_b' });
     await server.inject({
       method: 'POST',
       url: `/api/friend-requests/${b.id}`,
@@ -106,9 +106,9 @@ describe('Profile counters (Amigos / Posts)', () => {
 
 describe('Friends list endpoint', () => {
   it('lists accepted friends with real pagination data', async () => {
-    const a = await createAndLoginUser(server, { username: 'fl_a' });
-    const b = await createAndLoginUser(server, { username: 'fl_b' });
-    const c = await createAndLoginUser(server, { username: 'fl_c' });
+    const a = await createAndLoginUser(server, { nickname: 'fl_a' });
+    const b = await createAndLoginUser(server, { nickname: 'fl_b' });
+    const c = await createAndLoginUser(server, { nickname: 'fl_c' });
 
     for (const other of [b, c]) {
       const send = await server.inject({
@@ -142,13 +142,13 @@ describe('Friends list endpoint', () => {
     expect(p2.friends).toHaveLength(1);
 
     // The two pages together must cover both friends, no matter the order.
-    const usernames = [p1.friends[0].username, p2.friends[0].username].sort();
-    expect(usernames).toEqual(['fl_b', 'fl_c']);
+    const nicknames = [p1.friends[0].nickname, p2.friends[0].nickname].sort();
+    expect(nicknames).toEqual(['fl_b', 'fl_c']);
   });
 
   it('friend list of the OTHER user is visible (not limited to own list)', async () => {
-    const a = await createAndLoginUser(server, { username: 'vis_a' });
-    const b = await createAndLoginUser(server, { username: 'vis_b' });
+    const a = await createAndLoginUser(server, { nickname: 'vis_a' });
+    const b = await createAndLoginUser(server, { nickname: 'vis_b' });
     const send = await server.inject({
       method: 'POST',
       url: `/api/friend-requests/${b.id}`,
@@ -168,12 +168,12 @@ describe('Friends list endpoint', () => {
       headers: { authorization: `Bearer ${a.accessToken}` },
     });
     const body = JSON.parse(res.payload);
-    expect(body.friends.map((f: { username: string }) => f.username)).toContain('vis_a');
+    expect(body.friends.map((f: { nickname: string }) => f.nickname)).toContain('vis_a');
   });
 
   it('only accepted friendships appear (pending never leaks)', async () => {
-    const a = await createAndLoginUser(server, { username: 'clean_a' });
-    const b = await createAndLoginUser(server, { username: 'clean_b' });
+    const a = await createAndLoginUser(server, { nickname: 'clean_a' });
+    const b = await createAndLoginUser(server, { nickname: 'clean_b' });
     await server.inject({
       method: 'POST',
       url: `/api/friend-requests/${b.id}`,
@@ -191,8 +191,8 @@ describe('Friends list endpoint', () => {
 
 describe('Friend accept notifications (both sides)', () => {
   it('creates FRIEND_ACCEPTED for the sender AND the acceptor', async () => {
-    const a = await createAndLoginUser(server, { username: 'both_a' });
-    const b = await createAndLoginUser(server, { username: 'both_b' });
+    const a = await createAndLoginUser(server, { nickname: 'both_a' });
+    const b = await createAndLoginUser(server, { nickname: 'both_b' });
     const send = await server.inject({
       method: 'POST',
       url: `/api/friend-requests/${b.id}`,

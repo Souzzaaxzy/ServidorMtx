@@ -27,7 +27,7 @@ export const gamificationRoutes: FastifyPluginAsync = async (app: FastifyInstanc
     const userIds = rows.map((r) => r.userId);
     const users = await prisma.user.findMany({
       where: { id: { in: userIds } },
-      select: { id: true, username: true, name: true, avatarUrl: true },
+      select: { id: true, nickname: true, avatarUrl: true },
     });
     const userMap = new Map(users.map((u) => [u.id, u]));
     const ranking = rows.map((r, i) => {
@@ -35,8 +35,7 @@ export const gamificationRoutes: FastifyPluginAsync = async (app: FastifyInstanc
       return {
         position: i + 1,
         userId: r.userId,
-        username: u?.username ?? 'unknown',
-        name: u?.name ?? '',
+        nickname: u?.nickname ?? 'unknown',
         avatarUrl: u?.avatarUrl ?? null,
         xp: r._sum.amount ?? 0,
       };

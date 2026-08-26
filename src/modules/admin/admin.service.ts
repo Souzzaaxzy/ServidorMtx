@@ -12,8 +12,7 @@ export async function listUsers() {
   return prisma.user.findMany({
     select: {
       id: true,
-      name: true,
-      username: true,
+      nickname: true,
       role: true,
       avatarUrl: true,
       bio: true,
@@ -68,7 +67,7 @@ export async function setUserRole(adminId: string, userId: string, role: 'USER' 
   const user = await prisma.user.update({
     where: { id: userId },
     data: { role },
-    select: { id: true, username: true, role: true },
+    select: { id: true, nickname: true, role: true },
   });
   return user;
 }

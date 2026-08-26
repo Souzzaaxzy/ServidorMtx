@@ -27,8 +27,7 @@ export const NAME_COLOR_SELECT = NICKNAME_COSMETICS_SELECT;
 
 export const AUTHOR_SELECT = {
   id: true,
-  name: true,
-  username: true,
+  nickname: true,
   avatarUrl: true,
   ...NICKNAME_COSMETICS_SELECT,
 } as const;
@@ -98,21 +97,19 @@ export function nicknameCosmetics(user: WithNameColor): NicknameCosmeticsPayload
 // internals to other users.
 export interface PublicUser extends NicknameCosmeticsPayload {
   id: string;
-  name: string;
-  username: string;
+  nickname: string;
   avatarUrl: string | null;
   bio: string;
   createdAt: string;
 }
 
 export function toPublicUser(
-  user: Pick<User, 'id' | 'name' | 'username' | 'avatarUrl' | 'bio' | 'createdAt'> &
+  user: Pick<User, 'id' | 'nickname' | 'avatarUrl' | 'bio' | 'createdAt'> &
     WithNameColor,
 ): PublicUser {
   return {
     id: user.id,
-    name: user.name,
-    username: user.username,
+    nickname: user.nickname,
     avatarUrl: user.avatarUrl,
     bio: user.bio,
     createdAt: user.createdAt.toISOString(),
@@ -191,7 +188,7 @@ export interface FeedPost {
   text: string | null;
   imageUrl: string | null;
   createdAt: string;
-  author: Pick<PublicUser, 'id' | 'name' | 'username' | 'avatarUrl'> & NicknameCosmeticsPayload;
+  author: Pick<PublicUser, 'id' | 'nickname' | 'avatarUrl'> & NicknameCosmeticsPayload;
   likeCount: number;
   liked: boolean;
   commentCount: number;
@@ -203,7 +200,7 @@ export interface PostDetail extends FeedPost {
 
 export function toFeedPost(
   post: Post & {
-    user: Pick<User, 'id' | 'name' | 'username' | 'avatarUrl'> & WithNameColor;
+    user: Pick<User, 'id' | 'nickname' | 'avatarUrl'> & WithNameColor;
     _count?: { likes: number; comments: number };
     likes?: { userId: string }[];
   },
@@ -219,8 +216,7 @@ export function toFeedPost(
     createdAt: post.createdAt.toISOString(),
     author: {
       id: post.user.id,
-      name: post.user.name,
-      username: post.user.username,
+      nickname: post.user.nickname,
       avatarUrl: post.user.avatarUrl,
       ...nicknameCosmetics(post.user),
     },
@@ -234,12 +230,12 @@ export interface PostComment {
   id: string;
   text: string;
   createdAt: string;
-  author: Pick<PublicUser, 'id' | 'name' | 'username' | 'avatarUrl'> & NicknameCosmeticsPayload;
+  author: Pick<PublicUser, 'id' | 'nickname' | 'avatarUrl'> & NicknameCosmeticsPayload;
 }
 
 export function toPostComment(
   comment: Comment & {
-    user: Pick<User, 'id' | 'name' | 'username' | 'avatarUrl'> & WithNameColor;
+    user: Pick<User, 'id' | 'nickname' | 'avatarUrl'> & WithNameColor;
   },
 ): PostComment {
   return {
@@ -248,8 +244,7 @@ export function toPostComment(
     createdAt: comment.createdAt.toISOString(),
     author: {
       id: comment.user.id,
-      name: comment.user.name,
-      username: comment.user.username,
+      nickname: comment.user.nickname,
       avatarUrl: comment.user.avatarUrl,
       ...nicknameCosmetics(comment.user),
     },
@@ -269,12 +264,12 @@ export interface FriendRequestItem {
   id: string;
   status: string;
   createdAt: string;
-  sender: Pick<PublicUser, 'id' | 'name' | 'username' | 'avatarUrl'> & NicknameCosmeticsPayload;
+  sender: Pick<PublicUser, 'id' | 'nickname' | 'avatarUrl'> & NicknameCosmeticsPayload;
 }
 
 export function toFriendRequestItem(
   request: FriendRequest & {
-    sender: Pick<User, 'id' | 'name' | 'username' | 'avatarUrl'> & WithNameColor;
+    sender: Pick<User, 'id' | 'nickname' | 'avatarUrl'> & WithNameColor;
   },
 ): FriendRequestItem {
   return {
@@ -283,8 +278,7 @@ export function toFriendRequestItem(
     createdAt: request.createdAt.toISOString(),
     sender: {
       id: request.sender.id,
-      name: request.sender.name,
-      username: request.sender.username,
+      nickname: request.sender.nickname,
       avatarUrl: request.sender.avatarUrl,
       ...nicknameCosmetics(request.sender),
     },
@@ -300,12 +294,12 @@ export interface NotificationItem {
   commentId: string | null;
   friendRequestId: string | null;
   friendRequestStatus: string | null;
-  actor: Pick<PublicUser, 'id' | 'name' | 'username' | 'avatarUrl'> & NicknameCosmeticsPayload;
+  actor: Pick<PublicUser, 'id' | 'nickname' | 'avatarUrl'> & NicknameCosmeticsPayload;
 }
 
 export function toNotificationItem(
   notification: Notification & {
-    actor: Pick<User, 'id' | 'name' | 'username' | 'avatarUrl'> & WithNameColor;
+    actor: Pick<User, 'id' | 'nickname' | 'avatarUrl'> & WithNameColor;
     friendRequest?: { id: string; status: string } | null;
   },
 ): NotificationItem {
@@ -320,8 +314,7 @@ export function toNotificationItem(
     friendRequestStatus: notification.friendRequest?.status ?? null,
     actor: {
       id: notification.actor.id,
-      name: notification.actor.name,
-      username: notification.actor.username,
+      nickname: notification.actor.nickname,
       avatarUrl: notification.actor.avatarUrl,
       ...nicknameCosmetics(notification.actor),
     },

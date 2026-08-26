@@ -14,8 +14,8 @@ afterAll(async () => {
 
 describe('Comments', () => {
   it('creates a comment on a post', async () => {
-    const author = await createAndLoginUser(server, { username: 'cmauthor' });
-    const commenter = await createAndLoginUser(server, { username: 'commenter' });
+    const author = await createAndLoginUser(server, { nickname: 'cmauthor' });
+    const commenter = await createAndLoginUser(server, { nickname: 'commenter' });
     const post = await prisma.post.create({ data: { userId: author.id, text: 'hello' } });
 
     const res = await server.inject({
@@ -27,12 +27,12 @@ describe('Comments', () => {
     expect(res.statusCode).toBe(201);
     const body = JSON.parse(res.payload);
     expect(body.text).toBe('Primeiro comentário!');
-    expect(body.author.username).toBe('commenter');
+    expect(body.author.nickname).toBe('commenter');
   });
 
   it('lists comments for a post', async () => {
-    const author = await createAndLoginUser(server, { username: 'cmauthor2' });
-    const commenter = await createAndLoginUser(server, { username: 'commenter2' });
+    const author = await createAndLoginUser(server, { nickname: 'cmauthor2' });
+    const commenter = await createAndLoginUser(server, { nickname: 'commenter2' });
     const post = await prisma.post.create({ data: { userId: author.id, text: 'hello' } });
 
     await server.inject({ method: 'POST', url: `/api/posts/${post.id}/comments`, headers: { authorization: `Bearer ${commenter.accessToken}` }, payload: { text: 'c1' } });
@@ -46,7 +46,7 @@ describe('Comments', () => {
   });
 
   it('rejects empty comment', async () => {
-    const author = await createAndLoginUser(server, { username: 'cmauthor3' });
+    const author = await createAndLoginUser(server, { nickname: 'cmauthor3' });
     const post = await prisma.post.create({ data: { userId: author.id, text: 'hello' } });
     const res = await server.inject({
       method: 'POST',
@@ -58,7 +58,7 @@ describe('Comments', () => {
   });
 
   it('lets owner delete their comment', async () => {
-    const author = await createAndLoginUser(server, { username: 'cmauthor4' });
+    const author = await createAndLoginUser(server, { nickname: 'cmauthor4' });
     const post = await prisma.post.create({ data: { userId: author.id, text: 'hello' } });
     const created = await server.inject({
       method: 'POST',
@@ -76,8 +76,8 @@ describe('Comments', () => {
   });
 
   it('forbids deleting another user comment', async () => {
-    const author = await createAndLoginUser(server, { username: 'cmauthor5' });
-    const other = await createAndLoginUser(server, { username: 'othercomment' });
+    const author = await createAndLoginUser(server, { nickname: 'cmauthor5' });
+    const other = await createAndLoginUser(server, { nickname: 'othercomment' });
     const post = await prisma.post.create({ data: { userId: author.id, text: 'hello' } });
     const created = await server.inject({
       method: 'POST',
@@ -95,7 +95,7 @@ describe('Comments', () => {
   });
 
   it('returns 404 when commenting on a missing post', async () => {
-    const commenter = await createAndLoginUser(server, { username: 'commenter9' });
+    const commenter = await createAndLoginUser(server, { nickname: 'commenter9' });
     const res = await server.inject({
       method: 'POST',
       url: '/api/posts/missing/comments',

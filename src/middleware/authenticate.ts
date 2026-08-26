@@ -29,7 +29,7 @@ export async function authenticate(request: FastifyRequest, _reply: FastifyReply
   const token = header.slice('Bearer '.length).trim();
   try {
     const payload = verifyAccessToken(token);
-    request.user = { id: payload.sub, username: payload.username };
+    request.user = { id: payload.sub, nickname: payload.nickname };
   } catch {
     throw ApiError.unauthorized();
   }
@@ -44,7 +44,7 @@ export async function optionalAuth(request: FastifyRequest, _reply: FastifyReply
   const token = header.slice('Bearer '.length).trim();
   try {
     const payload = verifyAccessToken(token);
-    request.user = { id: payload.sub, username: payload.username };
+    request.user = { id: payload.sub, nickname: payload.nickname };
   } catch {
     // Invalid token on a public route — ignore and treat as anonymous.
   }

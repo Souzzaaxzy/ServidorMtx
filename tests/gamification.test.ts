@@ -14,7 +14,7 @@ afterAll(async () => {
 
 describe('Gamification — XP ledger', () => {
   it('grants XP to the post author when a post is created', async () => {
-    const u = await createAndLoginUser(server, { username: 'xp_author' });
+    const u = await createAndLoginUser(server, { nickname: 'xp_author' });
     const res = await server.inject({
       method: 'POST',
       url: '/api/posts',
@@ -32,7 +32,7 @@ describe('Gamification — XP ledger', () => {
   });
 
   it('records the reason and source for audit', async () => {
-    const u = await createAndLoginUser(server, { username: 'xp_audit' });
+    const u = await createAndLoginUser(server, { nickname: 'xp_audit' });
     await server.inject({
       method: 'POST',
       url: '/api/posts',
@@ -48,8 +48,8 @@ describe('Gamification — XP ledger', () => {
   });
 
   it('grants XP to the author when someone else likes their post', async () => {
-    const author = await createAndLoginUser(server, { username: 'like_author' });
-    const liker = await createAndLoginUser(server, { username: 'liker' });
+    const author = await createAndLoginUser(server, { nickname: 'like_author' });
+    const liker = await createAndLoginUser(server, { nickname: 'liker' });
 
     const post = await server.inject({
       method: 'POST',
@@ -74,7 +74,7 @@ describe('Gamification — XP ledger', () => {
   });
 
   it('does not grant XP for self-likes', async () => {
-    const author = await createAndLoginUser(server, { username: 'self_liker' });
+    const author = await createAndLoginUser(server, { nickname: 'self_liker' });
     const post = await server.inject({
       method: 'POST',
       url: '/api/posts',
@@ -100,7 +100,7 @@ describe('Gamification — XP ledger', () => {
 
 describe('Gamification — GET /api/gamification/me', () => {
   it('returns the current level and XP total', async () => {
-    const u = await createAndLoginUser(server, { username: 'level_user' });
+    const u = await createAndLoginUser(server, { nickname: 'level_user' });
     await server.inject({
       method: 'POST',
       url: '/api/posts',
@@ -123,7 +123,7 @@ describe('Gamification — GET /api/gamification/me', () => {
 
 describe('Gamification — ranking', () => {
   it('returns users ordered by XP', async () => {
-    await createAndLoginUser(server, { username: 'ranked_a' });
+    await createAndLoginUser(server, { nickname: 'ranked_a' });
     const res = await server.inject({ method: 'GET', url: '/api/gamification/ranking' });
     expect(res.statusCode).toBe(200);
     const body = JSON.parse(res.payload);

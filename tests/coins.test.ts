@@ -15,7 +15,7 @@ afterAll(async () => {
 
 describe('Matrix Coins ledger', () => {
   it('records every movement and the balance is the sum', async () => {
-    const u = await createAndLoginUser(server, { username: 'coin_user' });
+    const u = await createAndLoginUser(server, { nickname: 'coin_user' });
 
     await grantCoins({ userId: u.id, amount: 100, type: 'EARN', reason: 'ACHIEVEMENT' });
     await grantCoins({ userId: u.id, amount: 30, type: 'EARN', reason: 'REWARD' });
@@ -33,7 +33,7 @@ describe('Matrix Coins ledger', () => {
   });
 
   it('refuses to overspend (non-negative balance)', async () => {
-    const u = await createAndLoginUser(server, { username: 'overspend' });
+    const u = await createAndLoginUser(server, { nickname: 'overspend' });
     await grantCoins({ userId: u.id, amount: 50, type: 'EARN', reason: 'REWARD' });
 
     await expect(
@@ -45,7 +45,7 @@ describe('Matrix Coins ledger', () => {
   });
 
   it('grants coins when a post is created', async () => {
-    const u = await createAndLoginUser(server, { username: 'coin_post' });
+    const u = await createAndLoginUser(server, { nickname: 'coin_post' });
     await server.inject({
       method: 'POST',
       url: '/api/posts',

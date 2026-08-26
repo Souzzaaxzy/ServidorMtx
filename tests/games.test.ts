@@ -25,7 +25,7 @@ describe('Games — server-validated rewards', () => {
   });
 
   it('starts a session and the server decides the payout', async () => {
-    const u = await createAndLoginUser(server, { username: 'gamer' });
+    const u = await createAndLoginUser(server, { nickname: 'gamer' });
     await prisma.game.upsert({
       where: { slug: 'quiz_payout' },
       update: {},
@@ -61,8 +61,8 @@ describe('Games — server-validated rewards', () => {
   });
 
   it('rejects finishing a session that belongs to another user', async () => {
-    const owner = await createAndLoginUser(server, { username: 'session_owner' });
-    const other = await createAndLoginUser(server, { username: 'session_other' });
+    const owner = await createAndLoginUser(server, { nickname: 'session_owner' });
+    const other = await createAndLoginUser(server, { nickname: 'session_other' });
     await prisma.game.upsert({
       where: { slug: 'quiz_ownership' },
       update: {},
@@ -86,7 +86,7 @@ describe('Games — server-validated rewards', () => {
   });
 
   it('does not double-grant when finishing twice', async () => {
-    const u = await createAndLoginUser(server, { username: 'double_finish' });
+    const u = await createAndLoginUser(server, { nickname: 'double_finish' });
     await prisma.game.upsert({
       where: { slug: 'quiz_double' },
       update: {},

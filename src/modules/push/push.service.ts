@@ -26,7 +26,7 @@ export interface PushMessage {
   data: {
     notificationId: string;
     type: string;
-    actorUsername: string;
+    actorNickname: string;
     postId: string | null;
     commentId: string | null;
     friendRequestId: string | null;
@@ -75,18 +75,18 @@ export function socketsOf(userId: string): number {
 // The canonical PT-BR body text shared by the in-app list and the native
 // Android notification (single rendering point — never recompose in the
 // APK).
-export function composeBody(type: string, actorUsername: string): string {
+export function composeBody(type: string, actorNickname: string): string {
   switch (type) {
     case NotificationType.LIKE:
-      return `@${actorUsername} curtiu sua publicação.`;
+      return `${actorNickname} curtiu sua publicação.`;
     case NotificationType.COMMENT:
-      return `@${actorUsername} comentou na sua publicação.`;
+      return `${actorNickname} comentou na sua publicação.`;
     case NotificationType.FRIEND_REQUEST:
-      return `@${actorUsername} enviou uma solicitação de amizade.`;
+      return `${actorNickname} enviou uma solicitação de amizade.`;
     case NotificationType.FRIEND_ACCEPTED:
-      return `Agora você e @${actorUsername} são amigos.`;
+      return `Agora você e ${actorNickname} são amigos.`;
     default:
-      return `@${actorUsername} interagiu com você.`;
+      return `${actorNickname} interagiu com você.`;
   }
 }
 
@@ -98,16 +98,16 @@ export function buildMessage(
     commentId: string | null;
     friendRequestId: string | null;
   },
-  actorUsername: string,
+  actorNickname: string,
 ): PushMessage {
   return {
     kind: 'notification',
     title: 'MATRIX',
-    body: composeBody(notification.type, actorUsername),
+    body: composeBody(notification.type, actorNickname),
     data: {
       notificationId: notification.id,
       type: notification.type,
-      actorUsername,
+      actorNickname,
       postId: notification.postId,
       commentId: notification.commentId,
       friendRequestId: notification.friendRequestId,
@@ -120,7 +120,7 @@ export function buildMessage(
  * was actually dispatched; false when deduped. Caller decides how critical
  * it is — errors from sockets are logged, not thrown.
  *
- * The actor's username is resolved from the notification row (one indexed
+ * The actor's nickname is resolved from the notification row (one indexed
  * lookup) so callers only pass the persisted row.
  */
 export async function dispatchNotification(
@@ -137,10 +137,10 @@ export async function dispatchNotification(
   if (!rememberDispatched(notification.id)) return false;
   const actor = await prisma.user.findUnique({
     where: { id: notification.actorId },
-    select: { username: true },
+    select: { nickname: true },
   });
-  const actorUsername = actor?.username ?? 'desconhecido';
-  const message = buildMessage(notification, actorUsername);
+  const actorNickname = actor?.nickname ?? 'desconhecido';
+  const message = buildMessage(notification, actorNickname);
   const payload = JSON.stringify(message);
 
   const live = sockets.get(recipientId);

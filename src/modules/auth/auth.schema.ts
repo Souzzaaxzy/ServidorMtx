@@ -1,9 +1,8 @@
 import { z } from 'zod';
-import { isValidUsername } from '../../utils/normalize.js';
+import { isValidNickname } from '../../utils/normalize.js';
 
 export const registerSchema = z.object({
-  name: z.string().trim().min(2, 'Nome muito curto').max(80, 'Nome muito longo'),
-  username: z.string().refine(isValidUsername, 'Usuário inválido'),
+  nickname: z.string().refine(isValidNickname, 'Usuário inválido'),
   password: z
     .string()
     .min(8, 'A senha deve ter no mínimo 8 caracteres')
@@ -13,7 +12,7 @@ export const registerSchema = z.object({
 });
 
 export const loginSchema = z.object({
-  username: z.string().trim().min(1, 'Informe o usuário'),
+  nickname: z.string().trim().min(1, 'Informe o usuário'),
   password: z.string().min(1, 'Senha obrigatória'),
 });
 
