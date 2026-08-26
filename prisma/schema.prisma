@@ -35,7 +35,12 @@ model User {
   id                String    @id @default(cuid())
   // Single visual identity (Phase 5): only `nickname`. Legacy `name`/
   // `username` were merged by the 20260826_unify_identity_nickname migration.
+  // The display form is stored EXACTLY as typed (Unicode, emojis, mixed
+  // case). `nicknameKey` is the case-insensitive lookup key (lowercased
+  // display form) that powers uniqueness, login, recovery and profile
+  // resolution — "Leonardo" and "LEONARDO" cannot coexist.
   nickname          String    @unique
+  nicknameKey       String    @unique  @default("")
   passwordHash      String
   recoveryCodeHash  String
   role              String    @default("USER")
@@ -352,10 +357,8 @@ model Item {
   // Explicit ordering inside a category (catalogs are curated, not
   // alphabetical).
   sortOrder  Int       @default(0)
-  // JSON-serialized render configuration (SQLite has no Json type). For
-  // NAME_EFFECT items this tells the app HOW to render the effect
-  // (animation, intensity, speed, particles, colors) so render settings
-  // live in the server-owned catalog, not scattered across APK components.
+  // JSON-serialized render configuration (SQLite has no Json type). Kept
+  // generic for future cosmetic types that need extra render data.
   config     String    @default("{}")
   active     Boolean   @default(true)
   createdAt  DateTime  @default(now())

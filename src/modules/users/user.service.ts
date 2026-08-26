@@ -1,6 +1,6 @@
 import { prisma } from '../../config/prisma.js';
 import { ApiError, toApiError } from '../../utils/errors.js';
-import { normalizeNickname } from '../../utils/normalize.js';
+import { nicknameKey, normalizeNickname } from '../../utils/normalize.js';
 import { AUTHOR_SELECT, toAuthUser, toFeedPost, toProfileUser, type AuthUser, type FeedPost, type ProfileUser } from '../../utils/dto.js';
 import { getFriendshipState } from '../friends/friend.service.js';
 import type { FriendshipState } from '../../types/enums.js';
@@ -9,8 +9,9 @@ export async function getProfile(
   nickname: string,
   currentUserId?: string,
 ): Promise<{ user: ProfileUser; posts: FeedPost[]; friendship: FriendshipState | null }> {
+  // Profile URLs resolve case-insensitively through the nickname key.
   const user = await prisma.user.findUnique({
-    where: { nickname: normalizeNickname(nickname) },
+    where: { nicknameKey: nicknameKey(nickname) },
     include: {
       // Equipped cosmetics ride along so any profile (own or someone
       // else's) can render frames/badges without an extra request.
@@ -56,7 +57,10 @@ export async function updateProfile(
 ): Promise<AuthUser> {
   try {
     const data: Record<string, unknown> = {};
-    if (input.nickname !== undefined) data.nickname = normalizeNickname(input.nickname);
+    if (input.nickname !== undefined) {
+      data.nickname = normalizeNickname(input.nickname);
+      data.nicknameKey = nicknameKey(input.nickname);
+    }
     if (input.bio !== undefined) data.bio = input.bio ?? '';
     if (input.avatarUrl !== undefined) data.avatarUrl = input.avatarUrl;
 

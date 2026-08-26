@@ -1,6 +1,6 @@
 import { prisma } from '../../config/prisma.js';
 import { ApiError } from '../../utils/errors.js';
-import { normalizeNickname } from '../../utils/normalize.js';
+import { nicknameKey, normalizeNickname } from '../../utils/normalize.js';
 import {
   createSession,
   generateRecoveryCode,
@@ -48,10 +48,13 @@ function serializeUser(user: {
 }
 
 export async function register(input: RegisterInput): Promise<RegisterResult> {
+  // Display form preserved exactly as typed; uniqueness is checked against
+  // the case-insensitive key so "Leonardo" and "LEONARDO" can't coexist.
   const nickname = normalizeNickname(input.nickname);
+  const key = nicknameKey(input.nickname);
 
   const existing = await prisma.user.findFirst({
-    where: { nickname },
+    where: { nicknameKey: key },
     select: { id: true },
   });
   if (existing) {
@@ -66,6 +69,7 @@ export async function register(input: RegisterInput): Promise<RegisterResult> {
   const user = await prisma.user.create({
     data: {
       nickname,
+      nicknameKey: key,
       passwordHash,
       recoveryCodeHash,
       bio: '',
@@ -84,8 +88,10 @@ export async function register(input: RegisterInput): Promise<RegisterResult> {
 }
 
 export async function login(input: LoginInput): Promise<AuthResult> {
-  const nickname = normalizeNickname(input.nickname);
-  const user = await prisma.user.findUnique({ where: { nickname } });
+  // Case-insensitive: the user can type their nickname in any case.
+  const user = await prisma.user.findUnique({
+    where: { nicknameKey: nicknameKey(input.nickname) },
+  });
 
   // Always perform a hash compare to keep timing roughly constant even when
   // the user does not exist, mitigating user enumeration via timing.
@@ -158,9 +164,10 @@ export async function recoverAccount(
     throw ApiError.tooManyRecoveryAttempts();
   }
 
-  // Normalize the identifier to a nickname form for lookup.
-  const nickname = normalizeNickname(input.identifier);
-  const user = await prisma.user.findUnique({ where: { nickname } });
+  // Normalize the identifier to a case-insensitive nickname key for lookup.
+  const user = await prisma.user.findUnique({
+    where: { nicknameKey: nicknameKey(input.identifier) },
+  });
 
   // Always run a verification against a dummy hash so timing does not leak
   // whether the identifier exists.

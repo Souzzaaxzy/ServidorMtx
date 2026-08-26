@@ -38,6 +38,7 @@ export async function createUser(overrides: Partial<{
   const user = await prisma.user.create({
     data: {
       nickname,
+      nicknameKey: nickname.toLowerCase(),
       passwordHash,
       recoveryCodeHash,
       role: overrides.role ?? 'USER',

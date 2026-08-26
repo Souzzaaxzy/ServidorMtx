@@ -1,23 +1,19 @@
 import type { Comment, FriendRequest, Notification, Post, User } from '../generated/index.js';
 
-// ── Nickname cosmetics (color + effect) ──────────────────────
+// ── Nickname cosmetics (color) ───────────────────────────────
 // A user's nickname color is the cosmetic equipped in the NAME_COLOR slot
-// (assetUrl carries the hex — the server owns the palette) and the nickname
-// effect is the cosmetic equipped in the NAME_EFFECT slot (config carries
-// the JSON render contract — the server owns the effects catalog). Both are
-// FULLY independent: any color combines with any effect. Every payload that
-// renders a nickname embeds the OWNER's resolved cosmetics so each user
+// (assetUrl carries the hex — the server owns the palette). Every payload
+// that renders a nickname embeds the OWNER's resolved color so each user
 // keeps their own look everywhere (feed, comments, friends, notifications,
 // search, ...).
 export const NAME_COLOR_SLOT = 'NAME_COLOR';
-export const NAME_EFFECT_SLOT = 'NAME_EFFECT';
 
 // Shared select for "user summary + equipped nickname cosmetics". Spreading
-// this into an author/actor select adds the equipped NAME_COLOR/NAME_EFFECT
-// rows (if any) with just the fields needed to resolve color + effect.
+// this into an author/actor select adds the equipped NAME_COLOR row (if
+// any) with just the fields needed to resolve the color.
 export const NICKNAME_COSMETICS_SELECT = {
   equippedItems: {
-    where: { slot: { in: [NAME_COLOR_SLOT, NAME_EFFECT_SLOT] as string[] } },
+    where: { slot: NAME_COLOR_SLOT as string },
     select: { slot: true, item: { select: { id: true, name: true, assetUrl: true, config: true } } },
   },
 } as const;
@@ -40,7 +36,7 @@ export type WithNameColor = {
 };
 
 // Parses the catalog item's JSON render config (SQLite stores it as text).
-function parseEffectConfig(raw: string): Record<string, unknown> {
+function parseItemConfig(raw: string): Record<string, unknown> {
   try {
     const parsed: unknown = JSON.parse(raw);
     return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
@@ -61,35 +57,16 @@ export function nameColorId(user: WithNameColor): string | null {
   return user.equippedItems?.find((e) => e.slot === NAME_COLOR_SLOT)?.item.id ?? null;
 }
 
-// The equipped name effect with everything the app's NicknameRenderer needs
-// to draw it — or null for "nenhum efeito" (the plain colored nickname).
-export interface NameEffectPayload {
-  id: string;
-  name: string;
-  config: Record<string, unknown>;
-}
-
-export function nameEffect(user: WithNameColor): NameEffectPayload | null {
-  const row = user.equippedItems?.find((e) => e.slot === NAME_EFFECT_SLOT);
-  if (!row) return null;
-  return { id: row.item.id, name: row.item.name, config: parseEffectConfig(row.item.config) };
-}
-
 // The nickname cosmetics fragment embedded in every author/actor payload.
 export interface NicknameCosmeticsPayload {
   nameColor: string | null;
   nameColorId: string | null;
-  nameEffectId: string | null;
-  nameEffect: NameEffectPayload | null;
 }
 
 export function nicknameCosmetics(user: WithNameColor): NicknameCosmeticsPayload {
-  const effect = nameEffect(user);
   return {
     nameColor: nameColorHex(user),
     nameColorId: nameColorId(user),
-    nameEffectId: effect?.id ?? null,
-    nameEffect: effect,
   };
 }
 
@@ -147,7 +124,7 @@ export function customizationMap(user: WithEquippedItems): CustomizationMap {
       name: e.item.name,
       assetUrl: e.item.assetUrl,
       rarity: e.item.rarity,
-      config: parseEffectConfig(e.item.config),
+      config: parseItemConfig(e.item.config),
     };
   }
   return map;

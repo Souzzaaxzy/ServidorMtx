@@ -110,6 +110,78 @@ describe('Auth — nickname @-normalization', () => {
   });
 });
 
+describe('Auth — Unicode nicknames', () => {
+  it.each([
+    'Leonardo',
+    'LEONARDO',
+    'LeOnArDo',
+    'Leonardo 🔥',
+    '★Leonardo★',
+    'Leonardo.exe',
+    'MATRIX ⚡',
+    'LΞONΛRDO',
+    '𝕷𝖊𝖔𝖓𝖆𝖗𝖉𝖔',
+    'José Àçéntos',
+  ])('registers and preserves the exact typed form: %s', async (nickname) => {
+    const res = await server.inject({
+      method: 'POST',
+      url: '/api/auth/register',
+      payload: { nickname, password: 'Password123' },
+    });
+    expect(res.statusCode).toBe(201);
+    expect(JSON.parse(res.payload).user.nickname).toBe(nickname);
+    const stored = await prisma.user.findUnique({ where: { nickname } });
+    expect(stored).not.toBeNull();
+    expect(stored!.nickname).toBe(nickname);
+  });
+
+  it('logs in case-insensitively and returns the stored display form', async () => {
+    await createUser({ nickname: 'Leonardo 🔥' });
+    const res = await server.inject({
+      method: 'POST',
+      url: '/api/auth/login',
+      payload: { nickname: 'leonardo 🔥', password: 'Password123' },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.payload).user.nickname).toBe('Leonardo 🔥');
+  });
+
+  it('rejects a case-variant duplicate nickname with 409', async () => {
+    await createUser({ nickname: 'Leonardo' });
+    const res = await server.inject({
+      method: 'POST',
+      url: '/api/auth/register',
+      payload: { nickname: 'LEONARDO', password: 'Password123' },
+    });
+    expect(res.statusCode).toBe(409);
+  });
+
+  it.each([
+    '<script>alert(1)</script>',
+    'nick<img src=x>',
+    'a<b',
+    '‎invisible', // U+200E LEFT-TO-RIGHT MARK (format char)
+    'ab', // too short
+  ])('rejects malicious/invalid nickname: %s', async (nickname) => {
+    const res = await server.inject({
+      method: 'POST',
+      url: '/api/auth/register',
+      payload: { nickname, password: 'Password123' },
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('resolves profiles case-insensitively', async () => {
+    await createUser({ nickname: 'MixedCase ★' });
+    const res = await server.inject({
+      method: 'GET',
+      url: '/api/users/mixedcase%20%E2%98%85',
+    });
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.payload).user.nickname).toBe('MixedCase ★');
+  });
+});
+
 describe('Auth — POST /api/auth/login', () => {
   it('logs in with username', async () => {
     await createUser({ nickname: 'loginuser', password: 'Password123' });

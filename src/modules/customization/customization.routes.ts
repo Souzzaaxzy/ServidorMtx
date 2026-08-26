@@ -12,10 +12,10 @@ import {
   type NicknameCosmeticsInput,
 } from './customization.service.js';
 
-const VALID_SLOTS: ItemType[] = ['AVATAR_FRAME', 'PROFILE_BANNER', 'BADGE', 'PROFILE_EFFECT', 'THEME_ACCCENT', 'NAME_COLOR', 'NAME_EFFECT'];
+const VALID_SLOTS: ItemType[] = ['AVATAR_FRAME', 'PROFILE_BANNER', 'BADGE', 'PROFILE_EFFECT', 'THEME_ACCCENT', 'NAME_COLOR'];
 
 // Customization routes — all driven by server-owned data.
-//   GET    /customization/catalog          list active items (colors, effects, ...)
+//   GET    /customization/catalog          list active items (colors, frames, ...)
 //   GET    /customization/inventory        my owned (non-expired) items
 //   GET    /customization/equipped         my currently equipped items
 //   GET    /customization/cosmetics        my consolidated nickname cosmetics
@@ -47,15 +47,15 @@ export const customizationRoutes: FastifyPluginAsync = async (app: FastifyInstan
   app.put('/customization/cosmetics', { onRequest: [app.authenticate] }, async (request, reply) => {
     const body = (request.body ?? {}) as Record<string, unknown>;
     // Strict allow-list: the client sends catalog IDs only — never CSS,
-    // JavaScript, HTML or arbitrary effect definitions. Unknown fields are
+    // JavaScript, HTML or arbitrary definitions. Unknown fields are
     // rejected so future slots (frameId, badgeId, …) fail loudly until the
     // server supports them.
-    const ALLOWED = new Set(['nameColorId', 'nameEffectId']);
+    const ALLOWED = new Set(['nameColorId']);
     for (const key of Object.keys(body)) {
       if (!ALLOWED.has(key)) throw ApiError.invalidRequest(`Campo não suportado: ${key}`);
     }
     const input: NicknameCosmeticsInput = {};
-    for (const field of ['nameColorId', 'nameEffectId'] as const) {
+    for (const field of ['nameColorId'] as const) {
       const value = body[field];
       if (value === undefined) continue;
       if (value !== null && typeof value !== 'string') {

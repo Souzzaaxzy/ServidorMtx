@@ -1,6 +1,5 @@
 import { PrismaClient } from '../src/generated/index.js';
 import { hashPassword, generateRecoveryCode, hashRecoveryCode } from '../src/utils/auth.js';
-import { NAME_EFFECTS } from './name-effects.js';
 
 const prisma = new PrismaClient();
 
@@ -124,24 +123,16 @@ async function syncCatalog() {
     update: c,
     create: c,
   })));
-  await prisma.$transaction(NAME_EFFECTS.map((e) => prisma.item.upsert({
-    where: { id: e.id },
-    update: { ...e, config: JSON.stringify(e.config) },
-    create: {
-      id: e.id,
-      type: 'NAME_EFFECT',
-      name: e.name,
-      // A name effect has no visual asset — the render contract lives in
-      // `config`; assetUrl stays empty by design.
-      assetUrl: '',
-      rarity: e.rarity,
-      price: 0,
-      category: e.category,
-      sortOrder: 0,
-      config: JSON.stringify(e.config),
-    },
-  })));
-  console.log(`🎨 Catalog synced: ${ITEMS.length} items + ${NAME_COLORS.length} name colors + ${NAME_EFFECTS.length} name effects.`);
+  // Nickname effects were REMOVED from the product: retire the legacy
+  // NAME_EFFECT catalog rows (deactivate, never delete catalog history) and
+  // unequip the slot everywhere so no user keeps an effect the app can no
+  // longer render. User accounts and their other cosmetics are untouched.
+  await prisma.equippedItem.deleteMany({ where: { slot: 'NAME_EFFECT' } });
+  await prisma.item.updateMany({
+    where: { type: 'NAME_EFFECT' },
+    data: { active: false },
+  });
+  console.log(`🎨 Catalog synced: ${ITEMS.length} items + ${NAME_COLORS.length} name colors.`);
 }
 
 async function main() {
@@ -192,6 +183,7 @@ async function main() {
     prisma.user.create({
       data: {
         nickname: 'leonardo',
+        nicknameKey: 'leonardo',
         passwordHash: password,
         recoveryCodeHash: hashRecoveryCode(generateRecoveryCode()),
         role: 'OWNER',
@@ -202,6 +194,7 @@ async function main() {
     prisma.user.create({
       data: {
         nickname: 'maria',
+        nicknameKey: 'maria',
         passwordHash: password,
         recoveryCodeHash: hashRecoveryCode(generateRecoveryCode()),
         bio: 'Designer | Futurista | 💜 cyberpunk',
@@ -211,6 +204,7 @@ async function main() {
     prisma.user.create({
       data: {
         nickname: 'joao',
+        nicknameKey: 'joao',
         passwordHash: password,
         recoveryCodeHash: hashRecoveryCode(generateRecoveryCode()),
         bio: 'Dev backend. Coffee-driven.',
