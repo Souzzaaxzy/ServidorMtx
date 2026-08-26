@@ -118,6 +118,9 @@ export async function getEquipped(userId: string): Promise<EquippedSlot[]> {
 // Free cosmetic types: no ownership required. NAME_COLOR entries are free
 // palette colors — the id/active/type validation is what stops arbitrary
 // values (a client-sent hex is meaningless here; only catalog ids equip).
+// Profile frames (AVATAR_FRAME) go through the consolidated saveCosmetics
+// path (the MOLDURAS picker) which validates catalog id/active/type only and
+// equips without an inventory entry, exactly like the free palette.
 const FREE_EQUIP_TYPES: ItemType[] = [ItemType.NAME_COLOR];
 
 // Equip an item. The server is the ONLY authority on what can be equipped:
@@ -169,10 +172,12 @@ export async function unequipSlot(userId: string, slot: ItemType): Promise<void>
 // Future slots (frameId, badgeId, …) extend this same shape.
 export interface NicknameCosmeticsInput {
   nameColorId?: string | null;
+  frameId?: string | null;
 }
 
 export interface NicknameCosmetics {
   nameColorId: string | null;
+  frameId: string | null;
 }
 
 async function validateCatalogId(itemId: string, expectedType: ItemType): Promise<void> {
@@ -187,6 +192,7 @@ export async function saveCosmetics(
   input: NicknameCosmeticsInput,
 ): Promise<NicknameCosmetics> {
   if (input.nameColorId != null) await validateCatalogId(input.nameColorId, ItemType.NAME_COLOR);
+  if (input.frameId != null) await validateCatalogId(input.frameId, ItemType.AVATAR_FRAME);
 
   await prisma.$transaction(async (tx) => {
     const apply = async (slot: ItemType, itemId: string | null | undefined) => {
@@ -202,6 +208,7 @@ export async function saveCosmetics(
       }
     };
     await apply(ItemType.NAME_COLOR, input.nameColorId);
+    await apply(ItemType.AVATAR_FRAME, input.frameId);
   });
 
   return getCosmetics(userId);
@@ -209,12 +216,13 @@ export async function saveCosmetics(
 
 export async function getCosmetics(userId: string): Promise<NicknameCosmetics> {
   const rows = await prisma.equippedItem.findMany({
-    where: { userId, slot: ItemType.NAME_COLOR },
+    where: { userId, slot: { in: [ItemType.NAME_COLOR, ItemType.AVATAR_FRAME] } },
     select: { slot: true, itemId: true },
   });
   const bySlot = new Map(rows.map((r) => [r.slot, r.itemId]));
   return {
     nameColorId: bySlot.get(ItemType.NAME_COLOR) ?? null,
+    frameId: bySlot.get(ItemType.AVATAR_FRAME) ?? null,
   };
 }
 

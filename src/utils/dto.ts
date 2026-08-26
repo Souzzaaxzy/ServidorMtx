@@ -7,13 +7,23 @@ import type { Comment, FriendRequest, Notification, Post, User } from '../genera
 // keeps their own look everywhere (feed, comments, friends, notifications,
 // search, ...).
 export const NAME_COLOR_SLOT = 'NAME_COLOR';
+export const AVATAR_FRAME_SLOT = 'AVATAR_FRAME';
+
+// Slots that ride along in every author/actor payload. NAME_COLOR resolves
+// the nickname hex; AVATAR_FRAME resolves the equipped profile frame (asset
+// key → the APK's bundled sprite). Both share the same equipped-items shape,
+// so one select covers them.
+export const COSMETIC_SLOTS: string[] = [NAME_COLOR_SLOT, AVATAR_FRAME_SLOT];
 
 // Shared select for "user summary + equipped nickname cosmetics". Spreading
-// this into an author/actor select adds the equipped NAME_COLOR row (if
-// any) with just the fields needed to resolve the color.
+// this into an author/actor select adds the equipped NAME_COLOR + AVATAR_FRAME
+// rows (if any) with just the fields needed to resolve the color and frame.
+// NOTE: `in: COSMETIC_SLOTS` (a plain mutable array) is used on purpose — a
+// nested `OR`/`in` literal with `as const` becomes readonly and Prisma's
+// generated types reject it.
 export const NICKNAME_COSMETICS_SELECT = {
   equippedItems: {
-    where: { slot: NAME_COLOR_SLOT as string },
+    where: { slot: { in: COSMETIC_SLOTS } },
     select: { slot: true, item: { select: { id: true, name: true, assetUrl: true, config: true } } },
   },
 } as const;
@@ -57,16 +67,34 @@ export function nameColorId(user: WithNameColor): string | null {
   return user.equippedItems?.find((e) => e.slot === NAME_COLOR_SLOT)?.item.id ?? null;
 }
 
+// The equipped profile frame of a user (item id + asset key). `frameId` is the
+// stable catalog id the APK uses to SELECT/SAVE; `frameAsset` is the server's
+// asset key that maps to the bundled sprite (e.g. "frames/coroa"). Null when the
+// user has no frame equipped ("Nenhuma").
+export function equippedFrame(user: WithNameColor): {
+  frameId: string | null;
+  frameAsset: string | null;
+} {
+  const row = user.equippedItems?.find((e) => e.slot === AVATAR_FRAME_SLOT);
+  return {
+    frameId: row?.item.id ?? null,
+    frameAsset: row?.item.assetUrl ?? null,
+  };
+}
+
 // The nickname cosmetics fragment embedded in every author/actor payload.
 export interface NicknameCosmeticsPayload {
   nameColor: string | null;
   nameColorId: string | null;
+  frameId: string | null;
+  frameAsset: string | null;
 }
 
 export function nicknameCosmetics(user: WithNameColor): NicknameCosmeticsPayload {
   return {
     nameColor: nameColorHex(user),
     nameColorId: nameColorId(user),
+    ...equippedFrame(user),
   };
 }
 

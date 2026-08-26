@@ -50,12 +50,12 @@ export const customizationRoutes: FastifyPluginAsync = async (app: FastifyInstan
     // JavaScript, HTML or arbitrary definitions. Unknown fields are
     // rejected so future slots (frameId, badgeId, …) fail loudly until the
     // server supports them.
-    const ALLOWED = new Set(['nameColorId']);
+    const ALLOWED = new Set(['nameColorId', 'frameId']);
     for (const key of Object.keys(body)) {
       if (!ALLOWED.has(key)) throw ApiError.invalidRequest(`Campo não suportado: ${key}`);
     }
     const input: NicknameCosmeticsInput = {};
-    for (const field of ['nameColorId'] as const) {
+    for (const field of ['nameColorId', 'frameId'] as const) {
       const value = body[field];
       if (value === undefined) continue;
       if (value !== null && typeof value !== 'string') {

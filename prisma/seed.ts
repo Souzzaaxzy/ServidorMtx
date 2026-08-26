@@ -13,10 +13,35 @@ const LEVELS = [
   { id: 5, name: 'LENDA MATRIX', minXp: 50000, color: '#00FF88' },
 ];
 
+// ── Profile frames (AVATAR_FRAME) ────────────────────────────
+// The official frame catalog. `assetUrl` is the KEY that maps to the APK's
+// bundled sprite (assets/frames/<key>.png); the server owns which frame the
+// sprite corresponds to, so adding/removing frames is a data operation. The
+// `name` is the DISPLAY name shown in the picker. Frames are free catalog
+// entries (price 0): equipping validates id/active/type only — ownership is a
+// future collectible concern, the same rule NAME_COLOR already uses.
+const FRAMES = [
+  { id: 'frame_jormungandr', name: 'Jörmundgandr', assetUrl: 'frames/jormungandr', rarity: 'LEGENDARY' as const },
+  { id: 'frame_buraco_negro', name: 'Buraco Negro', assetUrl: 'frames/buraco_negro', rarity: 'EPIC' as const },
+  { id: 'frame_cometa', name: 'Cometa', assetUrl: 'frames/cometa', rarity: 'EPIC' as const },
+  { id: 'frame_constelacao', name: 'Constelação', assetUrl: 'frames/constelacao', rarity: 'UNCOMMON' as const },
+  { id: 'frame_coroa', name: 'Coroa', assetUrl: 'frames/coroa', rarity: 'LEGENDARY' as const },
+  { id: 'frame_dragao', name: 'Dragão', assetUrl: 'frames/dragao', rarity: 'EPIC' as const },
+  { id: 'frame_eclipse', name: 'Eclipse', assetUrl: 'frames/eclipse', rarity: 'RARE' as const },
+  { id: 'frame_estrelas', name: 'Estrelas', assetUrl: 'frames/estrelas', rarity: 'UNCOMMON' as const },
+  { id: 'frame_fantasma', name: 'Fantasma', assetUrl: 'frames/fantasma', rarity: 'RARE' as const },
+  { id: 'frame_hydra', name: 'Hydra', assetUrl: 'frames/hydra', rarity: 'EPIC' as const },
+  { id: 'frame_leviata', name: 'Leviatã', assetUrl: 'frames/leviata', rarity: 'EPIC' as const },
+  { id: 'frame_lotus', name: 'Lotus', assetUrl: 'frames/lotus', rarity: 'UNCOMMON' as const },
+  { id: 'frame_lua', name: 'Lua', assetUrl: 'frames/lua', rarity: 'RARE' as const },
+  { id: 'frame_lua_crescente', name: 'Lua Crescente', assetUrl: 'frames/lua_crescente', rarity: 'UNCOMMON' as const },
+  { id: 'frame_nebulosa', name: 'Nebulosa', assetUrl: 'frames/nebulosa', rarity: 'RARE' as const },
+  { id: 'frame_olho_do_abismo', name: 'Olho do Abismo', assetUrl: 'frames/olho_do_abismo', rarity: 'EPIC' as const },
+];
+
 // A small starter catalog. Adding more is a data operation — no APK release.
+// (Frames are defined in FRAMES above; other cosmetic categories stay here.)
 const ITEMS = [
-  { id: 'frame_neon_blue', type: 'AVATAR_FRAME' as const, name: 'Neon Blue', assetUrl: 'frames/neon_blue', rarity: 'RARE' as const, price: 200 },
-  { id: 'frame_void', type: 'AVATAR_FRAME' as const, name: 'Void Edge', assetUrl: 'frames/void_edge', rarity: 'EPIC' as const, price: 800 },
   { id: 'banner_cyber', type: 'PROFILE_BANNER' as const, name: 'Cyber Grid', assetUrl: 'banners/cyber_grid', rarity: 'UNCOMMON' as const, price: 150 },
   { id: 'badge_founder', type: 'BADGE' as const, name: 'Founder', assetUrl: 'badges/founder', rarity: 'LEGENDARY' as const, price: 0 },
   { id: 'effect_glitch', type: 'PROFILE_EFFECT' as const, name: 'Glitch', assetUrl: 'effects/glitch', rarity: 'EPIC' as const, price: 600 },
@@ -117,6 +142,11 @@ async function syncCatalog() {
     where: { id: i.id },
     update: i,
     create: i,
+  })));
+  await prisma.$transaction(FRAMES.map((f) => prisma.item.upsert({
+    where: { id: f.id },
+    update: { ...f, type: 'AVATAR_FRAME', price: 0 },
+    create: { ...f, type: 'AVATAR_FRAME', price: 0 },
   })));
   await prisma.$transaction(NAME_COLORS.map((c) => prisma.item.upsert({
     where: { id: c.id },
