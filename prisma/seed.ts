@@ -37,6 +37,17 @@ const FRAMES = [
   { id: 'frame_lua_crescente', name: 'Lua Crescente', assetUrl: 'frames/lua_crescente', rarity: 'UNCOMMON' as const },
   { id: 'frame_nebulosa', name: 'Nebulosa', assetUrl: 'frames/nebulosa', rarity: 'RARE' as const },
   { id: 'frame_olho_do_abismo', name: 'Olho do Abismo', assetUrl: 'frames/olho_do_abismo', rarity: 'EPIC' as const },
+  { id: 'frame_plantas', name: 'Plantas', assetUrl: 'frames/plantas', rarity: 'UNCOMMON' as const },
+  { id: 'frame_raios', name: 'Raios', assetUrl: 'frames/raios', rarity: 'RARE' as const },
+  { id: 'frame_rosas', name: 'Rosas', assetUrl: 'frames/rosas', rarity: 'UNCOMMON' as const },
+  { id: 'frame_sakura', name: 'Sakura', assetUrl: 'frames/sakura', rarity: 'UNCOMMON' as const },
+  { id: 'frame_satelite', name: 'Satélite', assetUrl: 'frames/satelite', rarity: 'RARE' as const },
+  { id: 'frame_saturno', name: 'Saturno', assetUrl: 'frames/saturno', rarity: 'EPIC' as const },
+  { id: 'frame_sol', name: 'Sol', assetUrl: 'frames/sol', rarity: 'RARE' as const },
+  { id: 'frame_sol_realista', name: 'Sol Realista', assetUrl: 'frames/sol_realista', rarity: 'EPIC' as const },
+  { id: 'frame_sombras', name: 'Sombras', assetUrl: 'frames/sombras', rarity: 'UNCOMMON' as const },
+  { id: 'frame_vampira', name: 'Vampira', assetUrl: 'frames/vampira', rarity: 'RARE' as const },
+  { id: 'frame_vampiro', name: 'Vampiro', assetUrl: 'frames/vampiro', rarity: 'RARE' as const },
 ];
 
 // A small starter catalog. Adding more is a data operation — no APK release.
