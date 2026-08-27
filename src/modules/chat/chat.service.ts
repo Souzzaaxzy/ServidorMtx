@@ -2,6 +2,7 @@ import { prisma } from '../../config/prisma.js';
 import { ApiError } from '../../utils/errors.js';
 import { AUTHOR_SELECT, nicknameCosmetics } from '../../utils/dto.js';
 import { areFriends } from '../friends/friend.service.js';
+import { saveAudioFile } from '../uploads/upload.service.js';
 import {
   dispatchChatMessage,
   dispatchChatMessageDeleted,
@@ -9,6 +10,7 @@ import {
   dispatchChatTyping,
 } from '../push/push.service.js';
 import type { Message } from '../../generated/index.js';
+import type { Readable } from 'node:stream';
 
 // ── Private chat ─────────────────────────────────────────────
 // One conversation per user PAIR (ordered ids), messaging allowed ONLY
@@ -51,6 +53,8 @@ export interface MessageItem {
   id: string;
   conversationId: string;
   senderId: string;
+  /** The raw message text. For VOICE messages this is the stable preview
+   * string "🎤 Áudio" (the app renders the inline audio player instead). */
   content: string;
   createdAt: string;
   mine: boolean;
@@ -63,6 +67,26 @@ export interface MessageItem {
    * original's PREVIEW is resolved server-side (never stored on this row);
    * null/invalid when not a reply or the original was deleted. */
   replyTo: ReplyInfo | null;
+  /** "text" (default) | "voice". Voice messages carry [audioUrl] +
+   * [durationMs] instead of rendering [content] as plain text. */
+  type: 'text' | 'voice' | string;
+  /** Absolute URL of the persisted voice-message audio file (voice only). */
+  audioUrl: string | null;
+  /** Recorded length in milliseconds, validated server-side (3–60s). */
+  durationMs: number | null;
+}
+
+/** Optional sender identity embedded on realtime incoming frames so the
+ * receiving app renders the avatar + synthesizes a conversation preview
+ * without a second server call. */
+export interface ChatPeerPayload {
+  id: string;
+  nickname: string;
+  avatarUrl: string | null;
+  nameColor: string | null;
+  nameColorId: string | null;
+  frameId: string | null;
+  frameAsset: string | null;
 }
 
 /** Preview of the original message a reply points at. Compact — the app
@@ -158,7 +182,96 @@ export async function listConversations(userId: string): Promise<ConversationIte
       userTwo: { select: CHAT_USER_SELECT },
     },
   });
-  return Promise.all(conversations.map((c) => buildConversationItem(c, userId)));
+
+  if (conversations.length === 0) return [];
+
+  const ids = conversations.map((c) => c.id);
+
+  // ── Batch the per-conversation aggregates (no N+1) ──────────
+  // The old load did 2 extra queries PER conversation (last message + unread
+  // count), i.e. O(N) round-trips that delayed the Chat tab and the preview.
+  // This replaces them with a constant number of batched queries.
+  const hiddenForMe = await prisma.messageHide.findMany({
+    where: { userId, message: { conversationId: { in: ids } } },
+    select: { messageId: true },
+  });
+  const hiddenIds = new Set(hiddenForMe.map((h) => h.messageId));
+
+  // Last visible message per conversation. cuid ids are lexicographically
+  // monotonically increasing with creation time, and we ORDER BY id DESC, so
+  // the FIRST non-hidden, non-deleted row per conversation IS its newest
+  // visible message. Bounded to a small surplus of the conversation count so
+  // a busy pair can never force a huge fetch.
+  const newest = await prisma.message.findMany({
+    where: { conversationId: { in: ids }, deletedAt: null },
+    orderBy: { id: 'desc' },
+    select: {
+      id: true,
+      conversationId: true,
+      content: true,
+      senderId: true,
+      createdAt: true,
+    },
+    take: ids.length * 10,
+  });
+  const lastByConversation = new Map<string, (typeof newest)[number]>();
+  for (const m of newest) {
+    if (hiddenIds.has(m.id)) continue;
+    if (!lastByConversation.has(m.conversationId)) {
+      lastByConversation.set(m.conversationId, m);
+    }
+  }
+
+  // Unread count per conversation in ONE grouped query: messages FROM THE
+  // OTHER side, not yet read, still visible to this viewer (not hidden for me,
+  // not deleted for everyone).
+  const unreadRows = await prisma.$queryRawUnsafe<{ conversationId: string; c: number }[]>(
+    `SELECT "conversationId", COUNT(*) AS c
+       FROM "messages"
+      WHERE "conversationId" IN (${ids.map(() => '?').join(',')})
+        AND "senderId" <> ?
+        AND "readAt" IS NULL
+        AND "deletedAt" IS NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM "message_hides" h
+           WHERE h."messageId" = "messages"."id" AND h."userId" = ?
+        )
+      GROUP BY "conversationId"`,
+    ...ids,
+    userId,
+    userId,
+  );
+  const unreadMap = new Map<string, number>();
+  for (const row of unreadRows) {
+    unreadMap.set(row.conversationId, Number(row.c));
+  }
+
+  return conversations.map((c) => {
+    const other = c.userOneId === userId ? c.userTwo : c.userOne;
+    const last = lastByConversation.get(c.id) ?? null;
+    return {
+      id: c.id,
+      otherUser: toChatUser(other),
+      lastMessage: last
+        ? {
+            id: last.id,
+            content: truncatePreview(last.content),
+            senderId: last.senderId,
+            createdAt: last.createdAt.toISOString(),
+          }
+        : null,
+      lastMine: last ? last.senderId === userId : false,
+      unreadCount: unreadMap.get(c.id) ?? 0,
+      updatedAt: c.updatedAt.toISOString(),
+    };
+  });
+}
+
+/** Truncates a preview string to the shared preview length. */
+function truncatePreview(content: string): string {
+  return content.length > PREVIEW_LENGTH
+    ? `${content.slice(0, PREVIEW_LENGTH)}…`
+    : content;
 }
 
 /**
@@ -191,69 +304,28 @@ async function loadConversationItem(
   if (conversation.userOneId !== userId && conversation.userTwoId !== userId) {
     throw ApiError.forbidden('Você não tem acesso a esta conversa.');
   }
-  return buildConversationItem(conversation, userId);
-}
-
-async function buildConversationItem(
-  conversation: {
-    id: string;
-    userOneId: string;
-    userTwoId: string;
-    updatedAt: Date;
-    userOne: {
-      id: string;
-      nickname: string;
-      avatarUrl: string | null;
-      equippedItems?: {
-        slot: string;
-        item: { id: string; name: string; assetUrl: string; config: string };
-      }[];
-    };
-    userTwo: {
-      id: string;
-      nickname: string;
-      avatarUrl: string | null;
-      equippedItems?: {
-        slot: string;
-        item: { id: string; name: string; assetUrl: string; config: string };
-      }[];
-    };
-  },
-  userId: string,
-): Promise<ConversationItem> {
-  const other = conversation.userOneId === userId
-    ? conversation.userTwo
-    : conversation.userOne;
+  const other =
+    conversation.userOneId === userId ? conversation.userTwo : conversation.userOne;
 
   const last = await prisma.message.findFirst({
-    // The "last message" preview only considers VISIBLE messages for this
-    // viewer — a message they deleted for themselves or that was deleted for
-    // everyone does not drive the preview.
-    where: visibleMessageWhere(conversation.id, userId),
+    where: visibleMessageWhere(conversationId, userId),
     orderBy: { createdAt: 'desc' },
     select: { id: true, content: true, senderId: true, createdAt: true },
   });
-
-  // Unread for THIS user = messages from the OTHER side not yet read, still
-  // visible to them (deleted-for-missing / deleted-for-everyone excluded).
   const unreadCount = await prisma.message.count({
     where: {
-      ...visibleMessageWhere(conversation.id, userId),
+      ...visibleMessageWhere(conversationId, userId),
       senderId: { not: userId },
       readAt: null,
     },
   });
-
   return {
     id: conversation.id,
     otherUser: toChatUser(other),
     lastMessage: last
       ? {
           id: last.id,
-          content:
-            last.content.length > PREVIEW_LENGTH
-              ? `${last.content.slice(0, PREVIEW_LENGTH)}…`
-              : last.content,
+          content: truncatePreview(last.content),
           senderId: last.senderId,
           createdAt: last.createdAt.toISOString(),
         }
@@ -379,6 +451,9 @@ async function toMessageItems(
       mine: m.senderId === viewerId,
       readAt: m.readAt ? m.readAt.toISOString() : null,
       replyTo,
+      type: m.type ?? 'text',
+      audioUrl: m.audioUrl ?? null,
+      durationMs: m.durationMs ?? null,
     };
   });
 }
@@ -463,11 +538,108 @@ export async function sendMessage(
   dispatchChatMessage(otherId, {
     conversationId,
     message: recipientView,
+    // The SENDER's own identity — used by the receiving app for the avatar,
+    // the conversation preview and the native message notification.
+    peer: await chatPeerPayload(userId),
   });
 
   // Return the sender's own view (readAt null until the peer opens it).
   const [ownView] = await toMessageItems([message], conversationId, userId);
   return ownView;
+}
+
+// ── Send a voice message ──────────────────────────────────────
+// Uploads the audio file first, then persists a "voice" message that
+// references it. Authorization mirrors sendMessage: membership enforced,
+// friends-only, the file is size+type validated server-side and the
+// duration must be within 3–60s. The receiver gets a normal `chat_message`
+// frame so it renders the inline player in realtime. Returns the persisted
+// MessageItem (type === 'voice') or throws an ApiError.
+export async function sendVoiceMessage(
+  userId: string,
+  conversationId: string,
+  audio: { file: Readable; durationMs: number },
+): Promise<MessageItem> {
+  const duration = Math.round(audio.durationMs);
+  if (!Number.isFinite(duration) || duration < 3000 || duration > 60_000) {
+    throw ApiError.invalidRequest('A duração do áudio deve ser entre 3 e 60 segundos.');
+  }
+
+  const conversation = await prisma.conversation.findUnique({
+    where: { id: conversationId },
+  });
+  if (!conversation) throw ApiError.notFound('Conversa não encontrada.');
+  const isMember =
+    conversation.userOneId === userId || conversation.userTwoId === userId;
+  if (!isMember) {
+    throw ApiError.forbidden('Você não tem acesso a esta conversa.');
+  }
+  const otherId =
+    conversation.userOneId === userId ? conversation.userTwoId : conversation.userOneId;
+  if (!(await areFriends(userId, otherId))) {
+    throw ApiError.forbidden('Vocês precisam ser amigos para conversar.');
+  }
+
+  // Persist the file FIRST (validates bytes + size); then the message. If
+  // the message insert fails the orphan file is deleted best-effort.
+  const stored = await saveAudioFile(audio.file);
+
+  const message = await prisma.$transaction(async (tx) => {
+    const created = await tx.message.create({
+      data: {
+        conversationId,
+        senderId: userId,
+        content: VOICE_PREVIEW,
+        type: 'voice',
+        audioUrl: stored.url,
+        durationMs: duration,
+      },
+    });
+    await tx.conversation.update({
+      where: { id: conversationId },
+      data: { updatedAt: new Date() },
+    });
+    await tx.conversationHidden.deleteMany({
+      where: { conversationId, userId: otherId },
+    });
+    return created;
+  });
+
+  const [recipientView] = await toMessageItems([message], conversationId, otherId);
+  dispatchChatMessage(otherId, {
+    conversationId,
+    message: recipientView,
+    peer: await chatPeerPayload(userId),
+  });
+
+  const [ownView] = await toMessageItems([message], conversationId, userId);
+  return ownView;
+}
+
+/** Stable preview content stored for every voice message. The app uses the
+ * message `type` to render the inline player and shows this as the
+ * conversation-list preview. */
+export const VOICE_PREVIEW = '🎤 Áudio';
+
+/** Loads the compact realtime peer identity for a user (avatar + cosmetics)
+ * so incoming chat frames can render the sender without an extra lookup. */
+async function chatPeerPayload(userId: string): Promise<ChatPeerPayload> {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: CHAT_USER_SELECT,
+  });
+  if (!user) {
+    return {
+      id: userId,
+      nickname: 'desconhecido',
+      avatarUrl: null,
+      nameColor: null,
+      nameColorId: null,
+      frameId: null,
+      frameAsset: null,
+    };
+  }
+  return toChatUser(user);
 }
 
 // ── Mark a conversation as read by the session user ──────────

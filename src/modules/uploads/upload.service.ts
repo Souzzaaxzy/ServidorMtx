@@ -4,7 +4,7 @@ import { randomBytes } from 'node:crypto';
 import type { Readable } from 'node:stream';
 import { env } from '../../config/env.js';
 import { ApiError } from '../../utils/errors.js';
-import { validateImageBuffer } from '../../utils/storage.js';
+import { validateAudioBuffer, validateImageBuffer } from '../../utils/storage.js';
 
 const UPLOAD_DIR = path.resolve(process.cwd(), 'uploads');
 
@@ -114,4 +114,23 @@ export async function storeUpload(
     return saveLocalFile(filename, mimetype, stream);
   }
   return saveLocalFile(filename, mimetype, stream);
+}
+
+/**
+ * Stores a voice-message audio file (AAC/m4a). Validates the real bytes and
+ * the size cap, writes it under `uploads/audio/<random>.m4a` and returns an
+ * absolute URL served by the API's `/static/` endpoint. This is the ONLY
+ * audio upload path — chat voice messages use it exclusively.
+ */
+export async function saveAudioFile(
+  stream: Readable,
+): Promise<StoredFile> {
+  const buffer = await readStream(stream);
+  const ext = validateAudioBuffer(buffer);
+  await fs.mkdir(path.join(UPLOAD_DIR, 'audio'), { recursive: true });
+  const name = `${randomBytes(16).toString('hex')}.${ext}`;
+  const dest = path.join(UPLOAD_DIR, 'audio', name);
+  await fs.writeFile(dest, buffer);
+  const url = `${publicBase()}/static/audio/${name}`;
+  return { filename: name, mimetype: 'audio/mp4', size: buffer.length, url };
 }

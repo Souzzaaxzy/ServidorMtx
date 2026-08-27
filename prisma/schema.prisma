@@ -296,6 +296,10 @@ model Message {
   conversationId String
   // The sender is ALWAYS the authenticated user — never client-supplied.
   senderId       String
+  // The message text. For VOICE messages this is the transcription/empty
+  // label ("🎤 Áudio" is the literal stored content the app renders); for
+  // text messages it is the actual content. Kept non-null for historical
+  // compatibility — voice messages store a stable preview string here.
   content        String
   createdAt      DateTime  @default(now())
   // Set when the recipient marks the conversation read; null = not yet read
@@ -307,6 +311,12 @@ model Message {
   // content); the server resolves the preview at load time and degrades
   // gracefully if the original is gone.
   replyToMessageId String?
+  // NULL → text message. Non-null → a voice message: `type` is "voice",
+  // `content` holds "🎤 Áudio", `audioUrl` points at the persisted file and
+  // `durationMs` is the recorded length (3–60s, validated server-side).
+  type         String?
+  audioUrl     String?
+  durationMs   Int?
 
   // Soft-delete marker for "Excluir para todos". When set, the message is
   // hidden for BOTH participants (all read paths filter it out). The row + a

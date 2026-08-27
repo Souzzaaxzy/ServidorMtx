@@ -10,6 +10,7 @@ import {
   listConversations,
   markConversationRead,
   sendMessage,
+  sendVoiceMessage,
   unreadConversationCount,
   setTyping,
   CONVERSATION_MESSAGE_LIMIT,
@@ -84,6 +85,33 @@ export const chatRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         parsed.data.content,
         parsed.data.replyToMessageId,
       );
+      return reply.status(201).send({ message });
+    } catch (err) {
+      throw toApiError(err);
+    }
+  });
+
+  // Send a VOICE message — multipart with a "file" audio field; the recorded
+  // duration is passed as a query param so multipart field-typing never gets
+  // in the way of reading it. The server persists the file (validating the
+  // real bytes + size) and creates a "voice" message that references it.
+  // SenderId comes from the token, membership + friends-only are enforced.
+  // The peer receives a normal `chat_message` realtime frame.
+  app.post('/conversations/:id/voice', { onRequest: [app.authenticate] }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const durationRaw = (request.query as { durationMs?: string }).durationMs;
+    const durationMs = Number(durationRaw);
+    const part = await request.file({
+      limits: { fileSize: 16 * 1024 * 1024 },
+    });
+    if (!part) {
+      throw ApiError.validation('Nenhum arquivo de áudio enviado. Use o campo "file".');
+    }
+    try {
+      const message = await sendVoiceMessage(request.user!.id, id, {
+        file: part.file,
+        durationMs: Number.isFinite(durationMs) ? durationMs : NaN,
+      });
       return reply.status(201).send({ message });
     } catch (err) {
       throw toApiError(err);

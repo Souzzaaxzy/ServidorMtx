@@ -73,9 +73,13 @@ export function socketsOf(userId: string): number {
 }
 
 // Chat realtime broadcast: delivers a `chat_message` frame to EVERY live
-// socket of [userId] (the recipient). Dedupe is handled by the message id
-// (see sendMessage — one broadcast call per persisted message). Errors are
-// logged, never thrown, so delivery is best-effort fire-and-forget.
+// socket of [userId] (the recipient). The payload embeds the SENDER's peer
+// identity (`peer`) so the receiving app can render the avatar next to an
+// incoming bubble, synthesize a conversation preview, and build a native
+// message notification — without a second lookup. Dedupe is handled by the
+// message id (see sendMessage — one broadcast call per persisted message).
+// Errors are logged, never thrown, so delivery is best-effort
+// fire-and-forget.
 export function dispatchChatMessage(userId: string, payload: Record<string, unknown>): void {
   const live = sockets.get(userId);
   if (!live) return;

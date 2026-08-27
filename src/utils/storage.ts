@@ -128,3 +128,41 @@ export function validateImageBuffer(buffer: Buffer): string {
   }
   return detectImageExtension(buffer);
 }
+
+// ── Audio validation ──────────────────────────────────────────
+// Voice messages are captured as AAC/m4a on Android (a high-quality,
+// low-latency encoded container) and stored as .m4a. We verify the actual
+// bytes (never the declared extension) so a spoofed upload cannot bypass
+// the type check. Size is capped by [MAX_AUDIO_BYTES].
+export const MAX_AUDIO_BYTES = 15 * 1024 * 1024;
+
+/**
+ * Returns 'm4a' when the buffer starts with an ISO-BMFF/MPEG-4 container
+ * (`....ftyp....`) that declares an m4a/mp42/mp41/isom brand. Throws
+ * otherwise. This validates REAL audio bytes regardless of the filename.
+ */
+export function detectAudioExtension(buffer: Buffer): string {
+  if (buffer.length < 12) {
+    throw ApiError.unsupportedMediaType('Tipo de áudio não permitido.');
+  }
+  const ftypOffset = buffer.subarray(4, 8).toString('latin1');
+  if (ftypOffset !== 'ftyp') {
+    throw ApiError.unsupportedMediaType('Tipo de áudio não permitido.');
+  }
+  const brand = buffer.subarray(8, 12).toString('latin1');
+  const allowedBrands = ['M4A ', 'mp42', 'mp41', 'isom', 'M4V ', 'm4a '];
+  if (!allowedBrands.includes(brand)) {
+    throw ApiError.unsupportedMediaType('Tipo de áudio não permitido.');
+  }
+  return 'm4a';
+}
+
+export function validateAudioBuffer(buffer: Buffer): string {
+  if (buffer.length === 0) {
+    throw ApiError.invalidRequest('Arquivo vazio.');
+  }
+  if (buffer.length > MAX_AUDIO_BYTES) {
+    throw ApiError.payloadTooLarge('O áudio excede o tamanho permitido.');
+  }
+  return detectAudioExtension(buffer);
+}

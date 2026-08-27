@@ -243,6 +243,10 @@ export interface PostComment {
   // Whether the AUTHENTICATED viewer has liked this comment. Only populated
   // when an authenticated viewer is passed in — otherwise false.
   liked: boolean;
+  // Number of non-deleted replies on this comment (server-computed via the
+  // same efficient `_count` include — never a per-comment query). The app
+  // shows "ver respostas" ONLY when this is > 0.
+  replyCount: number;
 }
 
 export function toPostComment(
@@ -269,6 +273,7 @@ export function toPostComment(
     },
     likeCount: comment._count.commentLikes,
     liked,
+    replyCount: comment._count.replies,
   };
 }
 
