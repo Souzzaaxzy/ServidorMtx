@@ -249,3 +249,191 @@ describe('Friend requests', () => {
     expect(again.statusCode).toBe(409);
   });
 });
+
+describe('Cancel pending friend request', () => {
+  it('sender cancels the request: request + notification removed, state back to NONE', async () => {
+    const a = await createAndLoginUser(server, { nickname: 'cancelsender' });
+    const b = await createAndLoginUser(server, { nickname: 'cancelreceiver' });
+
+    await server.inject({
+      method: 'POST',
+      url: `/api/friend-requests/${b.id}`,
+      headers: { authorization: `Bearer ${a.accessToken}` },
+    });
+    expect(await prisma.friendRequest.count()).toBe(1);
+
+    const res = await server.inject({
+      method: 'DELETE',
+      url: `/api/friend-requests/${b.id}`,
+      headers: { authorization: `Bearer ${a.accessToken}` },
+    });
+    expect(res.statusCode).toBe(204);
+
+    // No pending request, no friendship, and the actionable notification is gone.
+    expect(await prisma.friendRequest.count()).toBe(0);
+    expect(await prisma.friendship.count()).toBe(0);
+    expect(
+      await prisma.notification.count({ where: { type: 'FRIEND_REQUEST' } }),
+    ).toBe(0);
+
+    // Both sides report NONE.
+    for (const [viewer, other] of [[a, b], [b, a]] as const) {
+      const state = await server.inject({
+        method: 'GET',
+        url: `/api/users/${other.id}/friendship`,
+        headers: { authorization: `Bearer ${viewer.accessToken}` },
+      });
+      expect(JSON.parse(state.payload).state).toBe('NONE');
+    }
+
+    // The sender can request again afterwards.
+    const resend = await server.inject({
+      method: 'POST',
+      url: `/api/friend-requests/${b.id}`,
+      headers: { authorization: `Bearer ${a.accessToken}` },
+    });
+    expect(resend.statusCode).toBe(201);
+  });
+
+  it('SECURITY: the receiver cannot cancel a request they received (only the sender can)', async () => {
+    const a = await createAndLoginUser(server, { nickname: 'cansender' });
+    const b = await createAndLoginUser(server, { nickname: 'canreceiver' });
+
+    await server.inject({
+      method: 'POST',
+      url: `/api/friend-requests/${b.id}`,
+      headers: { authorization: `Bearer ${a.accessToken}` },
+    });
+
+    // Receiver tries to cancel → 404 (no request they SENT exists).
+    const res = await server.inject({
+      method: 'DELETE',
+      url: `/api/friend-requests/${a.id}`,
+      headers: { authorization: `Bearer ${b.accessToken}` },
+    });
+    expect(res.statusCode).toBe(404);
+    // The request is still pending and untouched.
+    expect(await prisma.friendRequest.count()).toBe(1);
+  });
+
+  it('SECURITY: a third user cannot cancel someone else request (404)', async () => {
+    const a = await createAndLoginUser(server, { nickname: 'tssender' });
+    const b = await createAndLoginUser(server, { nickname: 'tsreceiver' });
+    const eve = await createAndLoginUser(server, { nickname: 'tseve' });
+
+    await server.inject({
+      method: 'POST',
+      url: `/api/friend-requests/${b.id}`,
+      headers: { authorization: `Bearer ${a.accessToken}` },
+    });
+
+    const res = await server.inject({
+      method: 'DELETE',
+      url: `/api/friend-requests/${b.id}`,
+      headers: { authorization: `Bearer ${eve.accessToken}` },
+    });
+    expect(res.statusCode).toBe(404);
+    expect(await prisma.friendRequest.count()).toBe(1);
+  });
+
+  it('requires authentication to cancel (401)', async () => {
+    const res = await server.inject({
+      method: 'DELETE',
+      url: '/api/friend-requests/someuser',
+    });
+    expect(res.statusCode).toBe(401);
+  });
+});
+
+describe('Remove friendship', () => {
+  async function makeFriends(senderNick: string, receiverNick: string) {
+    const a = await createAndLoginUser(server, { nickname: senderNick });
+    const b = await createAndLoginUser(server, { nickname: receiverNick });
+    await server.inject({
+      method: 'POST',
+      url: `/api/friend-requests/${b.id}`,
+      headers: { authorization: `Bearer ${a.accessToken}` },
+    });
+    const request = JSON.parse(
+      (
+        await server.inject({
+          method: 'GET',
+          url: '/api/friend-requests',
+          headers: { authorization: `Bearer ${b.accessToken}` },
+        })
+      ).payload,
+    ).requests[0];
+    await server.inject({
+      method: 'POST',
+      url: `/api/friend-requests/${request.id}/accept`,
+      headers: { authorization: `Bearer ${b.accessToken}` },
+    });
+    return { a, b };
+  }
+
+  it('removes the friendship: both sides back to NONE, no row left', async () => {
+    const { a, b } = await makeFriends('rmfrienda', 'rmfriendb');
+
+    expect(await prisma.friendship.count()).toBe(1);
+
+    const res = await server.inject({
+      method: 'DELETE',
+      url: `/api/users/${b.id}/friends`,
+      headers: { authorization: `Bearer ${a.accessToken}` },
+    });
+    expect(res.statusCode).toBe(204);
+
+    expect(await prisma.friendship.count()).toBe(0);
+
+    for (const [viewer, other] of [[a, b], [b, a]] as const) {
+      const state = await server.inject({
+        method: 'GET',
+        url: `/api/users/${other.id}/friendship`,
+        headers: { authorization: `Bearer ${viewer.accessToken}` },
+      });
+      expect(JSON.parse(state.payload).state).toBe('NONE');
+    }
+
+    // Either side can re-request afterwards.
+    const resend = await server.inject({
+      method: 'POST',
+      url: `/api/friend-requests/${b.id}`,
+      headers: { authorization: `Bearer ${a.accessToken}` },
+    });
+    expect(resend.statusCode).toBe(201);
+  });
+
+  it('SECURITY: a third user cannot remove a friendship they are not part of (404)', async () => {
+    const { b } = await makeFriends('secfa', 'secfb');
+    const eve = await createAndLoginUser(server, { nickname: 'secfeve' });
+
+    const res = await server.inject({
+      method: 'DELETE',
+      url: `/api/users/${b.id}/friends`,
+      headers: { authorization: `Bearer ${eve.accessToken}` },
+    });
+    expect(res.statusCode).toBe(404);
+    // The friendship survives untouched.
+    expect(await prisma.friendship.count()).toBe(1);
+  });
+
+  it('removing a non-existing friendship returns 404 (idempotent-safe)', async () => {
+    const a = await createAndLoginUser(server, { nickname: 'nofrienda' });
+    const b = await createAndLoginUser(server, { nickname: 'nofriendb' });
+
+    const res = await server.inject({
+      method: 'DELETE',
+      url: `/api/users/${b.id}/friends`,
+      headers: { authorization: `Bearer ${a.accessToken}` },
+    });
+    expect(res.statusCode).toBe(404);
+  });
+
+  it('requires authentication to remove a friendship (401)', async () => {
+    const res = await server.inject({
+      method: 'DELETE',
+      url: '/api/users/someuser/friends',
+    });
+    expect(res.statusCode).toBe(401);
+  });
+});

@@ -2,9 +2,11 @@ import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import { toApiError } from '../../utils/errors.js';
 import {
   acceptRequest,
+  cancelFriendRequest,
   listFriends,
   listPendingRequests,
   rejectRequest,
+  removeFriend,
   sendFriendRequest,
   getFriendshipState,
 } from './friend.service.js';
@@ -23,6 +25,18 @@ export const friendRoutes: FastifyPluginAsync = async (app: FastifyInstance) => 
   app.get('/friend-requests', { onRequest: [app.authenticate] }, async (request, reply) => {
     const requests = await listPendingRequests(request.user!.id);
     return reply.send({ requests });
+  });
+
+  // Cancels the PENDING request the CURRENT user sent to :userId (only the
+  // sender may cancel; the row + its notification cascade-delete).
+  app.delete('/friend-requests/:userId', { onRequest: [app.authenticate] }, async (request, reply) => {
+    const { userId } = request.params as { userId: string };
+    try {
+      await cancelFriendRequest(request.user!.id, userId);
+      return reply.status(204).send();
+    } catch (err) {
+      throw toApiError(err);
+    }
   });
 
   app.post('/friend-requests/:id/accept', { onRequest: [app.authenticate] }, async (request, reply) => {
@@ -65,5 +79,17 @@ export const friendRoutes: FastifyPluginAsync = async (app: FastifyInstance) => 
     const pageSize = Number.parseInt(query.pageSize ?? '20', 10) || 20;
     const result = await listFriends(id, page, pageSize);
     return reply.send(result);
+  });
+
+  // Removes the ACCEPTED friendship between the current user and :userId.
+  // Only one side of the friendship may remove it (validated server-side).
+  app.delete('/users/:id/friends', { onRequest: [app.authenticate] }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    try {
+      await removeFriend(request.user!.id, id);
+      return reply.status(204).send();
+    } catch (err) {
+      throw toApiError(err);
+    }
   });
 };

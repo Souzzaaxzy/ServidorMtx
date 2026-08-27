@@ -168,6 +168,60 @@ export async function rejectRequest(userId: string, requestId: string): Promise<
   await prisma.friendRequest.delete({ where: { id: request.id } });
 }
 
+// Cancels a PENDING request that the CURRENT user sent to [receiverId].
+// Authorization is enforced SERVER-SIDE: only the sender may cancel the
+// request. Deleting the row cascades to the FRIEND_REQUEST notification, so
+// no stale actionable card remains and a future retry is possible. The
+// relationship returns to NONE.
+export async function cancelFriendRequest(
+  senderId: string,
+  receiverId: string,
+): Promise<void> {
+  if (senderId === receiverId) {
+    throw ApiError.invalidRequest('Operação inválida.');
+  }
+  const request = await prisma.friendRequest.findFirst({
+    where: {
+      senderId,
+      receiverId,
+      status: FriendRequestStatus.PENDING,
+    },
+    select: { id: true },
+  });
+  if (!request) throw ApiError.notFound('Nenhuma solicitação pendente encontrada.');
+  await prisma.friendRequest.delete({ where: { id: request.id } });
+}
+
+// Removes an ACCEPTED friendship between the current user and [otherUserId].
+// The caller must be one of the two sides of the friendship (validated
+// SERVER-SIDE); third parties can never remove someone else's friendship.
+// The relationship returns to NONE.
+export async function removeFriend(userId: string, otherUserId: string): Promise<void> {
+  if (userId === otherUserId) {
+    throw ApiError.invalidRequest('Operação inválida.');
+  }
+  const [one, two] = orderedPair(userId, otherUserId);
+  const friendship = await prisma.friendship.findUnique({
+    where: { userOneId_userTwoId: { userOneId: one, userTwoId: two } },
+    select: { id: true },
+  });
+  if (!friendship) throw ApiError.notFound('Amizade não encontrada.');
+  await prisma.$transaction([
+    prisma.friendship.delete({ where: { id: friendship.id } }),
+    // The ACCEPTED request rows linger after acceptance; remove both
+    // directions so the relation is fully reset and a fresh request (from
+    // either side) is possible again.
+    prisma.friendRequest.deleteMany({
+      where: {
+        OR: [
+          { senderId: one, receiverId: two },
+          { senderId: two, receiverId: one },
+        ],
+      },
+    }),
+  ]);
+}
+
 // ── Friends list (accepted friendships only) ────────────────
 // The profile's "Amigos" bottom sheet reads this page-by-page; the counter
 // uses the same query shape with a count, so list and number ALWAYS agree.
