@@ -2,8 +2,13 @@
 -- original message is stored (never the original content). onDelete: SetNull
 -- so deleting the original does not cascade-delete replies — they degrade
 -- to "sem mensagem original" at load time instead of disappearing.
--- AlterTable
-ALTER TABLE "messages" ADD COLUMN "replyToMessageId" TEXT;
-
--- CreateIndex
-CREATE INDEX "messages_replyToMessageId_idx" ON "messages"("replyToMessageId");
+--
+-- NOTE (no-op since `20260827135123_deletion_system`): The `deletion_system`
+-- migration (timestamp `135123`, sorts BEFORE this one lexicographically)
+-- already redefines the `messages` table with BOTH the `replyToMessageId`
+-- column and its `messages_replyToMessageId_idx` index. Running the original
+-- `ALTER TABLE ... ADD COLUMN replyToMessageId` here would therefore fail
+-- with `duplicate column name: replyToMessageId` (P3018/P3009) and block
+-- every later migration. The column + index are already present, so this
+-- migration is intentionally empty. The schema is unchanged; nothing is
+-- dropped or recreated.
