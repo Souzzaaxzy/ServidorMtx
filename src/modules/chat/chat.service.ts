@@ -2,7 +2,7 @@ import { prisma } from '../../config/prisma.js';
 import { ApiError } from '../../utils/errors.js';
 import { AUTHOR_SELECT, nicknameCosmetics } from '../../utils/dto.js';
 import { areFriends } from '../friends/friend.service.js';
-import { dispatchChatMessage } from '../push/push.service.js';
+import { dispatchChatMessage, dispatchChatRead, dispatchChatTyping } from '../push/push.service.js';
 import type { Message } from '../../generated/index.js';
 
 // ── Private chat ─────────────────────────────────────────────
@@ -49,6 +49,26 @@ export interface MessageItem {
   content: string;
   createdAt: string;
   mine: boolean;
+  /** Milliseconds since epoch when the RECIPIENT of this message read it
+   * (i.e. when the conversation was marked read by the other side). Null
+   * while the recipient has not opened/read it yet. Drives the in-bubble
+   * "enviado" → "visto agora" hint AND the unread badge. */
+  readAt: string | null;
+  /** Reply reference: the ORIGINAL message this one answers (if any). The
+   * original's PREVIEW is resolved server-side (never stored on this row);
+   * null/invalid when not a reply or the original was deleted. */
+  replyTo: ReplyInfo | null;
+}
+
+/** Preview of the original message a reply points at. Compact — the app
+ * renders the original sender's nickname + content directly above the reply
+ * body. `exists` is false when the original was deleted (graceful degrade). */
+export interface ReplyInfo {
+  id: string;
+  senderId: string;
+  senderNickname: string;
+  content: string;
+  exists: boolean;
 }
 
 export interface MessagePage {
@@ -249,24 +269,77 @@ export async function getMessages(
   const page = messages.slice(0, safeLimit).reverse();
 
   return {
-    messages: page.map((m) => toMessageItem(m, conversationId, userId)),
+    messages: await toMessageItems(page, conversationId, userId),
     hasMore,
   };
 }
 
-function toMessageItem(
-  message: Message,
+// ── Message serialization ────────────────────────────────────
+// `readAt`/`replyTo` must come from the RECIPIENT's perspective (the [viewer]
+// for load/list, or the conversation's OTHER participant for realtime
+// broadcasts) — never the sender's. The read hint flips per participant.
+
+async function toMessageItems(
+  messages: Message[],
   conversationId: string,
-  userId: string,
-): MessageItem {
-  return {
-    id: message.id,
-    conversationId,
-    senderId: message.senderId,
-    content: message.content,
-    createdAt: message.createdAt.toISOString(),
-    mine: message.senderId === userId,
-  };
+  viewerId: string,
+): Promise<MessageItem[]> {
+  // Preconditions (bypass for callers that already enriched the rows).
+  if (messages.length === 0) return [];
+
+  const replyIds = messages
+    .map((m) => m.replyToMessageId)
+    .filter((id): id is string => !!id);
+  let replyData = new Map<string, { senderId: string; nickname: string; content: string }>();
+  if (replyIds.length > 0) {
+    const originals = await prisma.message.findMany({
+      where: { id: { in: replyIds } },
+      select: {
+        id: true,
+        senderId: true,
+        sender: { select: { nickname: true } },
+        content: true,
+      },
+    });
+    replyData = new Map(
+      originals.map((o) => [o.id, { senderId: o.senderId, nickname: o.sender.nickname, content: o.content }]),
+    );
+  }
+
+  return messages.map((m) => {
+    let replyTo: ReplyInfo | null = null;
+    if (m.replyToMessageId) {
+      const original = replyData.get(m.replyToMessageId);
+      if (original) {
+        replyTo = {
+          id: m.replyToMessageId,
+          senderId: original.senderId,
+          senderNickname: original.nickname,
+          content: original.content,
+          exists: true,
+        };
+      } else {
+        // Original deleted → reference exists but no preview.
+        replyTo = {
+          id: m.replyToMessageId,
+          senderId: '',
+          senderNickname: '',
+          content: '',
+          exists: false,
+        };
+      }
+    }
+    return {
+      id: m.id,
+      conversationId,
+      senderId: m.senderId,
+      content: m.content,
+      createdAt: m.createdAt.toISOString(),
+      mine: m.senderId === viewerId,
+      readAt: m.readAt ? m.readAt.toISOString() : null,
+      replyTo,
+    };
+  });
 }
 
 // ── Send a message ───────────────────────────────────────────
@@ -276,6 +349,7 @@ export async function sendMessage(
   userId: string,
   conversationId: string,
   content: string,
+  replyToMessageId?: string,
 ): Promise<MessageItem> {
   const conversation = await prisma.conversation.findUnique({
     where: { id: conversationId },
@@ -304,9 +378,28 @@ export async function sendMessage(
     );
   }
 
+  // Reply reference validation: the target must be a REAL message in the
+  // SAME conversation (membership already guaranteed the pair, but the reply
+  // must point at a message the sender is allowed to see). Only the id is
+  // stored — the preview is resolved at load time.
+  if (replyToMessageId && replyToMessageId.trim()) {
+    const target = await prisma.message.findUnique({
+      where: { id: replyToMessageId },
+      select: { conversationId: true },
+    });
+    if (!target || target.conversationId !== conversationId) {
+      throw ApiError.invalidRequest('Mensagem respondida não encontrada.');
+    }
+  }
+
   const message = await prisma.$transaction(async (tx) => {
     const created = await tx.message.create({
-      data: { conversationId, senderId: userId, content: trimmed },
+      data: {
+        conversationId,
+        senderId: userId,
+        content: trimmed,
+        replyToMessageId: replyToMessageId?.trim() || null,
+      },
     });
     await tx.conversation.update({
       where: { id: conversationId },
@@ -315,13 +408,19 @@ export async function sendMessage(
     return created;
   });
 
-  // Realtime: deliver to the recipient's live sockets (best-effort).
+  // Serialize from the RECIPIENT's perspective and deliver live (best-effort).
+  // The viewer here is the OTHER side, so `mine` is false and `readAt` null —
+  // this is the exact fix for the "every incoming message renders on the
+  // RIGHT side" bug (the old code serialized with the SENDER as viewer).
+  const [recipientView] = await toMessageItems([message], conversationId, otherId);
   dispatchChatMessage(otherId, {
     conversationId,
-    message: toMessageItem(message, conversationId, userId),
+    message: recipientView,
   });
 
-  return toMessageItem(message, conversationId, userId);
+  // Return the sender's own view (readAt null until the peer opens it).
+  const [ownView] = await toMessageItems([message], conversationId, userId);
+  return ownView;
 }
 
 // ── Mark a conversation as read by the session user ──────────
@@ -338,8 +437,11 @@ export async function markConversationRead(
     conversation.userOneId === userId || conversation.userTwoId === userId;
   if (!isMember) throw ApiError.forbidden('Você não tem acesso a esta conversa.');
 
+  const otherId =
+    conversation.userOneId === userId ? conversation.userTwoId : conversation.userOneId;
+
   // Mark every message FROM THE OTHER SIDE (unread by me) as read.
-  await prisma.message.updateMany({
+  const updated = await prisma.message.updateMany({
     where: {
       conversationId,
       senderId: { not: userId },
@@ -347,6 +449,36 @@ export async function markConversationRead(
     },
     data: { readAt: new Date() },
   });
+
+  // Realtime: tell the OTHER side its messages were just read so their own
+  // last sent bubble flips "enviado" → "visto agora" without refreshing.
+  if (updated.count > 0) {
+    dispatchChatRead(otherId, { conversationId });
+  }
+}
+
+// ── Typing indicator ─────────────────────────────────────────
+// Ephemeral realtime signal. Membership is enforced (only participants may
+// signal typing); nothing is persisted. The peer's live sockets receive a
+// `chat_typing` frame; the app is responsible for clearing it on its own
+// time-out / when leaving the conversation.
+export async function setTyping(
+  userId: string,
+  conversationId: string,
+  typing: boolean,
+): Promise<void> {
+  const conversation = await prisma.conversation.findUnique({
+    where: { id: conversationId },
+    select: { id: true, userOneId: true, userTwoId: true },
+  });
+  if (!conversation) throw ApiError.notFound('Conversa não encontrada.');
+  const isMember =
+    conversation.userOneId === userId || conversation.userTwoId === userId;
+  if (!isMember) throw ApiError.forbidden('Você não tem acesso a esta conversa.');
+
+  const otherId =
+    conversation.userOneId === userId ? conversation.userTwoId : conversation.userOneId;
+  dispatchChatTyping(otherId, { conversationId, typing });
 }
 
 // ── Unread conversations badge (Chat tab) ────────────────────

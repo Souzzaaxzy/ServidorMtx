@@ -291,13 +291,21 @@ model Message {
   // by the other side. Not per-message read receipts — just enough for the
   // "non lidas" badge (count messages where the other side hasn't read).
   readAt         DateTime?
+  // Reply support: when replying, the id of the SAME-conversation message
+  // being answered. Only the reference is stored (never the original
+  // content); the server resolves the preview at load time and degrades
+  // gracefully if the original is gone.
+  replyToMessageId String?
 
   conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   sender       User         @relation("sentMessages", fields: [senderId], references: [id], onDelete: Cascade)
+  replyTo      Message?     @relation("messageReplies", fields: [replyToMessageId], references: [id], onDelete: SetNull)
+  replies      Message[]    @relation("messageReplies")
 
   @@index([conversationId, createdAt])
   @@index([senderId])
   @@index([readAt])
+  @@index([replyToMessageId])
   @@map("messages")
 }
 

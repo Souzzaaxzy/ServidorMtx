@@ -8,11 +8,17 @@ import {
   markConversationRead,
   sendMessage,
   unreadConversationCount,
+  setTyping,
   CONVERSATION_MESSAGE_LIMIT,
 } from './chat.service.js';
 
 const sendMessageSchema = z.object({
   content: z.string().max(CONVERSATION_MESSAGE_LIMIT, 'Mensagem muito longa.'),
+  replyToMessageId: z.string().min(1).max(64).optional(),
+});
+
+const typingBodySchema = z.object({
+  typing: z.boolean(),
 });
 
 const messageQuerySchema = z.object({
@@ -59,7 +65,9 @@ export const chatRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     }
   });
 
-  // Send a message. SenderId is ALWAYS derived from the token.
+  // Send a message. SenderId is ALWAYS derived from the token. May carry an
+  // optional replyToMessageId pointing at an existing message of the SAME
+  // conversation (only the reference is stored server-side).
   app.post('/conversations/:id/messages', { onRequest: [app.authenticate] }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const parsed = sendMessageSchema.safeParse(request.body);
@@ -67,8 +75,31 @@ export const chatRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       throw ApiError.validation('Dados inválidos.', parsed.error.issues);
     }
     try {
-      const message = await sendMessage(request.user!.id, id, parsed.data.content);
+      const message = await sendMessage(
+        request.user!.id,
+        id,
+        parsed.data.content,
+        parsed.data.replyToMessageId,
+      );
       return reply.status(201).send({ message });
+    } catch (err) {
+      throw toApiError(err);
+    }
+  });
+
+  // Realtime typing indicator. The server only relays an ephemeral frame to
+  // the peer's live sockets — nothing is persisted, so there is no "typing
+  // stuck" state to clean up server-side; the peer also auto-clears it on a
+  // time-out or when it stops watching the conversation.
+  app.post('/conversations/:id/typing', { onRequest: [app.authenticate] }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const parsed = typingBodySchema.safeParse(request.body);
+    if (!parsed.success) {
+      throw ApiError.validation('Dados inválidos.', parsed.error.issues);
+    }
+    try {
+      await setTyping(request.user!.id, id, parsed.data.typing);
+      return reply.status(204).send();
     } catch (err) {
       throw toApiError(err);
     }

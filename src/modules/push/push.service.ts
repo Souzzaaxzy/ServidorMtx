@@ -89,6 +89,50 @@ export function dispatchChatMessage(userId: string, payload: Record<string, unkn
   }
 }
 
+// ── Chat typing / read (realtime frames) ─────────────────────
+// The typing + read events ride the SAME in-memory socket hub as chat
+// messages and notifications — no second transport, no polling. Frames are
+// small and fire-and-forget; the recipient's live sockets clear the
+// indicator automatically or re-fetch unread state.
+
+/** `typing` frame dispatched to the peer (the OTHER side of a conversation)
+ * when the session user starts/stops typing. Fires only when the peer has
+ * at least one live socket, so idle DM screens never waste a frame. */
+export function dispatchChatTyping(
+  peerUserId: string,
+  payload: { conversationId: string; typing: boolean },
+): void {
+  const live = sockets.get(peerUserId);
+  if (!live) return;
+  const frame = JSON.stringify({ kind: 'chat_typing', data: payload });
+  for (const socket of live) {
+    try {
+      socket.send(frame);
+    } catch (err) {
+      logger.warn({ err }, 'chat typing send failed');
+    }
+  }
+}
+
+/** `chat_read` frame dispatched to the peer after the session user marks a
+ * conversation read: the peer's own last sent message in that conversation
+ * can flip its "enviado" hint to "visto agora" in realtime. */
+export function dispatchChatRead(
+  peerUserId: string,
+  payload: { conversationId: string },
+): void {
+  const live = sockets.get(peerUserId);
+  if (!live) return;
+  const frame = JSON.stringify({ kind: 'chat_read', data: payload });
+  for (const socket of live) {
+    try {
+      socket.send(frame);
+    } catch (err) {
+      logger.warn({ err }, 'chat read send failed');
+    }
+  }
+}
+
 // The canonical PT-BR body text shared by the in-app list and the native
 // Android notification (single rendering point — never recompose in the
 // APK).

@@ -343,4 +343,210 @@ describe('Private chat', () => {
       removeSocket(b.id, socket);
     }
   });
+
+  it('BUGFIX (balões): recipient frame has mine=false so it renders on the LEFT, and readAt start null', async () => {
+    const a = await createAndLoginUser(server, { nickname: 'baloon_a' });
+    const b = await createAndLoginUser(server, { nickname: 'baloon_b' });
+    await makeFriends(a, b);
+    const conv = await openConversation(a, b);
+
+    const socket = { send: vi.fn() };
+    addSocket(b.id, socket);
+    try {
+      await server.inject({
+        method: 'POST',
+        url: `/api/conversations/${conv.id}/messages`,
+        headers: { authorization: `Bearer ${a.accessToken}` },
+        payload: { content: 'lado certo' },
+      });
+      const frame = JSON.parse(socket.send.mock.calls[0][0] as string);
+      const incoming = frame.data.message;
+      expect(incoming.mine).toBe(false); // B receives A's message → not mine
+      expect(incoming.senderId).toBe(a.id);
+      expect(incoming.readAt).toBeNull();
+    } finally {
+      removeSocket(b.id, socket);
+    }
+  });
+
+  it('status "enviado/visto agora": readAt stays null until the recipient reads, then set (and chat_read fires)', async () => {
+    const a = await createAndLoginUser(server, { nickname: 'see_a' });
+    const b = await createAndLoginUser(server, { nickname: 'see_b' });
+    await makeFriends(a, b);
+    const conv = await openConversation(a, b);
+
+    const sent = await server.inject({
+      method: 'POST',
+      url: `/api/conversations/${conv.id}/messages`,
+      headers: { authorization: `Bearer ${a.accessToken}` },
+      payload: { content: 'liu?' },
+    });
+    const sentMsg = JSON.parse(sent.payload).message;
+    // The sender's own view: not read yet.
+    expect(sentMsg.readAt).toBeNull();
+    expect(sentMsg.mine).toBe(true);
+
+    // B reads → A's message gets a readAt.
+    await server.inject({
+      method: 'POST',
+      url: `/api/conversations/${conv.id}/read`,
+      headers: { authorization: `Bearer ${b.accessToken}` },
+    });
+
+    const stored = await prisma.message.findUnique({ where: { id: sentMsg.id } });
+    expect(stored?.readAt).not.toBeNull();
+
+    // A reloads → message now carries readAt (drives "visto agora").
+    const reload = await server.inject({
+      method: 'GET',
+      url: `/api/conversations/${conv.id}/messages`,
+      headers: { authorization: `Bearer ${a.accessToken}` },
+    });
+    const reloaded = JSON.parse(reload.payload).messages.find(
+      (m: { id: string }) => m.id === sentMsg.id,
+    );
+    expect(reloaded.readAt).not.toBeNull();
+    expect(reloaded.mine).toBe(true);
+
+    // Realtime: when B reads a FRESH unread message, a chat_read frame is
+    // dispatched to A's sockets (so A's "enviado" can flip to "visto agora").
+    const aSocket = { send: vi.fn() };
+    addSocket(a.id, aSocket);
+    try {
+      // A sends ANOTHER message (unread by B).
+      await server.inject({
+        method: 'POST',
+        url: `/api/conversations/${conv.id}/messages`,
+        headers: { authorization: `Bearer ${a.accessToken}` },
+        payload: { content: 'liu?' },
+      });
+      const bRead = await server.inject({
+        method: 'POST',
+        url: `/api/conversations/${conv.id}/read`,
+        headers: { authorization: `Bearer ${b.accessToken}` },
+      });
+      expect(bRead.statusCode).toBe(204);
+      expect(aSocket.send).toHaveBeenCalledTimes(1);
+      const frame = JSON.parse(aSocket.send.mock.calls[0][0] as string);
+      expect(frame.kind).toBe('chat_read');
+      expect(frame.data.conversationId).toBe(conv.id);
+    } finally {
+      removeSocket(a.id, aSocket);
+    }
+  });
+
+  it('typing: setTyping relays a chat_typing frame to the peer; non-member is forbidden', async () => {
+    const a = await createAndLoginUser(server, { nickname: 'ty_a' });
+    const b = await createAndLoginUser(server, { nickname: 'ty_b' });
+    await makeFriends(a, b);
+    const conv = await openConversation(a, b);
+
+    const bSocket = { send: vi.fn() };
+    addSocket(b.id, bSocket);
+    try {
+      await server.inject({
+        method: 'POST',
+        url: `/api/conversations/${conv.id}/typing`,
+        headers: { authorization: `Bearer ${a.accessToken}` },
+        payload: { typing: true },
+      });
+      expect(bSocket.send).toHaveBeenCalledTimes(1);
+      const frame = JSON.parse(bSocket.send.mock.calls[0][0] as string);
+      expect(frame.kind).toBe('chat_typing');
+      expect(frame.data.conversationId).toBe(conv.id);
+      expect(frame.data.typing).toBe(true);
+
+      await server.inject({
+        method: 'POST',
+        url: `/api/conversations/${conv.id}/typing`,
+        headers: { authorization: `Bearer ${a.accessToken}` },
+        payload: { typing: false },
+      });
+      expect(bSocket.send).toHaveBeenCalledTimes(2);
+      const off = JSON.parse(bSocket.send.mock.calls[1][0] as string);
+      expect(off.data.typing).toBe(false);
+    } finally {
+      removeSocket(b.id, bSocket);
+    }
+
+    // Non-member cannot signal typing.
+    const eve = await createAndLoginUser(server, { nickname: 'ty_eve' });
+    await makeFriends(eve, a);
+    const forbidden = await server.inject({
+      method: 'POST',
+      url: `/api/conversations/${conv.id}/typing`,
+      headers: { authorization: `Bearer ${eve.accessToken}` },
+      payload: { typing: true },
+    });
+    expect(forbidden.statusCode).toBe(403);
+  });
+
+  it('reply: sends with replyToMessageId, resolves preview (with nickname), and persists the reference only', async () => {
+    const a = await createAndLoginUser(server, { nickname: 'rep_a' });
+    const b = await createAndLoginUser(server, { nickname: 'rep_b' });
+    await makeFriends(a, b);
+    const conv = await openConversation(a, b);
+
+    const original = await server.inject({
+      method: 'POST',
+      url: `/api/conversations/${conv.id}/messages`,
+      headers: { authorization: `Bearer ${b.accessToken}` },
+      payload: { content: 'Oi, tudo bem?' },
+    });
+    const originalMsg = JSON.parse(original.payload).message;
+
+    const reply = await server.inject({
+      method: 'POST',
+      url: `/api/conversations/${conv.id}/messages`,
+      headers: { authorization: `Bearer ${a.accessToken}` },
+      payload: { content: 'Sim, tudo ótimo!', replyToMessageId: originalMsg.id },
+    });
+    expect(reply.statusCode).toBe(201);
+    const replyMsg = JSON.parse(reply.payload).message;
+    expect(replyMsg.replyTo).not.toBeNull();
+    expect(replyMsg.replyTo.exists).toBe(true);
+    expect(replyMsg.replyTo.id).toBe(originalMsg.id);
+    expect(replyMsg.replyTo.senderNickname).toBe('rep_b');
+    expect(replyMsg.replyTo.content).toBe('Oi, tudo bem?');
+
+    // Only the reference is stored — content of the original is NOT duplicated.
+    const stored = await prisma.message.findUnique({ where: { id: replyMsg.id } });
+    expect(stored?.replyToMessageId).toBe(originalMsg.id);
+    expect(stored?.content).toBe('Sim, tudo ótimo!');
+  });
+
+  it('reply: replying to a non-existent message (400) and a message of another conversation (400)', async () => {
+    const a = await createAndLoginUser(server, { nickname: 'repx_a' });
+    const b = await createAndLoginUser(server, { nickname: 'repx_b' });
+    const c = await createAndLoginUser(server, { nickname: 'repx_c' });
+    await makeFriends(a, b);
+    await makeFriends(a, c);
+    const convAB = await openConversation(a, b);
+    const convAC = await openConversation(a, c);
+
+    const bad = await server.inject({
+      method: 'POST',
+      url: `/api/conversations/${convAB.id}/messages`,
+      headers: { authorization: `Bearer ${a.accessToken}` },
+      payload: { content: 'x', replyToMessageId: 'missing-id' },
+    });
+    expect(bad.statusCode).toBe(400);
+
+    // A message from a DIFFERENT conversation is not a valid reply target.
+    const otherMsg = await server.inject({
+      method: 'POST',
+      url: `/api/conversations/${convAC.id}/messages`,
+      headers: { authorization: `Bearer ${c.accessToken}` },
+      payload: { content: 'outra conversa' },
+    });
+    const otherTarget = JSON.parse(otherMsg.payload).message;
+    const cross = await server.inject({
+      method: 'POST',
+      url: `/api/conversations/${convAB.id}/messages`,
+      headers: { authorization: `Bearer ${a.accessToken}` },
+      payload: { content: 'y', replyToMessageId: otherTarget.id },
+    });
+    expect(cross.statusCode).toBe(400);
+    expect(await prisma.message.count({ where: { conversationId: convAB.id } })).toBe(0);
+  });
 });
