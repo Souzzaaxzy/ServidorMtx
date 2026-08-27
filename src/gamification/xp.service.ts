@@ -68,6 +68,7 @@ export async function getUserLevel(userId: string): Promise<UserLevel> {
 export const XP_REWARDS = {
   POST_CREATED: 10,
   COMMENT_CREATED: 2,
+  COMMENT_RECEIVED: 2,
   LIKE_RECEIVED: 1,
 } as const;
 

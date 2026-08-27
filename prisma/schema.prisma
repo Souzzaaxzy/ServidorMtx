@@ -23,7 +23,7 @@ datasource db {
   // which creates data/ on boot). DATABASE_URL is optional in production: if
   // the panel does not set it, the app/start.sh default to this file path.
   // Tests override DATABASE_URL to point at a throwaway file (see .env.test).
-  url = env("DATABASE_URL")
+  url      = env("DATABASE_URL")
 }
 
 // NOTE: Prisma's SQLite connector does not support `enum` types, so these
@@ -32,26 +32,27 @@ datasource db {
 // layer. Defaults below keep the same value names the codebase already uses.
 
 model User {
-  id                String    @id @default(cuid())
+  id               String   @id @default(cuid())
   // Single visual identity (Phase 5): only `nickname`. Legacy `name`/
   // `username` were merged by the 20260826_unify_identity_nickname migration.
   // The display form is stored EXACTLY as typed (Unicode, emojis, mixed
   // case). `nicknameKey` is the case-insensitive lookup key (lowercased
   // display form) that powers uniqueness, login, recovery and profile
   // resolution — "Leonardo" and "LEONARDO" cannot coexist.
-  nickname          String    @unique
-  nicknameKey       String    @unique  @default("")
-  passwordHash      String
-  recoveryCodeHash  String
-  role              String    @default("USER")
-  avatarUrl         String?
-  bio               String    @default("")
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
+  nickname         String   @unique
+  nicknameKey      String   @unique @default("")
+  passwordHash     String
+  recoveryCodeHash String
+  role             String   @default("USER")
+  avatarUrl        String?
+  bio              String   @default("")
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 
   posts        Post[]
   likes        Like[]
   comments     Comment[]
+  commentLikes CommentLike[]
   sessions     Session[]
   devices      Device[]
 
@@ -60,35 +61,35 @@ model User {
   friendshipOnes         Friendship[]    @relation("friendshipOne")
   friendshipTwos         Friendship[]    @relation("friendshipTwo")
 
-  conversationOnes Conversation[] @relation("conversationOne")
-  conversationTwos Conversation[] @relation("conversationTwo")
-  sentMessages     Message[]      @relation("sentMessages")
-  notificationsReceived  Notification[]  @relation("notificationsReceived")
-  notificationsSent      Notification[]  @relation("notificationsSent")
+  conversationOnes      Conversation[] @relation("conversationOne")
+  conversationTwos      Conversation[] @relation("conversationTwo")
+  sentMessages          Message[]      @relation("sentMessages")
+  notificationsReceived Notification[] @relation("notificationsReceived")
+  notificationsSent     Notification[] @relation("notificationsSent")
 
-  xpTransactions     XpTransaction[]
-  coinTransactions   CoinTransaction[]
-  userCoins          MatrixCoin?
-  userAchievements   UserAchievement[]
-  userBadges         UserBadge[]
-  userItems          UserItem[]
-  equippedItems      EquippedItem[]
-  eventParticipants  EventParticipant[]
-  playlists          Playlist[]
-  gameSessions       GameSession[]
-  musicVotes         MusicVote[]
+  xpTransactions    XpTransaction[]
+  coinTransactions  CoinTransaction[]
+  userCoins         MatrixCoin?
+  userAchievements  UserAchievement[]
+  userBadges        UserBadge[]
+  userItems         UserItem[]
+  equippedItems     EquippedItem[]
+  eventParticipants EventParticipant[]
+  playlists         Playlist[]
+  gameSessions      GameSession[]
+  musicVotes        MusicVote[]
 
   @@index([nickname])
   @@map("users")
 }
 
 model Post {
-  id        String    @id @default(cuid())
+  id        String   @id @default(cuid())
   userId    String
   text      String?
   imageUrl  String?
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   likes    Like[]
@@ -121,20 +122,46 @@ model Comment {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-  post Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+  // Non-null → this comment is a REPLY to another comment on the same post.
+  // null → a top-level comment. Replies are one level deep (server enforces
+  // that a reply's parent is always a top-level comment).
+  parentCommentId String?
+
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  post         Post          @relation(fields: [postId], references: [id], onDelete: Cascade)
+  parent       Comment?      @relation("commentReplies", fields: [parentCommentId], references: [id], onDelete: Cascade)
+  replies      Comment[]     @relation("commentReplies")
+  commentLikes CommentLike[]
 
   @@index([postId])
   @@index([userId])
+  @@index([parentCommentId])
+  @@index([parentCommentId, createdAt])
   @@map("comments")
 }
 
+// Like on a comment/reply. Unique per (user, comment) — same semantics as
+// post likes but independent of them. Deleting a comment cascades its likes.
+model CommentLike {
+  id        String   @id @default(cuid())
+  userId    String
+  commentId String
+  createdAt DateTime @default(now())
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  comment Comment @relation(fields: [commentId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, commentId])
+  @@index([commentId])
+  @@map("comment_likes")
+}
+
 model Session {
-  id               String   @id @default(cuid())
+  id               String    @id @default(cuid())
   userId           String
-  refreshTokenHash String   @unique
+  refreshTokenHash String    @unique
   expiresAt        DateTime
-  createdAt        DateTime @default(now())
+  createdAt        DateTime  @default(now())
   revokedAt        DateTime?
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -205,7 +232,7 @@ model Friendship {
 // recipient. postId/commentId/friendRequestId point at the related entity
 // when relevant, otherwise stay null.
 model Notification {
-  id              String        @id @default(cuid())
+  id              String   @id @default(cuid())
   recipientId     String
   actorId         String
   // LIKE | COMMENT | FRIEND_REQUEST | FRIEND_ACCEPTED (extensible).
@@ -213,11 +240,11 @@ model Notification {
   postId          String?
   commentId       String?
   friendRequestId String?
-  read            Boolean       @default(false)
-  createdAt       DateTime      @default(now())
+  read            Boolean  @default(false)
+  createdAt       DateTime @default(now())
 
-  recipient    User           @relation("notificationsReceived", fields: [recipientId], references: [id], onDelete: Cascade)
-  actor        User           @relation("notificationsSent", fields: [actorId], references: [id], onDelete: Cascade)
+  recipient     User           @relation("notificationsReceived", fields: [recipientId], references: [id], onDelete: Cascade)
+  actor         User           @relation("notificationsSent", fields: [actorId], references: [id], onDelete: Cascade)
   friendRequest FriendRequest? @relation(fields: [friendRequestId], references: [id], onDelete: Cascade)
 
   @@index([recipientId, read])
@@ -243,9 +270,9 @@ model Conversation {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  userOne   User      @relation("conversationOne", fields: [userOneId], references: [id], onDelete: Cascade)
-  userTwo   User      @relation("conversationTwo", fields: [userTwoId], references: [id], onDelete: Cascade)
-  messages  Message[]
+  userOne  User      @relation("conversationOne", fields: [userOneId], references: [id], onDelete: Cascade)
+  userTwo  User      @relation("conversationTwo", fields: [userTwoId], references: [id], onDelete: Cascade)
+  messages Message[]
 
   @@unique([userOneId, userTwoId])
   @@index([userOneId, updatedAt])
@@ -254,12 +281,12 @@ model Conversation {
 }
 
 model Message {
-  id             String   @id @default(cuid())
+  id             String    @id @default(cuid())
   conversationId String
   // The sender is ALWAYS the authenticated user — never client-supplied.
   senderId       String
   content        String
-  createdAt      DateTime @default(now())
+  createdAt      DateTime  @default(now())
   // Set when the recipient marks the conversation read; null = not yet read
   // by the other side. Not per-message read receipts — just enough for the
   // "non lidas" badge (count messages where the other side hasn't read).
@@ -295,11 +322,11 @@ model XpTransaction {
 }
 
 model Level {
-  id          Int      @id
-  name        String
-  minXp       Int      @unique
-  color       String?
-  createdAt   DateTime @default(now())
+  id        Int      @id
+  name      String
+  minXp     Int      @unique
+  color     String?
+  createdAt DateTime @default(now())
 
   @@map("levels")
 }
@@ -318,12 +345,12 @@ model MatrixCoin {
 // Append-only ledger of every Matrix Coin movement. The balance is the
 // `SUM(amount)` of all transactions for a user.
 model CoinTransaction {
-  id        String              @id @default(cuid())
+  id        String   @id @default(cuid())
   userId    String
   amount    Int
   type      String
   reason    String
-  createdAt DateTime            @default(now())
+  createdAt DateTime @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -350,12 +377,12 @@ model Achievement {
 }
 
 model UserAchievement {
-  id            String      @id @default(cuid())
+  id            String   @id @default(cuid())
   userId        String
   achievementId String
-  unlockedAt    DateTime    @default(now())
+  unlockedAt    DateTime @default(now())
 
-  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
   achievement Achievement @relation(fields: [achievementId], references: [id], onDelete: Cascade)
 
   @@unique([userId, achievementId])
@@ -378,13 +405,13 @@ model Badge {
 }
 
 model UserBadge {
-  id        String   @id @default(cuid())
-  userId    String
-  badgeId   String
+  id         String   @id @default(cuid())
+  userId     String
+  badgeId    String
   acquiredAt DateTime @default(now())
 
-  user  User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-  badge Badge  @relation(fields: [badgeId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  badge Badge @relation(fields: [badgeId], references: [id], onDelete: Cascade)
 
   @@unique([userId, badgeId])
   @@index([userId])
@@ -396,26 +423,26 @@ model UserBadge {
 // ItemType; adding items is a data operation, not an APK release.
 
 model Item {
-  id         String    @id
-  type       String
-  name       String
+  id        String   @id
+  type      String
+  name      String
   // For NAME_COLOR items this holds the hex color (e.g. "#0066FF") instead
   // of an asset path — the "asset" of a color IS the color value.
-  assetUrl   String
-  rarity     String    @default("COMMON")
-  price      Int       @default(0)
+  assetUrl  String
+  rarity    String   @default("COMMON")
+  price     Int      @default(0)
   // Optional grouping key for the catalog UI (e.g. "reds", "special").
   // Owned by the server so the app never hardcodes which colors exist.
-  category   String?
+  category  String?
   // Explicit ordering inside a category (catalogs are curated, not
   // alphabetical).
-  sortOrder  Int       @default(0)
+  sortOrder Int      @default(0)
   // JSON-serialized render configuration (SQLite has no Json type). Kept
   // generic for future cosmetic types that need extra render data.
-  config     String    @default("{}")
-  active     Boolean   @default(true)
-  createdAt  DateTime  @default(now())
-  updatedAt  DateTime  @updatedAt
+  config    String   @default("{}")
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   userItems     UserItem[]
   equippedItems EquippedItem[]
@@ -425,13 +452,13 @@ model Item {
 }
 
 model UserItem {
-  id          String    @id @default(cuid())
-  userId      String
-  itemId      String
-  quantity    Int       @default(1)
-  acquiredAt  DateTime  @default(now())
-  expiresAt   DateTime?
-  source      String    @default("GRANT")
+  id         String    @id @default(cuid())
+  userId     String
+  itemId     String
+  quantity   Int       @default(1)
+  acquiredAt DateTime  @default(now())
+  expiresAt  DateTime?
+  source     String    @default("GRANT")
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
   item Item @relation(fields: [itemId], references: [id], onDelete: Cascade)
@@ -442,10 +469,10 @@ model UserItem {
 }
 
 model EquippedItem {
-  id        String   @id @default(cuid())
-  userId    String
-  itemId    String
-  slot      String
+  id         String   @id @default(cuid())
+  userId     String
+  itemId     String
+  slot       String
   equippedAt DateTime @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -459,14 +486,14 @@ model EquippedItem {
 // ── Events ─────────────────────────────────────────────────────
 
 model Event {
-  id          String      @id @default(cuid())
+  id          String    @id @default(cuid())
   title       String
-  description String      @default("")
+  description String    @default("")
   status      String    @default("DRAFT")
   startsAt    DateTime
   endsAt      DateTime?
-  createdAt   DateTime    @default(now())
-  updatedAt   DateTime    @updatedAt
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
 
   participants EventParticipant[]
   rewards      EventReward[]
@@ -476,13 +503,13 @@ model Event {
 }
 
 model EventParticipant {
-  id        String   @id @default(cuid())
-  userId    String
-  eventId   String
-  joinedAt  DateTime @default(now())
+  id       String   @id @default(cuid())
+  userId   String
+  eventId  String
+  joinedAt DateTime @default(now())
 
-  user  User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-  event Event  @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
 
   @@unique([userId, eventId])
   @@index([eventId])
@@ -490,12 +517,12 @@ model EventParticipant {
 }
 
 model EventReward {
-  id        String   @id @default(cuid())
-  eventId   String
-  itemId    String?
-  xpAmount  Int      @default(0)
-  coinAmount Int     @default(0)
-  createdAt DateTime @default(now())
+  id         String   @id @default(cuid())
+  eventId    String
+  itemId     String?
+  xpAmount   Int      @default(0)
+  coinAmount Int      @default(0)
+  createdAt  DateTime @default(now())
 
   event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
 
@@ -516,10 +543,10 @@ model Track {
   externalId  String?
   externalUrl String?
   duration    Int      @default(0)
-  createdAt    DateTime @default(now())
+  createdAt   DateTime @default(now())
 
   playlistTracks PlaylistTrack[]
-  votes           MusicVote[]
+  votes          MusicVote[]
 
   @@index([provider])
   @@map("tracks")
@@ -535,7 +562,7 @@ model Playlist {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  owner         User           @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  owner          User            @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   playlistTracks PlaylistTrack[]
 
   @@index([ownerId])
@@ -543,7 +570,7 @@ model Playlist {
 }
 
 model PlaylistTrack {
-  id         String  @id @default(cuid())
+  id         String @id @default(cuid())
   playlistId String
   trackId    String
   position   Int
@@ -557,11 +584,11 @@ model PlaylistTrack {
 }
 
 model MusicVote {
-  id        String           @id @default(cuid())
+  id        String   @id @default(cuid())
   userId    String
   trackId   String
   direction String
-  createdAt DateTime         @default(now())
+  createdAt DateTime @default(now())
 
   user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
   track Track @relation(fields: [trackId], references: [id], onDelete: Cascade)
@@ -581,7 +608,7 @@ model Game {
   name        String
   description String   @default("")
   active      Boolean  @default(true)
-  createdAt    DateTime @default(now())
+  createdAt   DateTime @default(now())
 
   sessions GameSession[]
 
@@ -591,10 +618,10 @@ model Game {
 model GameSession {
   id        String   @id @default(cuid())
   userId    String
-  gameId     String
-  score      Int      @default(0)
-  metadata   String?
-  createdAt  DateTime @default(now())
+  gameId    String
+  score     Int      @default(0)
+  metadata  String?
+  createdAt DateTime @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
   game Game @relation(fields: [gameId], references: [id], onDelete: Cascade)
@@ -607,11 +634,11 @@ model GameSession {
 }
 
 model GameResult {
-  id           String   @id @default(cuid())
-  gameSessionId String  @unique
-  xpAwarded    Int      @default(0)
-  coinAwarded  Int      @default(0)
-  createdAt    DateTime @default(now())
+  id            String   @id @default(cuid())
+  gameSessionId String   @unique
+  xpAwarded     Int      @default(0)
+  coinAwarded   Int      @default(0)
+  createdAt     DateTime @default(now())
 
   session GameSession @relation(fields: [gameSessionId], references: [id], onDelete: Cascade)
 
@@ -621,23 +648,23 @@ model GameResult {
 // ── Matrix Calls (contracts only — no media transport yet) ─────
 
 model CallRoom {
-  id        String   @id @default(cuid())
+  id        String    @id @default(cuid())
   ownerId   String
   title     String
-  status    String   @default("active")
-  createdAt DateTime @default(now())
+  status    String    @default("active")
+  createdAt DateTime  @default(now())
   endedAt   DateTime?
 
   @@map("call_rooms")
 }
 
 model CallParticipant {
-  id        String   @id @default(cuid())
-  roomId    String
-  userId    String
-  status    String   @default("joined")
-  joinedAt  DateTime @default(now())
-  leftAt    DateTime?
+  id       String    @id @default(cuid())
+  roomId   String
+  userId   String
+  status   String    @default("joined")
+  joinedAt DateTime  @default(now())
+  leftAt   DateTime?
 
   @@unique([roomId, userId])
   @@index([roomId])
@@ -650,7 +677,7 @@ model CallParticipant {
 
 model AppConfig {
   key       String   @id
-  value     String  @default("{}")
+  value     String   @default("{}")
   public    Boolean  @default(false)
   updatedAt DateTime @updatedAt
   createdAt DateTime @default(now())

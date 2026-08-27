@@ -72,6 +72,7 @@ const TABLES = [
   'call_participants',
   'call_rooms',
   'app_config',
+  'comment_likes',
   'comments',
   'likes',
   'posts',

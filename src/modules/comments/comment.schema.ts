@@ -9,5 +9,16 @@ export const listCommentsQuerySchema = z.object({
   cursor: z.string().optional(),
 });
 
+export const commentIdParamsSchema = z.object({
+  id: z.string().min(1),
+});
+
+export const parentCommentParamsSchema = z.object({
+  parentId: z.string().min(1),
+});
+
+export type CommentIdParams = z.infer<typeof commentIdParamsSchema>;
+export type ParentCommentParams = z.infer<typeof parentCommentParamsSchema>;
+
 export type CreateCommentInput = z.infer<typeof createCommentSchema>;
 export type ListCommentsQuery = z.infer<typeof listCommentsQuerySchema>;

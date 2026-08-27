@@ -235,24 +235,40 @@ export interface PostComment {
   id: string;
   text: string;
   createdAt: string;
+  // Non-null when the comment is a REPLY to another comment on the same post.
+  parentCommentId: string | null;
   author: Pick<PublicUser, 'id' | 'nickname' | 'avatarUrl'> & NicknameCosmeticsPayload;
+  // Total like count on this comment (server-computed, the official source).
+  likeCount: number;
+  // Whether the AUTHENTICATED viewer has liked this comment. Only populated
+  // when an authenticated viewer is passed in — otherwise false.
+  liked: boolean;
 }
 
 export function toPostComment(
   comment: Comment & {
     user: Pick<User, 'id' | 'nickname' | 'avatarUrl'> & WithNameColor;
+    _count: { commentLikes: number; replies: number };
+    commentLikes?: { userId: string }[];
   },
+  viewerId?: string,
 ): PostComment {
+  const liked = Array.isArray(comment.commentLikes)
+    ? comment.commentLikes.some((l) => l.userId === viewerId)
+    : false;
   return {
     id: comment.id,
     text: comment.text,
     createdAt: comment.createdAt.toISOString(),
+    parentCommentId: comment.parentCommentId,
     author: {
       id: comment.user.id,
       nickname: comment.user.nickname,
       avatarUrl: comment.user.avatarUrl,
       ...nicknameCosmetics(comment.user),
     },
+    likeCount: comment._count.commentLikes,
+    liked,
   };
 }
 

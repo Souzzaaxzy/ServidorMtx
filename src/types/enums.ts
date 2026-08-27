@@ -68,6 +68,7 @@ export type ItemRarity = (typeof ItemRarity)[keyof typeof ItemRarity];
 export const XpReason = {
   POST_CREATED: 'POST_CREATED',
   COMMENT_CREATED: 'COMMENT_CREATED',
+  COMMENT_RECEIVED: 'COMMENT_RECEIVED',
   LIKE_RECEIVED: 'LIKE_RECEIVED',
   ACHIEVEMENT: 'ACHIEVEMENT',
   EVENT_REWARD: 'EVENT_REWARD',
