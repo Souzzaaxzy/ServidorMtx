@@ -30,6 +30,7 @@ import { akameRoutes } from './modules/akame/akame.routes.js';
 import { configRoutes } from './modules/config/config.routes.js';
 import { adminRoutes } from './modules/admin/admin.routes.js';
 import { friendRoutes } from './modules/friends/friend.routes.js';
+import { chatRoutes } from './modules/chat/chat.routes.js';
 import { notificationRoutes } from './modules/notifications/notification.routes.js';
 import { pushRoutes } from './modules/push/push.routes.js';
 import websocket from '@fastify/websocket';
@@ -136,6 +137,7 @@ export async function buildServer() {
   await app.register(commentRoutes, { prefix: '/api' });
   await app.register(userRoutes, { prefix: '/api' });
   await app.register(friendRoutes, { prefix: '/api' });
+  await app.register(chatRoutes, { prefix: '/api' });
   await app.register(notificationRoutes, { prefix: '/api' });
   await app.register(pushRoutes, { prefix: '/api' });
   await app.register(uploadRoutes, { prefix: '/api' });

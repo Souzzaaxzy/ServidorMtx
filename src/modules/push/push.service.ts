@@ -72,6 +72,23 @@ export function socketsOf(userId: string): number {
   return sockets.get(userId)?.size ?? 0;
 }
 
+// Chat realtime broadcast: delivers a `chat_message` frame to EVERY live
+// socket of [userId] (the recipient). Dedupe is handled by the message id
+// (see sendMessage — one broadcast call per persisted message). Errors are
+// logged, never thrown, so delivery is best-effort fire-and-forget.
+export function dispatchChatMessage(userId: string, payload: Record<string, unknown>): void {
+  const live = sockets.get(userId);
+  if (!live) return;
+  const frame = JSON.stringify({ kind: 'chat_message', data: payload });
+  for (const socket of live) {
+    try {
+      socket.send(frame);
+    } catch (err) {
+      logger.warn({ err }, 'chat socket send failed');
+    }
+  }
+}
+
 // The canonical PT-BR body text shared by the in-app list and the native
 // Android notification (single rendering point — never recompose in the
 // APK).

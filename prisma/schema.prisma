@@ -59,6 +59,10 @@ model User {
   receivedFriendRequests FriendRequest[] @relation("receivedFriendRequests")
   friendshipOnes         Friendship[]    @relation("friendshipOne")
   friendshipTwos         Friendship[]    @relation("friendshipTwo")
+
+  conversationOnes Conversation[] @relation("conversationOne")
+  conversationTwos Conversation[] @relation("conversationTwo")
+  sentMessages     Message[]      @relation("sentMessages")
   notificationsReceived  Notification[]  @relation("notificationsReceived")
   notificationsSent      Notification[]  @relation("notificationsSent")
 
@@ -219,6 +223,55 @@ model Notification {
   @@index([recipientId, read])
   @@index([createdAt])
   @@map("notifications")
+}
+
+// ── Private chat ─────────────────────────────────────────────
+// One private conversation per user PAIR (ids sorted at insert, exactly like
+// Friendship) so A→B and B→A never duplicate. Messaging is allowed ONLY
+// between accepted friends (validated server-side on every send).
+//
+// Chat is prepared for realtime/unread without Firebase: messages carry
+// `readAt` (null until the recipient opens/reads the conversation) so the
+// "non lidas" badge can be derived per recipient without extra polling. The
+// transport for live delivery reuses the server's existing WebSocket hub.
+
+model Conversation {
+  id        String   @id @default(cuid())
+  // Sorted pair (userOneId < userTwoId) — one row per pair, never two.
+  userOneId String
+  userTwoId String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  userOne   User      @relation("conversationOne", fields: [userOneId], references: [id], onDelete: Cascade)
+  userTwo   User      @relation("conversationTwo", fields: [userTwoId], references: [id], onDelete: Cascade)
+  messages  Message[]
+
+  @@unique([userOneId, userTwoId])
+  @@index([userOneId, updatedAt])
+  @@index([userTwoId, updatedAt])
+  @@map("conversations")
+}
+
+model Message {
+  id             String   @id @default(cuid())
+  conversationId String
+  // The sender is ALWAYS the authenticated user — never client-supplied.
+  senderId       String
+  content        String
+  createdAt      DateTime @default(now())
+  // Set when the recipient marks the conversation read; null = not yet read
+  // by the other side. Not per-message read receipts — just enough for the
+  // "non lidas" badge (count messages where the other side hasn't read).
+  readAt         DateTime?
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender       User         @relation("sentMessages", fields: [senderId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, createdAt])
+  @@index([senderId])
+  @@index([readAt])
+  @@map("messages")
 }
 
 // ── Gamification ─────────────────────────────────────────────
