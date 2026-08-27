@@ -64,6 +64,9 @@ model User {
   conversationOnes      Conversation[] @relation("conversationOne")
   conversationTwos      Conversation[] @relation("conversationTwo")
   sentMessages          Message[]      @relation("sentMessages")
+  deletedMessages       Message[]      @relation("messageDeleter")
+  hiddenMessages        MessageHide[]
+  hiddenConversations   ConversationHidden[]
   notificationsReceived Notification[] @relation("notificationsReceived")
   notificationsSent     Notification[] @relation("notificationsSent")
 
@@ -127,6 +130,12 @@ model Comment {
   // that a reply's parent is always a top-level comment).
   parentCommentId String?
 
+  // Soft-delete marker. A comment is DELETED (hidden everywhere) when the
+  // post author OR the comment owner removes it. We keep the row for audit
+  // and cascade references; all read paths filter on `deletedAt: null`.
+  // Deleting a top-level comment also soft-deletes its replies.
+  deletedAt DateTime?
+
   user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
   post         Post          @relation(fields: [postId], references: [id], onDelete: Cascade)
   parent       Comment?      @relation("commentReplies", fields: [parentCommentId], references: [id], onDelete: Cascade)
@@ -135,6 +144,7 @@ model Comment {
 
   @@index([postId])
   @@index([userId])
+  @@index([deletedAt])
   @@index([parentCommentId])
   @@index([parentCommentId, createdAt])
   @@map("comments")
@@ -273,6 +283,7 @@ model Conversation {
   userOne  User      @relation("conversationOne", fields: [userOneId], references: [id], onDelete: Cascade)
   userTwo  User      @relation("conversationTwo", fields: [userTwoId], references: [id], onDelete: Cascade)
   messages Message[]
+  hiddenBy ConversationHidden[]
 
   @@unique([userOneId, userTwoId])
   @@index([userOneId, updatedAt])
@@ -297,16 +308,64 @@ model Message {
   // gracefully if the original is gone.
   replyToMessageId String?
 
+  // Soft-delete marker for "Excluir para todos". When set, the message is
+  // hidden for BOTH participants (all read paths filter it out). The row + a
+  // snapshot of the original content are kept for audit and so replies that
+  // point at this message still resolve a `exists:false` placeholder.
+  // `deletedById` records WHO deleted it (always the sender or a valid peer).
+  deletedAt    DateTime?
+  deletedById  String?
+
+  // Per-user "Excluir para mim": each participant can hide the message for
+  // themselves only (the peer keeps seeing it). One-to-many join rows.
+  hiddenBy     MessageHide[]
+
   conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   sender       User         @relation("sentMessages", fields: [senderId], references: [id], onDelete: Cascade)
   replyTo      Message?     @relation("messageReplies", fields: [replyToMessageId], references: [id], onDelete: SetNull)
   replies      Message[]    @relation("messageReplies")
+  deleter      User?        @relation("messageDeleter", fields: [deletedById], references: [id], onDelete: SetNull)
 
   @@index([conversationId, createdAt])
   @@index([senderId])
   @@index([readAt])
   @@index([replyToMessageId])
+  @@index([deletedAt])
   @@map("messages")
+}
+
+// "Excluir mensagem para mim" — a viewer-specific soft-delete. Each row says
+// "this message is hidden for THIS user (but still visible to the peer)".
+model MessageHide {
+  id             String   @id @default(cuid())
+  messageId      String
+  userId         String
+  createdAt      DateTime @default(now())
+
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([messageId, userId])
+  @@index([userId])
+  @@map("message_hides")
+}
+
+// "Excluir conversa (só para mim)" — hides a conversation from ONE user's
+// Chat list. The conversation row and its messages stay fully intact for the
+// peer. A NEW incoming message to that user un-hides it (their conversation
+// reappears, matching normal chat behavior).
+model ConversationHidden {
+  id             String   @id @default(cuid())
+  conversationId String
+  userId         String
+  createdAt      DateTime @default(now())
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([conversationId, userId])
+  @@index([userId])
+  @@map("conversation_hidden")
 }
 
 // ── Gamification ─────────────────────────────────────────────

@@ -89,6 +89,47 @@ export function dispatchChatMessage(userId: string, payload: Record<string, unkn
   }
 }
 
+// ── Chat message deleted (realtime frame) ────────────────────
+// Broadcast to the PEER of a conversation when one of them deletes a message
+// for everyone. The peer's open conversation removes the bubble live (no
+// refresh); the peer's Chat tab also refreshes its preview/unread badge.
+export function dispatchChatMessageDeleted(
+  peerUserId: string,
+  payload: { conversationId: string; messageId: string },
+): void {
+  const live = sockets.get(peerUserId);
+  if (!live) return;
+  const frame = JSON.stringify({ kind: 'chat_message_deleted', data: payload });
+  for (const socket of live) {
+    try {
+      socket.send(frame);
+    } catch (err) {
+      logger.warn({ err }, 'chat message deleted socket send failed');
+    }
+  }
+}
+
+// ── Comment deleted (realtime frame) ─────────────────────────
+// Broadcast to every live socket of the POST AUTHOR (plus ideally viewers)
+// when a comment on their post is deleted, so an open comments sheet / post
+// removes it live. Pass the postId + commentId (and the authorUserId to fan
+// out to).
+export function dispatchCommentDeleted(
+  recipientUserId: string,
+  payload: { postId: string; commentId: string },
+): void {
+  const live = sockets.get(recipientUserId);
+  if (!live) return;
+  const frame = JSON.stringify({ kind: 'comment_deleted', data: payload });
+  for (const socket of live) {
+    try {
+      socket.send(frame);
+    } catch (err) {
+      logger.warn({ err }, 'comment deleted socket send failed');
+    }
+  }
+}
+
 // ── Chat typing / read (realtime frames) ─────────────────────
 // The typing + read events ride the SAME in-memory socket hub as chat
 // messages and notifications — no second transport, no polling. Frames are

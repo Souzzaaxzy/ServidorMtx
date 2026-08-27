@@ -310,4 +310,167 @@ describe('Comments', () => {
     });
     expect(res.statusCode).toBe(404);
   });
+
+  it('post AUTHOR can delete another user\'s comment (soft delete hides it)', async () => {
+    const author = await createAndLoginUser(server, { nickname: 'postauthor' });
+    const commenter = await createAndLoginUser(server, { nickname: 'cmtuser' });
+    const post = await prisma.post.create({ data: { userId: author.id, text: 'post' } });
+    const created = await server.inject({
+      method: 'POST',
+      url: `/api/posts/${post.id}/comments`,
+      headers: { authorization: `Bearer ${commenter.accessToken}` },
+      payload: { text: 'comentário do Leo' },
+    });
+    const commentId = JSON.parse(created.payload).id;
+
+    // The post author (M06) removes Leo's comment.
+    const del = await server.inject({
+      method: 'DELETE',
+      url: `/api/comments/${commentId}`,
+      headers: { authorization: `Bearer ${author.accessToken}` },
+    });
+    expect(del.statusCode).toBe(204);
+
+    // Deleted comment no longer lists.
+    const list = await server.inject({
+      method: 'GET',
+      url: `/api/posts/${post.id}/comments`,
+      headers: { authorization: `Bearer ${commenter.accessToken}` },
+    });
+    expect(JSON.parse(list.payload).comments).toHaveLength(0);
+    // Row kept (soft delete) for audit.
+    const kept = await prisma.comment.findUnique({ where: { id: commentId } });
+    expect(kept).not.toBeNull();
+    expect(kept?.deletedAt).not.toBeNull();
+  });
+
+  it('commenter can delete their OWN comment on someone else\'s post', async () => {
+    const author = await createAndLoginUser(server, { nickname: 'ownauthor' });
+    const commenter = await createAndLoginUser(server, { nickname: 'ownowner' });
+    const post = await prisma.post.create({ data: { userId: author.id, text: 'post' } });
+    const created = await server.inject({
+      method: 'POST',
+      url: `/api/posts/${post.id}/comments`,
+      headers: { authorization: `Bearer ${commenter.accessToken}` },
+      payload: { text: 'Legal!' },
+    });
+    const commentId = JSON.parse(created.payload).id;
+
+    const del = await server.inject({
+      method: 'DELETE',
+      url: `/api/comments/${commentId}`,
+      headers: { authorization: `Bearer ${commenter.accessToken}` },
+    });
+    expect(del.statusCode).toBe(204);
+    const list = await server.inject({
+      method: 'GET',
+      url: `/api/posts/${post.id}/comments`,
+      headers: { authorization: `Bearer ${commenter.accessToken}` },
+    });
+    expect(JSON.parse(list.payload).comments).toHaveLength(0);
+  });
+
+  it('a THIRD-PARTY user (neither author nor commenter of another\'s post) is FORBIDDEN', async () => {
+    const author = await createAndLoginUser(server, { nickname: 'thirdauthor' });
+    const commenter = await createAndLoginUser(server, { nickname: 'thirdcmt' });
+    const stranger = await createAndLoginUser(server, { nickname: 'stranger9' });
+    const post = await prisma.post.create({ data: { userId: author.id, text: 'post' } });
+    const created = await server.inject({
+      method: 'POST',
+      url: `/api/posts/${post.id}/comments`,
+      headers: { authorization: `Bearer ${commenter.accessToken}` },
+      payload: { text: 'de terceiro' },
+    });
+    const commentId = JSON.parse(created.payload).id;
+
+    const del = await server.inject({
+      method: 'DELETE',
+      url: `/api/comments/${commentId}`,
+      headers: { authorization: `Bearer ${stranger.accessToken}` },
+    });
+    expect(del.statusCode).toBe(403);
+
+    // The comment is still there.
+    const list = await server.inject({
+      method: 'GET',
+      url: `/api/posts/${post.id}/comments`,
+      headers: { authorization: `Bearer ${stranger.accessToken}` },
+    });
+    expect(JSON.parse(list.payload).comments).toHaveLength(1);
+
+    // And a stranger can't delete even a reply.
+    const rep = await server.inject({
+      method: 'POST',
+      url: `/api/comments/${commentId}/replies`,
+      headers: { authorization: `Bearer ${commenter.accessToken}` },
+      payload: { text: 'reply' },
+    });
+    const replyId = JSON.parse(rep.payload).id;
+    const delReply = await server.inject({
+      method: 'DELETE',
+      url: `/api/comments/${replyId}`,
+      headers: { authorization: `Bearer ${stranger.accessToken}` },
+    });
+    expect(delReply.statusCode).toBe(403);
+  });
+
+  it('deleting a TOP-LEVEL comment also hides its replies', async () => {
+    const author = await createAndLoginUser(server, { nickname: 'tlauthor' });
+    const user = await createAndLoginUser(server, { nickname: 'tluser' });
+    const post = await prisma.post.create({ data: { userId: author.id, text: 'post' } });
+    const created = await server.inject({
+      method: 'POST',
+      url: `/api/posts/${post.id}/comments`,
+      headers: { authorization: `Bearer ${user.accessToken}` },
+      payload: { text: 'orig' },
+    });
+    const parentId = JSON.parse(created.payload).id;
+    const rep = await server.inject({
+      method: 'POST',
+      url: `/api/comments/${parentId}/replies`,
+      headers: { authorization: `Bearer ${user.accessToken}` },
+      payload: { text: 'filho' },
+    });
+    const replyId = JSON.parse(rep.payload).id;
+
+    // Commenter deletes their top-level comment → reply disappears too.
+    const del = await server.inject({
+      method: 'DELETE',
+      url: `/api/comments/${parentId}`,
+      headers: { authorization: `Bearer ${user.accessToken}` },
+    });
+    expect(del.statusCode).toBe(204);
+
+    const top = await server.inject({
+      method: 'GET',
+      url: `/api/posts/${post.id}/comments`,
+      headers: { authorization: `Bearer ${user.accessToken}` },
+    });
+    expect(JSON.parse(top.payload).comments).toHaveLength(0);
+    const replies = await server.inject({
+      method: 'GET',
+      url: `/api/comments/${parentId}/replies`,
+      headers: { authorization: `Bearer ${user.accessToken}` },
+    });
+    expect(JSON.parse(replies.payload).replies).toHaveLength(0);
+    expect((await prisma.comment.findUnique({ where: { id: replyId } }))?.deletedAt).not.toBeNull();
+  });
+
+  it('unauthenticated user cannot delete a comment', async () => {
+    const author = await createAndLoginUser(server, { nickname: 'uaauthor' });
+    const user = await createAndLoginUser(server, { nickname: 'uauser' });
+    const post = await prisma.post.create({ data: { userId: author.id, text: 'post' } });
+    const created = await server.inject({
+      method: 'POST',
+      url: `/api/posts/${post.id}/comments`,
+      headers: { authorization: `Bearer ${user.accessToken}` },
+      payload: { text: 'a comentar' },
+    });
+    const commentId = JSON.parse(created.payload).id;
+    const del = await server.inject({
+      method: 'DELETE',
+      url: `/api/comments/${commentId}`,
+    });
+    expect(del.statusCode).toBe(401);
+  });
 });

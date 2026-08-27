@@ -9,7 +9,7 @@ import { grantCoins, COIN_REWARDS, CoinReason } from '../../gamification/coin.se
 
 const FEED_INCLUDE = {
   user: { select: AUTHOR_SELECT },
-  _count: { select: { likes: true, comments: true } },
+  _count: { select: { likes: true, comments: { where: { deletedAt: null } } } },
 } as const;
 
 export async function createPost(
@@ -57,7 +57,7 @@ export async function getFeed(
     take: limit + 1,
     include: {
       user: { select: AUTHOR_SELECT },
-      _count: { select: { likes: true, comments: true } },
+      _count: { select: { likes: true, comments: { where: { deletedAt: null } } } },
       ...(currentUserId
         ? { likes: { where: { userId: currentUserId }, select: { userId: true } } }
         : {}),
@@ -79,7 +79,7 @@ export async function getPostById(id: string, currentUserId?: string): Promise<F
     where: { id },
     include: {
       user: { select: AUTHOR_SELECT },
-      _count: { select: { likes: true, comments: true } },
+      _count: { select: { likes: true, comments: { where: { deletedAt: null } } } },
       ...(currentUserId
         ? { likes: { where: { userId: currentUserId }, select: { userId: true } } }
         : {}),

@@ -549,4 +549,273 @@ describe('Private chat', () => {
     expect(cross.statusCode).toBe(400);
     expect(await prisma.message.count({ where: { conversationId: convAB.id } })).toBe(0);
   });
+
+  it('delete FOR ME: message disappears for the caller only, peer still sees it', async () => {
+    const a = await createAndLoginUser(server, { nickname: 'dm_a' });
+    const b = await createAndLoginUser(server, { nickname: 'dm_b' });
+    await makeFriends(a, b);
+    const conv = await openConversation(a, b);
+    const sent = await server.inject({
+      method: 'POST',
+      url: `/api/conversations/${conv.id}/messages`,
+      headers: { authorization: `Bearer ${a.accessToken}` },
+      payload: { content: 'Olá' },
+    });
+    const message = JSON.parse(sent.payload).message;
+
+    // A hides it for themselves.
+    const del = await server.inject({
+      method: 'DELETE',
+      url: `/api/conversations/${conv.id}/messages/${message.id}`,
+      headers: { authorization: `Bearer ${a.accessToken}` },
+    });
+    expect(del.statusCode).toBe(204);
+
+    // A no longer sees it…
+    const aMsgs = await server.inject({
+      method: 'GET',
+      url: `/api/conversations/${conv.id}/messages`,
+      headers: { authorization: `Bearer ${a.accessToken}` },
+    });
+    expect(JSON.parse(aMsgs.payload).messages.map((m: { id: string }) => m.id)).not.toContain(message.id);
+    // …but B still does.
+    const bMsgs = await server.inject({
+      method: 'GET',
+      url: `/api/conversations/${conv.id}/messages`,
+      headers: { authorization: `Bearer ${b.accessToken}` },
+    });
+    expect(JSON.parse(bMsgs.payload).messages.map((m: { id: string }) => m.id)).toContain(message.id);
+
+    // Persisted (server-side hide row), not just local frontend state.
+    const hid = await prisma.messageHide.count({ where: { messageId: message.id, userId: a.id } });
+    expect(hid).toBe(1);
+  });
+
+  it('delete FOR ME persists across re-login', async () => {
+    const a = await createAndLoginUser(server, { nickname: 'dmpersist_a' });
+    const b = await createAndLoginUser(server, { nickname: 'dmpersist_b' });
+    await makeFriends(a, b);
+    const conv = await openConversation(a, b);
+    const sent = await server.inject({
+      method: 'POST',
+      url: `/api/conversations/${conv.id}/messages`,
+      headers: { authorization: `Bearer ${a.accessToken}` },
+      payload: { content: 'só eu' },
+    });
+    const message = JSON.parse(sent.payload).message;
+    await server.inject({
+      method: 'DELETE',
+      url: `/api/conversations/${conv.id}/messages/${message.id}`,
+      headers: { authorization: `Bearer ${a.accessToken}` },
+    });
+
+    // A logs out & back in (fresh token) — the message is still hidden.
+    const relogin = await server.inject({
+      method: 'POST',
+      url: '/api/auth/login',
+      payload: { nickname: 'dmpersist_a', password: 'Password123' },
+    });
+    const body = JSON.parse(relogin.payload);
+    const aMsgs = await server.inject({
+      method: 'GET',
+      url: `/api/conversations/${conv.id}/messages`,
+      headers: { authorization: `Bearer ${body.accessToken}` },
+    });
+    expect(JSON.parse(aMsgs.payload).messages.map((m: { id: string }) => m.id)).not.toContain(message.id);
+  });
+
+  it('delete FOR EVERYONE: hidden for BOTH participants and persists', async () => {
+    const a = await createAndLoginUser(server, { nickname: 'dall_a' });
+    const b = await createAndLoginUser(server, { nickname: 'dall_b' });
+    await makeFriends(a, b);
+    const conv = await openConversation(a, b);
+    const sent = await server.inject({
+      method: 'POST',
+      url: `/api/conversations/${conv.id}/messages`,
+      headers: { authorization: `Bearer ${a.accessToken}` },
+      payload: { content: 'para todos' },
+    });
+    const message = JSON.parse(sent.payload).message;
+
+    // EITHER participant can delete for everyone (B, who didn't send it).
+    const del = await server.inject({
+      method: 'DELETE',
+      url: `/api/conversations/${conv.id}/messages/${message.id}/everyone`,
+      headers: { authorization: `Bearer ${b.accessToken}` },
+    });
+    expect(del.statusCode).toBe(204);
+
+    for (const viewer of [a, b]) {
+      const msgs = await server.inject({
+        method: 'GET',
+        url: `/api/conversations/${conv.id}/messages`,
+        headers: { authorization: `Bearer ${viewer.accessToken}` },
+      });
+      expect(JSON.parse(msgs.payload).messages.map((m: { id: string }) => m.id)).not.toContain(message.id);
+    }
+    // Soft-delete kept the row (audit) but flagged it.
+    const stored = await prisma.message.findUnique({ where: { id: message.id } });
+    expect(stored).not.toBeNull();
+    expect(stored?.deletedAt).not.toBeNull();
+    expect(stored?.deletedById).toBe(b.id);
+  });
+
+  it('delete FOR EVERYONE broadcasts chat_message_deleted to the peer live socket', async () => {
+    const a = await createAndLoginUser(server, { nickname: 'dallrt_a' });
+    const b = await createAndLoginUser(server, { nickname: 'dallrt_b' });
+    await makeFriends(a, b);
+    const conv = await openConversation(a, b);
+    const sent = await server.inject({
+      method: 'POST',
+      url: `/api/conversations/${conv.id}/messages`,
+      headers: { authorization: `Bearer ${a.accessToken}` },
+      payload: { content: 'suma daqui' },
+    });
+    const message = JSON.parse(sent.payload).message;
+
+    const socket = { send: vi.fn() };
+    addSocket(b.id, socket);
+    try {
+      await server.inject({
+        method: 'DELETE',
+        url: `/api/conversations/${conv.id}/messages/${message.id}/everyone`,
+        headers: { authorization: `Bearer ${a.accessToken}` },
+      });
+      const frame = JSON.parse(socket.send.mock.calls[0][0] as string);
+      expect(frame.kind).toBe('chat_message_deleted');
+      expect(frame.data.conversationId).toBe(conv.id);
+      expect(frame.data.messageId).toBe(message.id);
+    } finally {
+      removeSocket(b.id, socket);
+    }
+  });
+
+  it('delete FOR EVERYONE: reply reference degrades to exists=false, reply stays intact', async () => {
+    const a = await createAndLoginUser(server, { nickname: 'dreply_a' });
+    const b = await createAndLoginUser(server, { nickname: 'dreply_b' });
+    await makeFriends(a, b);
+    const conv = await openConversation(a, b);
+    const orig = await server.inject({
+      method: 'POST',
+      url: `/api/conversations/${conv.id}/messages`,
+      headers: { authorization: `Bearer ${a.accessToken}` },
+      payload: { content: 'Oi' },
+    });
+    const original = JSON.parse(orig.payload).message;
+    const rep = await server.inject({
+      method: 'POST',
+      url: `/api/conversations/${conv.id}/messages`,
+      headers: { authorization: `Bearer ${b.accessToken}` },
+      payload: { content: 'Olá!', replyToMessageId: original.id },
+    });
+    const reply = JSON.parse(rep.payload).message;
+    expect(reply.replyTo.exists).toBe(true);
+
+    // Delete the ORIGINAL for everyone.
+    await server.inject({
+      method: 'DELETE',
+      url: `/api/conversations/${conv.id}/messages/${original.id}/everyone`,
+      headers: { authorization: `Bearer ${a.accessToken}` },
+    });
+
+    // The reply is still there (visible), and its preview degrades gracefully.
+    const msgs = await server.inject({
+      method: 'GET',
+      url: `/api/conversations/${conv.id}/messages`,
+      headers: { authorization: `Bearer ${b.accessToken}` },
+    });
+    const list = JSON.parse(msgs.payload).messages;
+    const replyView = list.find((m: { id: string }) => m.id === reply.id);
+    expect(replyView).toBeDefined();
+    expect(replyView.replyTo).not.toBeNull();
+    expect(replyView.replyTo.id).toBe(original.id);
+    expect(replyView.replyTo.exists).toBe(false);
+    // The deleted original is no longer returned.
+    expect(list.map((m: { id: string }) => m.id)).not.toContain(original.id);
+  });
+
+  it('hide CONVERSATION for me: gone from MY list, peer still has it; new message un-hides', async () => {
+    const a = await createAndLoginUser(server, { nickname: 'dhide_a' });
+    const b = await createAndLoginUser(server, { nickname: 'dhide_b' });
+    await makeFriends(a, b);
+    const conv = await openConversation(a, b);
+
+    // A excludes the conversation from their own list.
+    const del = await server.inject({
+      method: 'DELETE',
+      url: `/api/conversations/${conv.id}`,
+      headers: { authorization: `Bearer ${a.accessToken}` },
+    });
+    expect(del.statusCode).toBe(204);
+
+    const aList = await server.inject({
+      method: 'GET',
+      url: '/api/conversations',
+      headers: { authorization: `Bearer ${a.accessToken}` },
+    });
+    expect(JSON.parse(aList.payload).conversations).toHaveLength(0);
+
+    // B keeps the conversation.
+    const bList = await server.inject({
+      method: 'GET',
+      url: '/api/conversations',
+      headers: { authorization: `Bearer ${b.accessToken}` },
+    });
+    expect(JSON.parse(bList.payload).conversations).toHaveLength(1);
+
+    // B sends a NEW message → it reappears for A (un-hide).
+    await server.inject({
+      method: 'POST',
+      url: `/api/conversations/${conv.id}/messages`,
+      headers: { authorization: `Bearer ${b.accessToken}` },
+      payload: { content: 'volta aqui' },
+    });
+    const aList2 = await server.inject({
+      method: 'GET',
+      url: '/api/conversations',
+      headers: { authorization: `Bearer ${a.accessToken}` },
+    });
+    expect(JSON.parse(aList2.payload).conversations).toHaveLength(1);
+    expect(JSON.parse(aList2.payload).conversations[0].lastMessage.content).toBe('volta aqui');
+  });
+
+  it('delete ops are FORBIDDEN for non-members and messages of other conversations', async () => {
+    const a = await createAndLoginUser(server, { nickname: 'dforbid_a' });
+    const b = await createAndLoginUser(server, { nickname: 'dforbid_b' });
+    const c = await createAndLoginUser(server, { nickname: 'dforbid_c' });
+    await makeFriends(a, b);
+    await makeFriends(a, c);
+    const convAB = await openConversation(a, b);
+    const convAC = await openConversation(a, c);
+
+    // Non-member C cannot hide someone else's conversation.
+    const hide = await server.inject({
+      method: 'DELETE',
+      url: `/api/conversations/${convAB.id}`,
+      headers: { authorization: `Bearer ${c.accessToken}` },
+    });
+    expect(hide.statusCode).toBe(403);
+
+    // Message from another conversation can't be deleted via this one.
+    const sent = await server.inject({
+      method: 'POST',
+      url: `/api/conversations/${convAC.id}/messages`,
+      headers: { authorization: `Bearer ${c.accessToken}` },
+      payload: { content: 'outra' },
+    });
+    const target = JSON.parse(sent.payload).message;
+    const wrong = await server.inject({
+      method: 'DELETE',
+      url: `/api/conversations/${convAB.id}/messages/${target.id}/everyone`,
+      headers: { authorization: `Bearer ${a.accessToken}` },
+    });
+    expect(wrong.statusCode).toBe(404);
+
+    // Unauthenticated user cannot delete.
+    const unauth = await server.inject({
+      method: 'DELETE',
+      url: `/api/conversations/${convAB.id}/messages/${target.id}/everyone`,
+    });
+    expect(unauth.statusCode).toBe(401);
+  });
 });

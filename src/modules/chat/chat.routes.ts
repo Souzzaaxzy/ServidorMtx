@@ -2,8 +2,11 @@ import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { ApiError, toApiError } from '../../utils/errors.js';
 import {
+  deleteMessageForEveryone,
+  deleteMessageForMe,
   getMessages,
   getOrCreateConversation,
+  hideConversation,
   listConversations,
   markConversationRead,
   sendMessage,
@@ -110,6 +113,46 @@ export const chatRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     const { id } = request.params as { id: string };
     try {
       await markConversationRead(request.user!.id, id);
+      return reply.status(204).send();
+    } catch (err) {
+      throw toApiError(err);
+    }
+  });
+
+  // Excluir mensagem PARA MIM (viewer-specific soft-delete). The message
+  // disappears for the caller only — the peer keeps it. Idempotent. Server
+  // validates membership + that the message belongs to the conversation.
+  app.delete('/conversations/:id/messages/:messageId', { onRequest: [app.authenticate] }, async (request, reply) => {
+    const { id, messageId } = request.params as { id: string; messageId: string };
+    try {
+      await deleteMessageForMe(request.user!.id, id, messageId);
+      return reply.status(204).send();
+    } catch (err) {
+      throw toApiError(err);
+    }
+  });
+
+  // Excluir mensagem PARA TODOS (server-authoritative soft-delete). Marks the
+  // message deleted so BOTH participants stop seeing it, and broadcasts a
+  // realtime `chat_message_deleted` frame to the peer's live sockets.
+  // A message may be deleted for everyone by EITHER participant.
+  app.delete('/conversations/:id/messages/:messageId/everyone', { onRequest: [app.authenticate] }, async (request, reply) => {
+    const { id, messageId } = request.params as { id: string; messageId: string };
+    try {
+      await deleteMessageForEveryone(request.user!.id, id, messageId);
+      return reply.status(204).send();
+    } catch (err) {
+      throw toApiError(err);
+    }
+  });
+
+  // Excluir conversa PARA MIM — removes the conversation from the caller's
+  // list only (the peer keeps it + all messages). A new incoming message from
+  // the peer un-hides it so it reappears, per normal chat behavior. Idempotent.
+  app.delete('/conversations/:id', { onRequest: [app.authenticate] }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    try {
+      await hideConversation(request.user!.id, id);
       return reply.status(204).send();
     } catch (err) {
       throw toApiError(err);

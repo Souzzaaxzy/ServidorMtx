@@ -2,7 +2,12 @@ import { prisma } from '../../config/prisma.js';
 import { ApiError } from '../../utils/errors.js';
 import { AUTHOR_SELECT, nicknameCosmetics } from '../../utils/dto.js';
 import { areFriends } from '../friends/friend.service.js';
-import { dispatchChatMessage, dispatchChatRead, dispatchChatTyping } from '../push/push.service.js';
+import {
+  dispatchChatMessage,
+  dispatchChatMessageDeleted,
+  dispatchChatRead,
+  dispatchChatTyping,
+} from '../push/push.service.js';
 import type { Message } from '../../generated/index.js';
 
 // ── Private chat ─────────────────────────────────────────────
@@ -137,11 +142,16 @@ export async function getOrCreateConversation(
 }
 
 // ── Conversations list (Chat tab) ────────────────────────────
-// Returns every conversation the user participates in, ordered by last
+// Returns every conversation the user participates in (minus the ones the
+// user explicitly HID for themselves — "Excluir conversa"), ordered by last
 // activity, each with the OTHER user embedded (their own name color/frame).
 export async function listConversations(userId: string): Promise<ConversationItem[]> {
   const conversations = await prisma.conversation.findMany({
-    where: { OR: [{ userOneId: userId }, { userTwoId: userId }] },
+    where: {
+      OR: [{ userOneId: userId }, { userTwoId: userId }],
+      // "Excluir conversa (para mim)" hides it from THIS user's list only.
+      hiddenBy: { none: { userId } },
+    },
     orderBy: { updatedAt: 'desc' },
     include: {
       userOne: { select: CHAT_USER_SELECT },
@@ -149,6 +159,20 @@ export async function listConversations(userId: string): Promise<ConversationIte
     },
   });
   return Promise.all(conversations.map((c) => buildConversationItem(c, userId)));
+}
+
+/**
+ * Prisma "where" for the messages of [conversationId] that [viewerId] is
+ * still allowed to see:
+ *   - not soft-deleted for everyone (`deletedAt` null), AND
+ *   - not hidden for the viewer specifically ("Excluir para mim").
+ */
+function visibleMessageWhere(conversationId: string, viewerId: string) {
+  return {
+    conversationId,
+    deletedAt: null,
+    hiddenBy: { none: { userId: viewerId } },
+  } as const;
 }
 
 // ── Load a single conversation (enforce membership) ──────────
@@ -202,15 +226,19 @@ async function buildConversationItem(
     : conversation.userOne;
 
   const last = await prisma.message.findFirst({
-    where: { conversationId: conversation.id },
+    // The "last message" preview only considers VISIBLE messages for this
+    // viewer — a message they deleted for themselves or that was deleted for
+    // everyone does not drive the preview.
+    where: visibleMessageWhere(conversation.id, userId),
     orderBy: { createdAt: 'desc' },
     select: { id: true, content: true, senderId: true, createdAt: true },
   });
 
-  // Unread for THIS user = messages from the OTHER side not yet read.
+  // Unread for THIS user = messages from the OTHER side not yet read, still
+  // visible to them (deleted-for-missing / deleted-for-everyone excluded).
   const unreadCount = await prisma.message.count({
     where: {
-      conversationId: conversation.id,
+      ...visibleMessageWhere(conversation.id, userId),
       senderId: { not: userId },
       readAt: null,
     },
@@ -255,9 +283,12 @@ export async function getMessages(
   }
 
   const safeLimit = Math.min(Math.max(1, opts.limit ?? 30), 100);
+  // Only VISIBLE messages are returned: "Excluir para mim" (viewer-specific)
+  // and "Excluir para todos" messages never reach the client.
+  const baseWhere = visibleMessageWhere(conversationId, userId);
   const where = opts.before
-    ? { conversationId, id: { lt: opts.before } }
-    : { conversationId };
+    ? { ...baseWhere, id: { lt: opts.before } }
+    : baseWhere;
 
   // Fetch newest batch (reverse-chronological), then flip to chronological.
   const messages = await prisma.message.findMany({
@@ -290,7 +321,7 @@ async function toMessageItems(
   const replyIds = messages
     .map((m) => m.replyToMessageId)
     .filter((id): id is string => !!id);
-  let replyData = new Map<string, { senderId: string; nickname: string; content: string }>();
+  let replyData = new Map<string, { senderId: string; senderNickname: string; content: string; deleted: boolean }>();
   if (replyIds.length > 0) {
     const originals = await prisma.message.findMany({
       where: { id: { in: replyIds } },
@@ -299,10 +330,19 @@ async function toMessageItems(
         senderId: true,
         sender: { select: { nickname: true } },
         content: true,
+        deletedAt: true,
       },
     });
     replyData = new Map(
-      originals.map((o) => [o.id, { senderId: o.senderId, nickname: o.sender.nickname, content: o.content }]),
+      originals.map((o) => [
+        o.id,
+        {
+          senderId: o.senderId,
+          senderNickname: o.sender.nickname,
+          content: o.content,
+          deleted: o.deletedAt !== null,
+        },
+      ]),
     );
   }
 
@@ -310,16 +350,17 @@ async function toMessageItems(
     let replyTo: ReplyInfo | null = null;
     if (m.replyToMessageId) {
       const original = replyData.get(m.replyToMessageId);
-      if (original) {
+      if (original && !original.deleted) {
         replyTo = {
           id: m.replyToMessageId,
           senderId: original.senderId,
-          senderNickname: original.nickname,
+          senderNickname: original.senderNickname,
           content: original.content,
           exists: true,
         };
       } else {
-        // Original deleted → reference exists but no preview.
+        // Original deleted ("Excluir para todos" soft-delete, or a hard
+        // delete that nulled the reference) → reference exists but no preview.
         replyTo = {
           id: m.replyToMessageId,
           senderId: '',
@@ -405,6 +446,12 @@ export async function sendMessage(
       where: { id: conversationId },
       data: { updatedAt: new Date() },
     });
+    // A NEW message to this recipient un-hides the conversation for them so
+    // it reappears in their list (matches the "Excluir conversa para mim"
+    // lifecycle: hidden until the peer writes again).
+    await tx.conversationHidden.deleteMany({
+      where: { conversationId, userId: otherId },
+    });
     return created;
   });
 
@@ -481,24 +528,122 @@ export async function setTyping(
   dispatchChatTyping(otherId, { conversationId, typing });
 }
 
+// ── Delete a message FOR ME (viewer-specific) ────────────────
+// Persists a MessageHide row: the message disappears for THIS user only —
+// the peer continues to see it, and it survives app restarts (server-stored).
+// Idempotent: deleting an already-hidden message is a no-op success.
+export async function deleteMessageForMe(
+  userId: string,
+  conversationId: string,
+  messageId: string,
+): Promise<void> {
+  const conversation = await assertMembership(conversationId, userId);
+  void conversation;
+  const message = await prisma.message.findUnique({
+    where: { id: messageId },
+    select: { id: true, conversationId: true },
+  });
+  if (!message || message.conversationId !== conversationId) {
+    throw ApiError.notFound('Mensagem não encontrada.');
+  }
+  await prisma.messageHide.upsert({
+    where: { messageId_userId: { messageId, userId } },
+    update: {},
+    create: { messageId, userId },
+  });
+}
+
+// ── Delete a message for EVERYONE ────────────────────────────
+// Server-authoritative soft-delete: marks `deletedAt` so ALL participants
+// stop seeing it (all read paths filter it out), keeps the row + original
+// content for audit and so replies still resolve a "Mensagem apagada"
+// placeholder. Broadcasts a realtime `chat_message_deleted` frame to the
+// PEER so an open conversation updates live.
+export async function deleteMessageForEveryone(
+  userId: string,
+  conversationId: string,
+  messageId: string,
+): Promise<void> {
+  const conversation = await prisma.conversation.findUnique({
+    where: { id: conversationId },
+    select: { id: true, userOneId: true, userTwoId: true },
+  });
+  if (!conversation) throw ApiError.notFound('Conversa não encontrada.');
+  const isMember =
+    conversation.userOneId === userId || conversation.userTwoId === userId;
+  if (!isMember) {
+    throw ApiError.forbidden('Você não tem acesso a esta conversa.');
+  }
+  const otherId =
+    conversation.userOneId === userId ? conversation.userTwoId : conversation.userOneId;
+
+  const message = await prisma.message.findUnique({
+    where: { id: messageId },
+    select: { id: true, conversationId: true },
+  });
+  if (!message || message.conversationId !== conversationId) {
+    throw ApiError.notFound('Mensagem não encontrada.');
+  }
+
+  await prisma.message.update({
+    where: { id: messageId },
+    data: { deletedAt: new Date(), deletedById: userId },
+  });
+
+  // Realtime: tell the peer their copy is gone too (open conversation
+  // updates live, no manual refresh).
+  dispatchChatMessageDeleted(otherId, { conversationId, messageId });
+}
+
+// ── Delete/Hide a conversation FOR ME ────────────────────────
+// "Excluir conversa" only ever removes the conversation from the CALLER's
+// own list. The conversation row + all messages stay intact for the peer.
+// Idempotent. A new incoming message un-hides it (see sendMessage).
+export async function hideConversation(
+  userId: string,
+  conversationId: string,
+): Promise<void> {
+  const conversation = await assertMembership(conversationId, userId);
+  void conversation;
+  await prisma.conversationHidden.upsert({
+    where: { conversationId_userId: { conversationId, userId } },
+    update: {},
+    create: { conversationId, userId },
+  });
+}
+
+/** Membership check shared by deletion ops — returns the conversation row. */
+async function assertMembership(conversationId: string, userId: string) {
+  const conversation = await prisma.conversation.findUnique({
+    where: { id: conversationId },
+    select: { id: true, userOneId: true, userTwoId: true },
+  });
+  if (!conversation) throw ApiError.notFound('Conversa não encontrada.');
+  const isMember =
+    conversation.userOneId === userId || conversation.userTwoId === userId;
+  if (!isMember) {
+    throw ApiError.forbidden('Você não tem acesso a esta conversa.');
+  }
+  return conversation;
+}
+
 // ── Unread conversations badge (Chat tab) ────────────────────
 export async function unreadConversationCount(userId: string): Promise<number> {
-  // Any conversation in which the other side sent a message I haven't read.
+  // Any conversation in which the other side sent a message I haven't read —
+  // ignoring messages deleted for everyone and ones I hid for myself. Also
+  // count only conversations I have NOT hidden ("Excluir conversa para mim").
+  const visibleUnread = {
+    senderId: { not: userId },
+    readAt: null,
+    deletedAt: null,
+    hiddenBy: { none: { userId } },
+  };
   const conversations = await prisma.conversation.findMany({
     where: {
+      hiddenBy: { none: { userId } },
       OR: [
-        {
-          userOneId: userId,
-          messages: {
-            some: { senderId: { not: userId }, readAt: null },
-          },
-        },
-        {
-          userTwoId: userId,
-          messages: {
-            some: { senderId: { not: userId }, readAt: null },
-          },
-        },
+        { userOneId: userId, messages: { some: visibleUnread } },
+        { userTwoId: userId, messages: { some: visibleUnread } },
       ],
     },
     select: { id: true },

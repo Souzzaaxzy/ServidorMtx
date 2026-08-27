@@ -4,7 +4,7 @@ import { AUTHOR_SELECT, toPostComment, type PostComment } from '../../utils/dto.
 import type { CreateCommentInput, ListCommentsQuery } from './comment.schema.js';
 import { grantXp, XP_REWARDS, XpReason } from '../../gamification/xp.service.js';
 import { NotificationType } from '../../types/enums.js';
-import { dispatchNotification } from '../push/push.service.js';
+import { dispatchCommentDeleted, dispatchNotification } from '../push/push.service.js';
 
 const COMMENT_INCLUDE = {
   user: { select: AUTHOR_SELECT },
@@ -19,7 +19,13 @@ const COMMENT_INCLUDE = {
 function commentIncludeWithLikes(viewerId?: string) {
   const include = {
     user: { select: AUTHOR_SELECT },
-    _count: { select: { commentLikes: true, replies: true } },
+    _count: {
+      select: {
+        commentLikes: true,
+        // Deleted replies no longer count towards the visible reply tree.
+        replies: { where: { deletedAt: null } },
+      },
+    },
   } as Record<string, unknown>;
   if (viewerId) {
     include.commentLikes = { where: { userId: viewerId }, select: { userId: true } };
@@ -39,6 +45,7 @@ async function findCommentOrThrow(commentId: string) {
       postId: true,
       userId: true,
       parentCommentId: true,
+      deletedAt: true,
       post: { select: { userId: true } },
     },
   });
@@ -147,9 +154,11 @@ export async function listComments(
   if (!post) throw ApiError.notFound('Publicação não encontrada.');
 
   const { limit, cursor } = query;
+  // Only NON-deleted comments are listed (soft-delete hides them everywhere).
+  const deletedFilter = { deletedAt: null };
   const where = cursor
-    ? { postId, parentCommentId: null, createdAt: { lt: new Date(cursor) } }
-    : { postId, parentCommentId: null };
+    ? { postId, parentCommentId: null, ...deletedFilter, createdAt: { lt: new Date(cursor) } }
+    : { postId, parentCommentId: null, ...deletedFilter };
   const comments = await prisma.comment.findMany({
     where,
     orderBy: { createdAt: 'desc' },
@@ -177,9 +186,10 @@ export async function listCommentReplies(
 ): Promise<ReplyPage> {
   await findCommentOrThrow(parentCommentId);
   const { limit, cursor } = query;
+  // Only NON-deleted replies are returned.
   const where = cursor
-    ? { parentCommentId, createdAt: { gt: new Date(cursor) } }
-    : { parentCommentId };
+    ? { parentCommentId, deletedAt: null, createdAt: { gt: new Date(cursor) } }
+    : { parentCommentId, deletedAt: null };
   const replies = await prisma.comment.findMany({
     where,
     orderBy: { createdAt: 'asc' },
@@ -245,11 +255,40 @@ export async function toggleCommentLike(
   return { liked: !existing, likeCount };
 }
 
+/**
+ * Deletes a comment. Allowed when the caller is EITHER the comment's author
+ * OR the author of the post the comment belongs to. The server validates
+ * both identities (never a client-supplied flag).
+ *
+ * Deletion is a SOFT delete (`deletedAt`) so:
+ *   - the row + contents are kept for audit/references;
+ *   - all read paths (`listComments`, `listCommentReplies`) hide it.
+ * Deleting a top-level comment also soft-deletes its replies (children live
+ * under the same post). A realtime `comment_deleted` frame is broadcast to
+ * the OTHER identity (post author ↔ commenter) so an open comments sheet /
+ * post removes it live.
+ */
 export async function deleteComment(userId: string, commentId: string): Promise<void> {
   const comment = await findCommentOrThrow(commentId);
-  if (comment.userId !== userId) {
-    throw ApiError.forbidden('Você não pode excluir o comentário de outro usuário.');
+  const allowed = comment.userId === userId || comment.post.userId === userId;
+  if (!allowed) {
+    throw ApiError.forbidden('Você não pode excluir este comentário.');
   }
-  // Deleting a top-level comment cascades its replies and likes (schema).
-  await prisma.comment.delete({ where: { id: commentId } });
+  const now = new Date();
+  // Soft-delete this comment and, when it is a TOP-LEVEL comment, its replies.
+  await prisma.comment.updateMany({
+    where: { id: commentId },
+    data: { deletedAt: now },
+  });
+  if (comment.parentCommentId === null) {
+    await prisma.comment.updateMany({
+      where: { parentCommentId: commentId },
+      data: { deletedAt: now },
+    });
+  }
+  // Realtime: the OTHER party (commenter ↔ post author) removes it live.
+  const notifyId = comment.userId === userId ? comment.post.userId : comment.userId;
+  if (notifyId && notifyId !== userId) {
+    dispatchCommentDeleted(notifyId, { postId: comment.postId, commentId });
+  }
 }

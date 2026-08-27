@@ -26,6 +26,9 @@ data/.jwt_secret
 # Prisma generated client
 src/generated/
 
+# SQLite DB files under prisma (dev/test local storage)
+prisma/data/
+
 # Pid/logs
 *.pid
 *.log
