@@ -159,6 +159,26 @@ export function dispatchChatTyping(
   }
 }
 
+/** `chat_recording` frame dispatched to the peer while the session user is
+ * recording a voice message in a conversation. Ephemeral, like typing —
+ * nothing persists. The peer's open conversation shows/hides the
+ * "gravando áudio" indicator below the sender's nickname in realtime. */
+export function dispatchChatRecording(
+  peerUserId: string,
+  payload: { conversationId: string; recording: boolean },
+): void {
+  const live = sockets.get(peerUserId);
+  if (!live) return;
+  const frame = JSON.stringify({ kind: 'chat_recording', data: payload });
+  for (const socket of live) {
+    try {
+      socket.send(frame);
+    } catch (err) {
+      logger.warn({ err }, 'chat recording send failed');
+    }
+  }
+}
+
 /** `chat_read` frame dispatched to the peer after the session user marks a
  * conversation read: the peer's own last sent message in that conversation
  * can flip its "enviado" hint to "visto agora" in realtime. */

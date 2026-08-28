@@ -13,6 +13,7 @@ import {
   sendVoiceMessage,
   unreadConversationCount,
   setTyping,
+  setRecording,
   CONVERSATION_MESSAGE_LIMIT,
 } from './chat.service.js';
 
@@ -24,6 +25,17 @@ const sendMessageSchema = z.object({
 const typingBodySchema = z.object({
   typing: z.boolean(),
 });
+
+const recordingBodySchema = z
+  .object({
+    recording: z.boolean().optional(),
+    // Backward compat: earlier app builds posted the typing key for this
+    // endpoint — accept it as a fallback so no stale client starts echoing.
+    typing: z.boolean().optional(),
+  })
+  .refine((d) => d.recording !== undefined || d.typing !== undefined, {
+    message: 'Informe recording ou typing.',
+  });
 
 const messageQuerySchema = z.object({
   before: z.string().optional(),
@@ -118,7 +130,24 @@ export const chatRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     }
   });
 
-  // Realtime typing indicator. The server only relays an ephemeral frame to
+    // Realtime voice-recording indicator ("gravando áudio"). Same ephemeral
+  // shape as the typing signal — the peer's open conversation shows/hides the
+  // hint in realtime (the sender also clears it on release/cancel/error).
+  app.post('/conversations/:id/recording', { onRequest: [app.authenticate] }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const parsed = recordingBodySchema.safeParse(request.body);
+    if (!parsed.success) {
+      throw ApiError.validation('Dados inválidos.', parsed.error.issues);
+    }
+    try {
+      await setRecording(request.user!.id, id, parsed.data.recording ?? parsed.data.typing!);
+      return reply.status(204).send();
+    } catch (err) {
+      throw toApiError(err);
+    }
+  });
+
+// Realtime typing indicator. The server only relays an ephemeral frame to
   // the peer's live sockets — nothing is persisted, so there is no "typing
   // stuck" state to clean up server-side; the peer also auto-clears it on a
   // time-out or when it stops watching the conversation.

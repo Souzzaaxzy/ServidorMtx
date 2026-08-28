@@ -7,6 +7,7 @@ import {
   dispatchChatMessage,
   dispatchChatMessageDeleted,
   dispatchChatRead,
+  dispatchChatRecording,
   dispatchChatTyping,
 } from '../push/push.service.js';
 import type { Message } from '../../generated/index.js';
@@ -699,6 +700,35 @@ export async function setTyping(
     conversation.userOneId === userId ? conversation.userTwoId : conversation.userOneId;
   dispatchChatTyping(otherId, { conversationId, typing });
 }
+
+// ── Voice "gravando áudio" indicator ──────────────────────────
+// Ephemeral realtime signal (same shape as typing). The session user POSTs
+// it when a voice capture STARTS / ENDS (or is cancelled/failed/interrupted)
+//so the peer's open conversation can show/hide the "gravando áudio" hint
+// immediately, without polling or a second transport. Membership is
+// enforced; nothing is persisted — the peer auto-clears it (plus the local
+// sender clears it on its own release/cancel/error) so it can never get stuck.
+
+export async function setRecording(
+  userId: string,
+  conversationId: string,
+  recording: boolean,
+): Promise<void> {
+  const conversation = await prisma.conversation.findUnique({
+    where: { id: conversationId },
+    select: { id: true, userOneId: true, userTwoId: true },
+  });
+  if (!conversation) throw ApiError.notFound('Conversa não encontrada.');
+  const isMember =
+    conversation.userOneId === userId || conversation.userTwoId === userId;
+  if (!isMember) throw ApiError.forbidden('Você não tem acesso a esta conversa.');
+
+  const otherId =
+    conversation.userOneId === userId ? conversation.userTwoId : conversation.userOneId;
+
+  dispatchChatRecording(otherId, { conversationId, recording });
+}
+
 
 // ── Delete a message FOR ME (viewer-specific) ────────────────
 // Persists a MessageHide row: the message disappears for THIS user only —
