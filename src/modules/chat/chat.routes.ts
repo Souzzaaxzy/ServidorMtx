@@ -108,7 +108,9 @@ export const chatRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
   // in the way of reading it. The server persists the file (validating the
   // real bytes + size) and creates a "voice" message that references it.
   // SenderId comes from the token, membership + friends-only are enforced.
-  // The peer receives a normal `chat_message` realtime frame.
+  // Duration gate is 1–60s, matching the app's clamp (short hold-to-talk
+  // notes must not be silently rejected). The peer receives a normal
+  // `chat_message` realtime frame.
   app.post('/conversations/:id/voice', { onRequest: [app.authenticate] }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const durationRaw = (request.query as { durationMs?: string }).durationMs;
@@ -124,6 +126,18 @@ export const chatRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         file: part.file,
         durationMs: Number.isFinite(durationMs) ? durationMs : NaN,
       });
+      // Production-safe telemetry: captures the persisted result so the
+      // upload→storage→message chain is auditable (no payload, no tokens).
+      request.log.info(
+        {
+          conversationId: id,
+          durationMs,
+          messageId: message.id,
+          audioUrl: message.audioUrl,
+          bytes: message.content.length,
+        },
+        'voice message stored',
+      );
       return reply.status(201).send({ message });
     } catch (err) {
       throw toApiError(err);

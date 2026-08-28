@@ -553,17 +553,19 @@ export async function sendMessage(
 // Uploads the audio file first, then persists a "voice" message that
 // references it. Authorization mirrors sendMessage: membership enforced,
 // friends-only, the file is size+type validated server-side and the
-// duration must be within 3–60s. The receiver gets a normal `chat_message`
-// frame so it renders the inline player in realtime. Returns the persisted
-// MessageItem (type === 'voice') or throws an ApiError.
+// duration must be within 1–60s (the app clamps hold-to-talk captures
+// to a 1s floor, so a shorter gate would silently reject quick notes).
+// The receiver gets a normal `chat_message` frame so it renders the inline
+// player in realtime. Returns the persisted MessageItem (type==='voice')
+// or throws an ApiError.
 export async function sendVoiceMessage(
   userId: string,
   conversationId: string,
   audio: { file: Readable; durationMs: number },
 ): Promise<MessageItem> {
   const duration = Math.round(audio.durationMs);
-  if (!Number.isFinite(duration) || duration < 3000 || duration > 60_000) {
-    throw ApiError.invalidRequest('A duração do áudio deve ser entre 3 e 60 segundos.');
+  if (!Number.isFinite(duration) || duration < 1000 || duration > 60_000) {
+    throw ApiError.invalidRequest('A duração do áudio deve ser entre 1 e 60 segundos.');
   }
 
   const conversation = await prisma.conversation.findUnique({

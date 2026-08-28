@@ -3,6 +3,8 @@ import { buildTestServer, closeTestServer, createAndLoginUser } from './helpers.
 import { prisma } from '../src/config/prisma.js';
 import type { FastifyInstance } from 'fastify';
 import { Readable } from 'node:stream';
+import { readFile } from 'node:fs/promises';
+import path from 'node:path';
 import { addSocket, removeSocket } from '../src/modules/push/push.service.js';
 import {
   sendVoiceMessage,
@@ -34,6 +36,22 @@ function m4aFixture(): Buffer {
 }
 
 const streamOf = (buf: Buffer): Readable => Readable.from([buf]);
+
+/** Builds a raw multipart/form-data body with a single `file` field — the
+ * exact shape dio sends when a Flutter app uploads voice audio.
+ */
+function multipartBody(fileBytes: Buffer, filename: string): Buffer {
+  const boundary = '----matrix-test-boundary-7c2e';
+  const preamble = Buffer.from(
+    `--${boundary}\r\n` +
+      'Content-Disposition: form-data; name="file"; ' +
+      `filename="${filename}"\r\n` +
+      'Content-Type: audio/mp4\r\n\r\n',
+    'utf8',
+  );
+  const epilogue = Buffer.from(`\r\n--${boundary}--\r\n`, 'utf8');
+  return Buffer.concat([preamble, fileBytes, epilogue]);
+}
 
 async function makeFriends(a: { id: string }, b: { id: string }) {
   await prisma.friendship.create({
@@ -140,6 +158,71 @@ describe('Chat — voice messages', () => {
       }),
     ).rejects.toMatchObject({ statusCode: 400 });
     expect(await prisma.message.count({ where: { conversationId: conv.id } })).toBe(0);
+  });
+
+  it('end-to-end: multipart HTTP upload - magic-bytes validation - disk '
+    + 'storage - static GET - message row - realtime', async () => {
+    const a = await createAndLoginUser(server, { nickname: 'vox_e2e' });
+    const b = await createAndLoginUser(server, { nickname: 'vox_e2eb' });
+    await makeFriends(a, b);
+    const conv = await openConversation(a, b);
+
+    const audio = m4aFixture();
+    const boundary = '----matrix-test-boundary-7c2e';
+    const socket = { send: vi.fn() };
+    addSocket(b.id, socket);
+    try {
+      // The exact request shape the Flutter app sends: multipart `file`
+      // field + durationMs query (dio sets the content-type itself).
+      const res = await server.inject({
+        method: 'POST',
+        url: `/api/conversations/${conv.id}/voice?durationMs=2500`,
+        headers: {
+          authorization: `Bearer ${a.accessToken}`,
+          'content-type': `multipart/form-data; boundary=${boundary}`,
+        },
+        payload: multipartBody(audio, 'voice.m4a'),
+      });
+      expect(res.statusCode).toBe(201);
+      const msg = JSON.parse(res.payload as string).message as {
+        type: string;
+        durationMs: number;
+        audioUrl: string;
+        id: string;
+      };
+      expect(msg.type).toBe('voice');
+      expect(msg.durationMs).toBe(2500);
+      expect(msg.audioUrl).toMatch(/^https?:\/\/.+\/static\/audio\/.+\.m4a$/);
+
+      // The audio really landed on disk under uploads/audio/.
+      const filePath = path.join(
+        process.cwd(), 'uploads', 'audio', path.basename(msg.audioUrl),
+      );
+      const onDisk = await readFile(filePath);
+      expect(onDisk.length).toBeGreaterThanOrEqual(audio.length);
+      expect(onDisk.subarray(0, audio.length).equals(audio)).toBe(true);
+
+      // The static route serves the exact bytes back (public playback URL).
+      const served = await server.inject({ method: 'GET', url: msg.audioUrl });
+      expect(served.statusCode).toBe(200);
+      expect(Buffer.compare(served.rawPayload, onDisk)).toBe(0);
+
+      // The message row exists and carries the audio reference.
+      const stored = await prisma.message.findUnique({ where: { id: msg.id } });
+      expect(stored?.type).toBe('voice');
+      expect(stored?.audioUrl).toBe(msg.audioUrl);
+      expect(stored?.durationMs).toBe(2500);
+
+      // The peer received the realtime frame with the voice payload.
+
+      expect(socket.send).toHaveBeenCalledOnce();
+      const frame = JSON.parse(socket.send.mock.calls[0][0] as string);
+      expect(frame.kind).toBe('chat_message');
+      expect(frame.data.message.type).toBe('voice');
+      expect(frame.data.message.mine).toBe(false);
+    } finally {
+      removeSocket(b.id, socket);
+    }
   });
 
   it('blocks a non-member (and requires friendship)', async () => {
