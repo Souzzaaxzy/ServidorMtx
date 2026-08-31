@@ -5,4 +5,9 @@ export const searchQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(30).default(10),
 });
 
+export const searchRecentsQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(20).default(10),
+});
+
 export type SearchQuery = z.infer<typeof searchQuerySchema>;
+export type SearchRecentsQuery = z.infer<typeof searchRecentsQuerySchema>;

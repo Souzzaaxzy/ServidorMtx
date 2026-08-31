@@ -82,8 +82,38 @@ model User {
   gameSessions      GameSession[]
   musicVotes        MusicVote[]
 
+  recentSearchesOwned  RecentSearch[] @relation("recentSearchOwned")
+  recentSearchesTarget RecentSearch[] @relation("recentSearchTarget")
+
   @@index([nickname])
   @@map("users")
+}
+
+// ── Search recents (visited profiles) ─────────────────────
+// "Pesquisas recentes" — one row per (owner, target) pair, newest
+// visit wins. Owned by the VISITOR (viewer); the server resolves the target's
+// display identity at record time so the preview matches the user's current
+// nickname/cosmetics even if the profile later changes its name.
+
+model RecentSearch {
+  id            String    @id @default(cuid())
+  // The AUTHENTICATED user who visited the profile (never client-supplied).
+  ownerId      String
+  // The profile that was visited (a real user; deleted users cascade out).
+  // Display identity (nickname/avatar/cosmetics)is resolved via the
+  // target relation at read time — always the target's CURRENT identity.
+
+  targetUserId String
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  owner      User @relation("recentSearchOwned", fields: [ownerId], references: [id], onDelete: Cascade)
+  target     User @relation("recentSearchTarget", fields: [targetUserId], references: [id], onDelete: Cascade)
+
+  @@unique([ownerId, targetUserId])
+  @@index([ownerId, createdAt])
+  @@map("recent_searches")
 }
 
 model Post {
