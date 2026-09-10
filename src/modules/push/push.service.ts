@@ -134,10 +134,34 @@ export function dispatchCommentDeleted(
   }
 }
 
+/**
+ * `chat_group_updated` frame dispatched to the OTHER members of a group when
+ * the owner changes its identity (name/avatar/description) or membership.
+ * The payload embeds the full `GroupHeader` so receivers can refresh the
+ * conversation AppBar / profile menu / cached list live, no reload needed.
+ */
+export function dispatchChatGroupUpdated(
+  userIds: string[],
+  payload: { groupId: string; group: Record<string, unknown> },
+): void {
+  for (const userId of userIds) {
+    const live = sockets.get(userId);
+    if (!live) continue;
+    const frame = JSON.stringify({ kind: 'chat_group_updated', data: payload });
+    for (const socket of live) {
+      try {
+        socket.send(frame);
+      } catch (err) {
+        logger.warn({ err }, 'chat group updated send failed');
+      }
+    }
+  }
+}
+
 // ── Chat typing / read (realtime frames) ─────────────────────
 // The typing + read events ride the SAME in-memory socket hub as chat
 // messages and notifications — no second transport, no polling. Frames are
-// small and fire-and-forget; the recipient's live sockets clear the
+// small and fire-and-forget;the recipient's live sockets clear the
 // indicator automatically or re-fetch unread state.
 
 /** `typing` frame dispatched to the peer (the OTHER side of a conversation)

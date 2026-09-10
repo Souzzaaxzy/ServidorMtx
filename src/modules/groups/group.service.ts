@@ -178,6 +178,22 @@ async function assertGroupMembership(groupId: string, userId: string) {
   return member;
 }
 
+/** Server-authoritative owner check — the only user allowed to run admin
+ * operations (edit identity, add members, delete any member's message).
+ * The check is ALWAYS a DB lookup against the persisted `createdById`,
+ * NEVER a client-sent flag, so a forged "isOwner" payload gets denied. */
+async function assertGroupOwner(groupId: string, userId: string): Promise<void> {
+  const group = await prisma.group.findUnique({
+    where: { id: groupId },
+    select: { createdById: true },
+  });
+  if (!group) throw ApiError.notFound('Grupo não encontrado.');
+  await assertGroupMembership(groupId,userId);
+  if (group.createdById !== userId) {
+    throw ApiError.forbidden('Somente o dono do grupo pode executar esta ação.');
+  }
+}
+
 async function loadGroupConversationItem(
   groupId: string,
   userId: string,
@@ -296,6 +312,42 @@ export async function createGroup(
   });
  
   return loadGroupConversationItem(group.id, userId);
+}
+
+/** Group detail for the profile menu: identity block + participant list with
+ * a server-computed `isOwner` flag per member (never trusted from the
+ * client). The caller must be a member; the response always reflets the
+ * persisted rows — no client-supplied identity. */
+export async function getGroupInfo(
+  userId: string,
+  groupId: string,
+): Promise<{ group: GroupHeader; members: { id: string; nickname: string; avatarUrl: string | null; isOwner: boolean }[] }> {
+
+  await assertGroupMembership(groupId, userId);
+
+  const group = await prisma.group.findUnique({
+    where: { id: groupId },
+    include: { members: { select: { role: true, user: { select: { id: true, nickname: true, avatarUrl: true } } } } },
+  });
+  if (!group) throw ApiError.notFound('Grupo não encontrado.');
+
+  const memberIds = group.members.map((m) => m.user.id);
+  return {
+    group: {
+      id: group.id,
+      name: group.name,
+      avatarUrl: group.avatarUrl,
+      description: group.description,
+      createdById: group.createdById,
+      memberCount: memberIds.length,
+    },
+    members: group.members.map((m) => ({
+      id: m.user.id,
+      nickname: m.user.nickname,
+      avatarUrl: m.user.avatarUrl,
+      isOwner: m.user.id === group.createdById,
+    })),
+  };
 }
 
 export async function listGroups(userId: string): Promise<GroupConversationItem[]> {
@@ -736,18 +788,25 @@ export async function deleteGroupMessageForEveryone(
 
   const message = await prisma.message.findUnique({
     where: { id: messageId },
-    select: { id: true, groupId: true },
+    select: { id: true, groupId: true, senderId: true },
   });
   if (!message || message.groupId !== groupId) {
     throw ApiError.notFound('Mensagem não encontrada.');
   }
- 
+
+  // Owner permission: a member may delete their OWN message for everyone;
+  // deleting ANOTHER member's message requires the OWNER (server-validated,so
+  // a forged client flag can never delete someone else's bubble)..
+  if (message.senderId !== userId) {
+    await assertGroupOwner(groupId,userId);
+  }
+
   await prisma.message.update({
     where: { id: messageId },
     data: { deletedAt: new Date(), deletedById: userId },
   });
 
-  // Realtime: let every other member drop their bubble live (same frame as DM).
+  // Realtime: let every other member drop their bubble live ((same frame as DM).
   const peers = await otherMemberIds(groupId, userId);
   for (const peerId of peers) {
     dispatchChatMessageDeleted(peerId, { groupId, messageId });

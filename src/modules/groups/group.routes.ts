@@ -5,6 +5,7 @@ import {
   createGroup,
   deleteGroupMessageForEveryone,
   deleteGroupMessageForMe,
+  getGroupInfo,
   getGroupMessages,
   groupUnreadCount,
   hideGroup,
@@ -52,6 +53,18 @@ export const groupRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
   app.get('/groups', { onRequest: [app.authenticate] }, async (request, reply) => {
     const groups = await listGroups(request.user!.id);
     return reply.send({ groups });
+  });
+
+  // Group profile info — identity block + member list with server-computed
+  // `isOwner` flags (the only place the app learns who owns a group).
+  app.get('/groups/:id', { onRequest: [app.authenticate] }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    try {
+      const info = await getGroupInfo(request.user!.id, id);
+      return reply.send(info);
+    } catch (err) {
+      throw toApiError(err);
+    }
   });
 
   // Unread groups badge for the Chat tab.
