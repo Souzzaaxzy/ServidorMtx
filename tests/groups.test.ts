@@ -102,6 +102,7 @@ describe('Groups', () => {
     // Peer replies while the owner has a live socket; a `chat_message`
     // frame with the group id and the OTHER user's sender row is delivered.,
 
+    let msg2: { id: string };
     const ownerSocket = { send: vi.fn() };
     addSocket(owner.id, ownerSocket);
     try {
@@ -112,6 +113,7 @@ describe('Groups', () => {
         payload: { content: 'E ai?' },
       });
       expect(msg2Res.statusCode).toBe(201);
+      msg2 = JSON.parse(msg2Res.payload).message;
       expect(ownerSocket.send).toHaveBeenCalledTimes(1);
       const frame = JSON.parse(ownerSocket.send.mock.calls[0][0] as string);
       expect(frame.kind).toBe('chat_message');
@@ -149,22 +151,21 @@ describe('Groups', () => {
       removeSocket(peer.id, peerSocket);
     }
 
-    // Delete the peer's reply for EVERYONE; owner socket gets deleted frame.
-
-
+    // Owner deletes the peer's reply for EVERYONE; owner's other devices
+    // (registered socket) drop the bubble live too ((same frame as DM)..
 
     const ownerSocket2 = { send: vi.fn() };
     addSocket(owner.id, ownerSocket2);
     try {
       await server.inject({
         method: 'DELETE',
-        url: `/api/groups/${group.id}/messages/${msg.id}/everyone`,
-        headers: { authorization: `Bearer ${peer.accessToken}` },
+        url: `/api/groups/${group.id}/messages/${msg2.id}/everyone`,
+        headers: { authorization: `Bearer ${owner.accessToken}` },
       });
       expect(ownerSocket2.send).toHaveBeenCalledTimes(1);
       const frame = JSON.parse(ownerSocket2.send.mock.calls[0][0] as string);
       expect(frame.kind).toBe('chat_message_deleted');
-      expect(frame.data.messageId).toBe(msg.id);
+      expect(frame.data.messageId).toBe(msg2.id);
     } finally {
       removeSocket(owner.id, ownerSocket2);
     }

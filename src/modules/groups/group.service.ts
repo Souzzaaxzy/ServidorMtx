@@ -986,10 +986,14 @@ export async function deleteGroupMessageForEveryone(
     data: { deletedAt: new Date(), deletedById: userId },
   });
 
-  // Realtime: let every other member drop their bubble live ((same frame as DM).
-  const peers = await otherMemberIds(groupId, userId);
-  for (const peerId of peers) {
-    dispatchChatMessageDeleted(peerId, { groupId, messageId });
+  // Realtime: let EVERY member (including the deleter's other devices) drop
+  // their bubble live ((same frame shape as DM).
+  const members = await prisma.groupMember.findMany({
+    where: { groupId },
+    select: { userId: true },
+  });
+  for (const row of members) {
+    dispatchChatMessageDeleted(row.userId, { groupId, messageId });
   }
 }
 
