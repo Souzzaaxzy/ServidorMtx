@@ -144,9 +144,24 @@ describe('Groups', () => {
         payload: { recording: true },
       });
       expect(peerSocket.send).toHaveBeenCalledTimes(2);
-      const kinds = (peerSocket.send.mock.calls as Array<[string]>).map((c) => JSON.parse(c[0]) as { kind: string });
-      expect(kinds.some((k) => k.kind === 'chat_typing')).toBe(true);
-      expect(kinds.some((k) => k.kind === 'chat_recording')).toBe(true);
+      const kinds = (peerSocket.send.mock.calls as Array<[string]>).map(
+        (c) => JSON.parse(c[0]) as {
+          kind: string;
+          data: { groupId: string; userId?: string; nickname?: string | null; typing?: boolean; recording?: boolean };
+        },
+      );
+      const typingFrame = kinds.find((k) => k.kind === 'chat_typing')!;
+      const recordingFrame = kinds.find((k) => k.kind === 'chat_recording')!;
+      expect(typingFrame.kind).toBe('chat_typing');
+      expect(typingFrame.data.groupId).toBe(group.id);
+      expect(typingFrame.data.userId).toBe(owner.id);
+      expect(typingFrame.data.nickname).toBe('group_owner');
+      expect(typingFrame.data.typing).toBe(true);
+      expect(recordingFrame.kind).toBe('chat_recording');
+      expect(recordingFrame.data.groupId).toBe(group.id);
+      expect(recordingFrame.data.userId).toBe(owner.id);
+      expect(recordingFrame.data.nickname).toBe('group_owner');
+      expect(recordingFrame.data.recording).toBe(true);
     } finally {
       removeSocket(peer.id, peerSocket);
     }

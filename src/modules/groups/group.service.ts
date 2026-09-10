@@ -905,17 +905,27 @@ export async function markGroupRead(
 }
 
 // ── Typing / recording indicators ──────────────────────────────
+async function memberNickname(userId: string): Promise<string | null> {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { nickname: true },
+  });
+  return user?.nickname ?? null;
+}
+
 export async function setGroupTyping(
   userId: string,
   groupId: string,
   typing: boolean,
 ): Promise<void> {
 
- 
   await assertGroupMembership(groupId, userId);
-  const peers = await otherMemberIds(groupId, userId);
+  const [nickname, peers] = await Promise.all([
+    memberNickname(userId),
+    otherMemberIds(groupId, userId),
+  ]);
   for (const peerId of peers) {
-    dispatchChatTyping(peerId, { groupId, typing });
+    dispatchChatTyping(peerId, { groupId, typing, userId, nickname });
   }
 }
 
@@ -924,14 +934,18 @@ export async function setGroupRecording(
   groupId: string,
   recording: boolean,
 ): Promise<void> {
- 
- 
+
   await assertGroupMembership(groupId, userId);
-  const peers = await otherMemberIds(groupId, userId);
+  const [nickname, peers] = await Promise.all([
+    memberNickname(userId),
+    otherMemberIds(groupId, userId),
+  ]);
   for (const peerId of peers) {
-    dispatchChatRecording(peerId, { groupId, recording });
+    dispatchChatRecording(peerId, { groupId, recording, userId, nickname });
   }
 }
+
+
 
 // ── Delete a group message ───────────────────────────────────
 export async function deleteGroupMessageForMe(

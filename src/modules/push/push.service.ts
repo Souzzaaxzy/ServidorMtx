@@ -169,7 +169,13 @@ export function dispatchChatGroupUpdated(
  * at least one live socket, so idle DM screens never waste a frame. */
 export function dispatchChatTyping(
   peerUserId: string,
-  payload: { conversationId?: string; groupId?: string; typing: boolean },
+  payload: {
+    conversationId?: string;
+    groupId?: string;
+    userId?: string;
+    nickname?: string | null;
+    typing: boolean;
+  },
 ): void {
   const live = sockets.get(peerUserId);
   if (!live) return;
@@ -189,7 +195,13 @@ export function dispatchChatTyping(
  * "gravando áudio" indicator below the sender's nickname in realtime. */
 export function dispatchChatRecording(
   peerUserId: string,
-  payload: { conversationId?: string; groupId?: string; recording: boolean },
+  payload: {
+    conversationId?: string;
+    groupId?: string;
+    userId?: string;
+    nickname?: string | null;
+    recording: boolean;
+  },
 ): void {
   const live = sockets.get(peerUserId);
   if (!live) return;
