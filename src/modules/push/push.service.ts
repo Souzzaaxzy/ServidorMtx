@@ -99,7 +99,7 @@ export function dispatchChatMessage(userId: string, payload: Record<string, unkn
 // refresh); the peer's Chat tab also refreshes its preview/unread badge.
 export function dispatchChatMessageDeleted(
   peerUserId: string,
-  payload: { conversationId: string; messageId: string },
+  payload: { conversationId?: string; groupId?: string; messageId: string },
 ): void {
   const live = sockets.get(peerUserId);
   if (!live) return;
@@ -145,7 +145,7 @@ export function dispatchCommentDeleted(
  * at least one live socket, so idle DM screens never waste a frame. */
 export function dispatchChatTyping(
   peerUserId: string,
-  payload: { conversationId: string; typing: boolean },
+  payload: { conversationId?: string; groupId?: string; typing: boolean },
 ): void {
   const live = sockets.get(peerUserId);
   if (!live) return;
@@ -165,7 +165,7 @@ export function dispatchChatTyping(
  * "gravando áudio" indicator below the sender's nickname in realtime. */
 export function dispatchChatRecording(
   peerUserId: string,
-  payload: { conversationId: string; recording: boolean },
+  payload: { conversationId?: string; groupId?: string; recording: boolean },
 ): void {
   const live = sockets.get(peerUserId);
   if (!live) return;
@@ -184,7 +184,7 @@ export function dispatchChatRecording(
  * can flip its "enviado" hint to "visto agora" in realtime. */
 export function dispatchChatRead(
   peerUserId: string,
-  payload: { conversationId: string },
+  payload: { conversationId?: string; groupId?: string },
 ): void {
   const live = sockets.get(peerUserId);
   if (!live) return;

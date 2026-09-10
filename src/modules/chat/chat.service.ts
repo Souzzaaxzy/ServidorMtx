@@ -218,6 +218,7 @@ export async function listConversations(userId: string): Promise<ConversationIte
   const lastByConversation = new Map<string, (typeof newest)[number]>();
   for (const m of newest) {
     if (hiddenIds.has(m.id)) continue;
+    if (m.conversationId == null) continue; // DM-only snapshot: group messages carry null here
     if (!lastByConversation.has(m.conversationId)) {
       lastByConversation.set(m.conversationId, m);
     }

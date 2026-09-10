@@ -67,6 +67,9 @@ model User {
   deletedMessages       Message[]      @relation("messageDeleter")
   hiddenMessages        MessageHide[]
   hiddenConversations   ConversationHidden[]
+  createdGroups         Group[]        @relation("groupCreator")
+  groupMemberships      GroupMember[]
+  hiddenGroups          GroupHidden[]
   notificationsReceived Notification[] @relation("notificationsReceived")
   notificationsSent     Notification[] @relation("notificationsSent")
 
@@ -293,8 +296,12 @@ model Conversation {
 
 model Message {
   id             String    @id @default(cuid())
-  conversationId String
+  // DM messages carry the conversation; GROUP messages carry the group.
+  // Exactly one of the two is set (never both).
+  conversationId String?
+  groupId        String?
   // The sender is ALWAYS the authenticated user — never client-supplied.
+
   senderId       String
   // The message text. For VOICE messages this is the transcription/empty
   // label ("🎤 Áudio" is the literal stored content the app renders); for
@@ -330,19 +337,79 @@ model Message {
   // themselves only (the peer keeps seeing it). One-to-many join rows.
   hiddenBy     MessageHide[]
 
-  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  conversation Conversation? @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  group        Group?        @relation(fields: [groupId], references: [id], onDelete: Cascade)
   sender       User         @relation("sentMessages", fields: [senderId], references: [id], onDelete: Cascade)
   replyTo      Message?     @relation("messageReplies", fields: [replyToMessageId], references: [id], onDelete: SetNull)
   replies      Message[]    @relation("messageReplies")
   deleter      User?        @relation("messageDeleter", fields: [deletedById], references: [id], onDelete: SetNull)
 
   @@index([conversationId, createdAt])
+  @@index([groupId, createdAt])
   @@index([senderId])
   @@index([readAt])
   @@index([replyToMessageId])
   @@index([deletedAt])
   @@map("messages")
 }
+
+// ── Groups ────────────────────────────────────────────────────
+// Group chat: a named group with 2+ members (creator is OWNER).
+// Messaging rides the SAME `Message` table as DMs — group messages carry a
+// non-null `groupId` (and a null `conversationId`). Membership is enforced
+// on every read/write; participants must be accepted friends of the creator at
+// creation time (server-validated).
+model Group {
+  id           String   @id @default(cuid())
+  name         String
+  description   String   @default("")
+  avatarUrl    String?
+  createdById  String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  creator  User          @relation("groupCreator", fields: [createdById], references: [id], onDelete: Cascade)
+  members   GroupMember[]
+  hiddenBy  GroupHidden[]
+  messages   Message[]
+
+  @@index([createdById])
+  @@map("groups")
+}
+
+// Membership of a group. `role` mirrors the RBAC model:
+// OWNER (creator) | MODERATOR | MEMBER. Every participant is a friend
+// of the creator at the moment they are added (server-validated).
+model GroupMember {
+  id        String   @id @default(cuid())
+  groupId  String
+  userId   String
+  role     String   @default("MEMBER")
+  joinedAt DateTime @default(now())
+
+  group Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([groupId, userId])
+  @@index([userId])
+  @@map("group_members")
+}
+
+// "Excluir grupo (para mim)" — hides a group from ONE user's Chat list.
+model GroupHidden {
+  id        String   @id @default(cuid())
+  groupId  String
+  userId   String
+  createdAt DateTime @default(now())
+
+  group Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([groupId, userId])
+  @@index([userId])
+  @@map("group_hidden")
+}
+
 
 // "Excluir mensagem para mim" — a viewer-specific soft-delete. Each row says
 // "this message is hidden for THIS user (but still visible to the peer)".
