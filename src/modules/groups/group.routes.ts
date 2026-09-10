@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { ApiError, toApiError } from '../../utils/errors.js';
 import {
+  addGroupMember,
   createGroup,
   deleteGroupMessageForEveryone,
   deleteGroupMessageForMe,
@@ -15,6 +16,8 @@ import {
   sendGroupVoiceMessage,
   setGroupRecording,
   setGroupTyping,
+  updateGroup,
+  updateGroupAvatar,
   GROUP_MESSAGE_LIMIT,
 } from './group.service.js';
 
@@ -66,6 +69,66 @@ export const groupRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       throw toApiError(err);
     }
   });
+
+  // Owner-only: edit group identity (name/description). Server re-reads
+  // the persisted owner and rejects any non-owner — forge-proof.
+  app.patch('/groups/:id', { onRequest: [app.authenticate] }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const bodySchema = z.object({
+      name: z.string().trim().min(1).max(50).optional(),
+      description: z.string().max(200).optional(),
+    });
+    const parsed = bodySchema.safeParse(request.body);
+    if (!parsed.success) {
+      throw ApiError.validation('Dados inválidos.', parsed.error.issues);
+    }
+    try {
+      const group = await updateGroup(request.user!.id, id, parsed.data);
+      return reply.send({ group });
+    } catch (err) {
+      throw toApiError(err);
+    }
+  });
+
+  // Owner-only: replace group avatar. The URL comes from an image already
+  // uploaded via the standard avatar-upload flow (same as the app avatar).
+  app.patch('/groups/:id/avatar', { onRequest: [app.authenticate] }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const bodySchema = z.object({
+      avatarUrl: z.string().max(500).nullable(),
+    });
+    const parsed = bodySchema.safeParse(request.body);
+    if (!parsed.success) {
+      throw ApiError.validation('Dados inválidos.', parsed.error.issues);
+    }
+    try {
+      const group = await updateGroupAvatar(request.user!.id, id, parsed.data.avatarUrl);
+      return reply.send({ group });
+    } catch (err) {
+      throw toApiError(err);
+    }
+  });
+
+
+
+  // Owner-only: add a member (must be an existing user + friend of owner)..
+  app.post('/groups/:id/members', { onRequest: [app.authenticate] }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const bodySchema = z.object({
+      userId: z.string().min(1).max(64),
+    });
+    const parsed = bodySchema.safeParse(request.body);
+    if (!parsed.success) {
+      throw ApiError.validation('Dados inválidos.', parsed.error.issues);
+    }
+    try {
+      const group = await addGroupMember(request.user!.id, id, parsed.data.userId);
+      return reply.send({ group });
+    } catch (err) {
+      throw toApiError(err);
+    }
+  });
+
 
   // Unread groups badge for the Chat tab.
 

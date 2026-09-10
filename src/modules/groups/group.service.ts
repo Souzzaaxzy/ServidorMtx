@@ -4,6 +4,7 @@ import { AUTHOR_SELECT, nicknameCosmetics } from '../../utils/dto.js';
 import { areFriends } from '../friends/friend.service.js';
 import { saveAudioFile } from '../uploads/upload.service.js';
 import {
+  dispatchChatGroupUpdated,
   dispatchChatMessage,
   dispatchChatMessageDeleted,
   dispatchChatRead,
@@ -350,7 +351,186 @@ export async function getGroupInfo(
   };
 }
 
-export async function listGroups(userId: string): Promise<GroupConversationItem[]> {
+/** Owner-only identity edit (name/description;avatar set separately via the
+ * existing upload flow — see updateGroupAvatar). Server-validated: name
+ * length, authentication and owner permissions are ALL checked here;the
+ * client can never bypass by sending forged flags. Broadcasts the fresh
+ * header to every other member (realtime), updating their AppBar /
+ * profile menu / chat list live. */
+
+export async function updateGroup(
+  userId: string,
+  groupId: string,
+  input: { name?: string; description?: string },
+): Promise<GroupHeader> {
+
+  await assertGroupOwner(groupId, userId);
+
+  if (input.name != null) {
+    const name = input.name.trim();
+    if (name.length === 0) {
+      throw ApiError.invalidRequest('O nome do grupo não pode ser vazio.');
+    }
+    if (name.length > 50) {
+      throw ApiError.invalidRequest('O nome do grupo deve ter no máximo50 caracteres.');
+    }
+  }
+
+  if (input.description != null) {
+    const description = input.description.trim();
+    if (description.length > 200) {
+      throw ApiError.invalidRequest('A descrição do grupo deve ter no máximo200 caracteres.');
+    }
+  }
+
+  const updated = await prisma.group.update({
+    where: { id: groupId },
+    data: {
+      ...(input.name != null ? { name: input.name.trim() } : {}),
+      ...(input.description != null ? { description: input.description.trim() } : {}),
+      updatedAt: new Date(),
+    },
+  });
+
+  await broadcastGroupUpdate(groupId, userId);
+  return toGroupHeader(updated, null);
+}
+
+/** Owner-only group avatar replacement. Validates the authenticated user is
+ * the owner (server-side) and persists the provided avatar URL — the same
+ * URL is served to every participant via the list/detail/update broadcasts. */
+
+export async function updateGroupAvatar(
+  userId: string,
+  groupId: string,
+  avatarUrl: string | null,
+): Promise<GroupHeader> {
+
+  await assertGroupOwner(groupId, userId);
+
+  const updated = await prisma.group.update({
+    where: { id: groupId },
+    data: { avatarUrl, updatedAt: new Date() },
+  });
+
+  await broadcastGroupUpdate(groupId, userId);
+  return toGroupHeader(updated, null);
+}
+
+/** Owner-only member addition. Every new participant MUST be:
+ *  1. a valid existing user;
+ *  2. a friend of the owner (same rule as group creation);
+ *  3. not already a member. */
+
+export async function addGroupMember(
+  userId: string,
+  groupId: string,
+  newUserId: string,
+): Promise<GroupConversationItem> {
+
+  await assertGroupOwner(groupId, userId);
+
+  if (newUserId === userId) {
+    throw ApiError.invalidRequest('Você já participa deste grupo.');
+  }
+
+  const existing = await prisma.groupMember.findUnique({
+    where: { groupId_userId: { groupId, userId: newUserId } },
+    select: { id: true },
+  });
+  if (existing) throw ApiError.invalidRequest('Esse usuário já participa do grupo.');
+
+
+
+  const user = await prisma.user.findUnique({
+    where: { id: newUserId },
+    select: { id: true },
+  });
+  if (!user) throw ApiError.notFound('Usuário não encontrado.');
+  if (!(await areFriends(userId, newUserId))) {
+
+    throw ApiError.forbidden('Você só pode adicionar amigos ao grupo.');
+  }
+
+
+
+  await prisma.groupMember.create({
+    data: { groupId, userId: newUserId, role: 'MEMBER' },
+  });
+
+
+
+  await prisma.group.update({
+    where: { id: groupId },
+    data: { updatedAt: new Date() },
+  });
+
+
+  await broadcastGroupUpdate(groupId, userId);
+  return loadGroupConversationItem(groupId, userId);
+}
+
+/** Realtime fan-out-of a fresh `GroupHeader` to every member (except the
+ * acting user). Called after every owner edit so receivers never poll.. */
+
+async function broadcastGroupUpdate(groupId: string, actingUserId: string): Promise<void> {
+
+  const rows = await prisma.groupMember.findMany({
+    where: { groupId, userId: { not: actingUserId } },
+    select: { userId: true },
+  });
+
+  const memberRows = await prisma.groupMember.findMany({
+    where: { groupId },
+    select: { id: true },
+  });
+
+  const group = await prisma.group.findUnique({
+    where: { id: groupId },
+    select: {
+      name: true,
+      avatarUrl: true,
+      description: true,
+      createdById: true,
+      updatedAt: true,
+    },
+  });
+
+  if (!group) return;
+
+  const payload = {
+    groupId,
+    group: {
+      id: groupId,
+      name: group.name,
+      avatarUrl: group.avatarUrl,
+      description: group.description,
+      createdById: group.createdById,
+      memberCount: memberRows.length,
+    },
+  };
+  dispatchChatGroupUpdated(
+    rows.map((r) => r.userId),
+    payload,
+  );
+}
+
+type GroupRow = { id: string; name: string; avatarUrl: string | null; description: string; createdById: string };
+
+/** Converts a Group row into the `GroupHeader` DTO. */
+function toGroupHeader(group: GroupRow, memberIds: string[] | null): GroupHeader {
+  return {
+    id: group.id,
+    name: group.name,
+    avatarUrl: group.avatarUrl,
+    description: group.description,
+    createdById: group.createdById,
+    memberCount: memberIds ? memberIds.length : 0,
+  };
+}
+
+export async function listGroups(
+  userId: string): Promise<GroupConversationItem[]> {
  
   const memberships = await prisma.groupMember.findMany({
     where: {
