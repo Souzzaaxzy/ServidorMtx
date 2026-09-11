@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { ApiError, toApiError } from '../../utils/errors.js';
 import {
   addGroupMember,
+  banGroupMember,
   createGroup,
   deleteGroupMessageForEveryone,
   deleteGroupMessageForMe,
@@ -123,6 +124,19 @@ export const groupRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     }
     try {
       const group = await addGroupMember(request.user!.id, id, parsed.data.userId);
+      return reply.send({ group });
+    } catch (err) {
+      throw toApiError(err);
+    }
+  });
+
+  // Owner-only: BAN a member (server-authoritative soft-removal). The
+  // owner cannot be banned; a banned member loses access immediately on
+  // every read/write path. The row is kept so the owner can re-add later..
+  app.post('/groups/:id/members/:userId/ban', { onRequest: [app.authenticate] }, async (request, reply) => {
+    const { id, userId } = request.params as { id: string; userId: string };
+    try {
+      const group = await banGroupMember(request.user!.id, id, userId);
       return reply.send({ group });
     } catch (err) {
       throw toApiError(err);

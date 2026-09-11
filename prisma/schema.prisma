@@ -380,12 +380,17 @@ model Group {
 // Membership of a group. `role` mirrors the RBAC model:
 // OWNER (creator) | MODERATOR | MEMBER. Every participant is a friend
 // of the creator at the moment they are added (server-validated).
+// Banning: when [bannedAt] is set the member is REMOVED from active access —
+// all read/write paths enforce [bannedAt: null]. The OWNER can never be
+// banned (server-enforced regardless of the caller).
 model GroupMember {
-  id        String   @id @default(cuid())
-  groupId  String
-  userId   String
-  role     String   @default("MEMBER")
-  joinedAt DateTime @default(now())
+  id           String    @id @default(cuid())
+  groupId     String
+  userId      String
+  role        String    @default("MEMBER")
+  joinedAt    DateTime   @default(now())
+  bannedAt    DateTime?
+  bannedById  String?
 
   group Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
   user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)

@@ -329,4 +329,75 @@ describe('Groups', () => {
     });
     expect(badRes.statusCode).toBe(400);
   });
+
+  it('owner bans a member: access and messaging are revoked, owner is immune', async () => {
+    const owner = await createAndLoginUser(server, { nickname: 'ban_owner' });
+    const peer = await createAndLoginUser(server, { nickname: 'ban_peer' });
+    await makeFriends(owner, peer);
+
+    const createRes = await server.inject({
+      method: 'POST',
+      url: '/api/groups',
+      headers: { authorization: `Bearer ${owner.accessToken}` },
+      payload: { name: 'Ban Crew', participantIds: [peer.id] },
+    });
+    const group = JSON.parse(createRes.payload).group;
+
+    // Owner bans the peer.
+    const banRes = await server.inject({
+      method: 'POST',
+      url: `/api/groups/${group.id}/members/${peer.id}/ban`,
+      headers: { authorization: `Bearer ${owner.accessToken}` },
+    });
+    expect(banRes.statusCode).toBe(200);
+
+    // Banned member loses access: cannot list, read messages or send.
+    const peerList = await server.inject({
+      method: 'GET',
+      url: '/api/groups',
+      headers: { authorization: `Bearer ${peer.accessToken}` },
+    });
+    const listed = JSON.parse(peerList.payload).groups.filter((g: { id: string }) => g.id === group.id);
+    expect(listed).toHaveLength(0);
+
+    const peerRead = await server.inject({
+      method: 'GET',
+      url: `/api/groups/${group.id}/messages`,
+      headers: { authorization: `Bearer ${peer.accessToken}` },
+    });
+    expect(peerRead.statusCode).toBe(403);
+
+    const peerSend = await server.inject({
+      method: 'POST',
+      url: `/api/groups/${group.id}/messages`,
+      headers: { authorization: `Bearer ${peer.accessToken}` },
+      payload: { content: 'tentando' },
+    });
+    expect(peerSend.statusCode).toBe(403);
+
+    // A NON-owner cannot ban (server re-validates).
+    const other = await createAndLoginUser(server, { nickname: 'ban_other' });
+    const otherBan = await server.inject({
+      method: 'POST',
+      url: `/api/groups/${group.id}/members/${peer.id}/ban`,
+      headers: { authorization: `Bearer ${other.accessToken}` } as never,
+    });
+    expect(otherBan.statusCode).toBe(403);
+
+    // The OWNER can never be banned (even by a forged/other owner attempt).
+    const ownerBan = await server.inject({
+      method: 'POST',
+      url: `/api/groups/${group.id}/members/${owner.id}/ban`,
+      headers: { authorization: `Bearer ${owner.accessToken}` },
+    });
+    expect(ownerBan.statusCode).toBe(400);
+
+    // The owner still sees the group and can message normally.
+    const ownerList = await server.inject({
+      method: 'GET',
+      url: '/api/groups',
+      headers: { authorization: `Bearer ${owner.accessToken}` },
+    });
+    expect(JSON.parse(ownerList.payload).groups.some((g: { id: string }) => g.id === group.id)).toBe(true);
+  });
 });

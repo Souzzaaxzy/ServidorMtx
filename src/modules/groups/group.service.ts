@@ -171,10 +171,13 @@ async function assertGroupMembership(groupId: string, userId: string) {
   
  const member = await prisma.groupMember.findUnique({
    where: { groupId_userId: { groupId, userId } },
-   select: { role: true },
+   select: { role: true, bannedAt: true },
  });
   if (!member) {
    throw ApiError.forbidden('Você não é membro deste grupo.');
+  }
+  if (member.bannedAt) {
+   throw ApiError.forbidden('Você foi banido deste grupo.');
   }
   return member;
 }
@@ -203,7 +206,7 @@ async function loadGroupConversationItem(
   const group = await prisma.group.findUnique({
     where: { id: groupId },
     include: {
-      members: { select: { id: true } },
+      members: { where: { bannedAt: null }, select: { id: true } },
     },
   });
   if (!group) throw ApiError.notFound('Grupo não encontrado.');
@@ -328,7 +331,7 @@ export async function getGroupInfo(
 
   const group = await prisma.group.findUnique({
     where: { id: groupId },
-    include: { members: { select: { role: true, user: { select: { id: true, nickname: true, avatarUrl: true } } } } },
+    include: { members: { where: { bannedAt: null }, select: { role: true, user: { select: { id: true, nickname: true, avatarUrl: true } } } } },
   });
   if (!group) throw ApiError.notFound('Grupo não encontrado.');
 
@@ -470,18 +473,60 @@ export async function addGroupMember(
   return loadGroupConversationItem(groupId, userId);
 }
 
+export async function banGroupMember(
+  userId: string,
+  groupId: string,
+  targetUserId: string,
+): Promise<GroupConversationItem> {
+
+  await assertGroupOwner(groupId, userId);
+
+  if (targetUserId === userId) {
+    throw ApiError.invalidRequest('O dono não pode ser banido.');
+  }
+
+  const target = await prisma.groupMember.findUnique({
+    where: { groupId_userId: { groupId, userId: targetUserId } },
+    select: { id: true, role: true, bannedAt: true },
+  });
+  if (!target) throw ApiError.notFound('Usuário não está no grupo.');
+
+
+
+  if (target.role === 'OWNER') {
+    throw ApiError.forbidden('O dono do grupo não pode ser banido.');
+  }
+
+
+
+  await prisma.groupMember.update({
+    where: { id: target.id },
+    data: { bannedAt: new Date(), bannedById: userId },
+  });
+
+
+  await prisma.group.update({
+    where: { id: groupId },
+    data: { updatedAt: new Date() },
+  });
+
+
+  await broadcastGroupUpdate(groupId, userId);
+  return loadGroupConversationItem(groupId, userId);
+}
+
 /** Realtime fan-out-of a fresh `GroupHeader` to every member (except the
  * acting user). Called after every owner edit so receivers never poll.. */
 
 async function broadcastGroupUpdate(groupId: string, actingUserId: string): Promise<void> {
 
   const rows = await prisma.groupMember.findMany({
-    where: { groupId, userId: { not: actingUserId } },
+    where: { groupId, userId: { not: actingUserId }, bannedAt: null },
     select: { userId: true },
   });
 
   const memberRows = await prisma.groupMember.findMany({
-    where: { groupId },
+    where: { groupId, bannedAt: null },
     select: { id: true },
   });
 
@@ -535,6 +580,7 @@ export async function listGroups(
   const memberships = await prisma.groupMember.findMany({
     where: {
       userId,
+      bannedAt: null,
       group: { hiddenBy: { none: { userId } } },
     },
     include: {
@@ -756,7 +802,7 @@ export async function getGroupMessages(
  * Used by every realtime broadcast so all participants get live updates. */
 async function otherMemberIds(groupId: string, userId: string): Promise<string[]> {
   const rows = await prisma.groupMember.findMany({
-    where: { groupId, userId: { not: userId } },
+    where: { groupId, userId: { not: userId }, bannedAt: null },
     select: { userId: true },
   });
   return rows.map((r) => r.userId);
@@ -1042,7 +1088,7 @@ export async function groupUnreadCount(userId: string): Promise<number> {
   const groups = await prisma.group.findMany({
     where: {
       hiddenBy: { none: { userId } },
-      members: { some: { userId } },
+      members: { some: { userId, bannedAt: null } },
       messages: { some: { senderId: { not: userId }, readAt: null, deletedAt: null, hiddenBy: { none: { userId } } } },
     },
     select: { id: true },
