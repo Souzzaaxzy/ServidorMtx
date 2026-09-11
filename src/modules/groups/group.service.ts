@@ -832,7 +832,7 @@ export async function sendGroupMessage(
 export async function sendGroupVoiceMessage(
   userId: string,
   groupId: string,
-  audio: { file: Readable; durationMs: number },
+  audio: { file: Readable; durationMs: number; replyToMessageId?: string },
 ): Promise<GroupMessageItem> {
 
   const duration = Math.round(audio.durationMs);
@@ -842,6 +842,17 @@ export async function sendGroupVoiceMessage(
 
  
   await assertGroupMembership(groupId, userId);
+  if (audio.replyToMessageId && audio.replyToMessageId.trim()) {
+
+    const target = await prisma.message.findUnique({
+      where: { id: audio.replyToMessageId },
+      select: { groupId: true },
+    });
+    if (!target || target.groupId !== groupId) {
+      throw ApiError.invalidRequest('Mensagem respondida não encontrada.');
+    }
+  }
+
 
   const stored = await saveAudioFile(audio.file);
 
@@ -854,6 +865,7 @@ export async function sendGroupVoiceMessage(
         type: 'voice',
         audioUrl: stored.url,
         durationMs: duration,
+        replyToMessageId: audio.replyToMessageId?.trim() || null,
       },
     });
     await tx.group.update({

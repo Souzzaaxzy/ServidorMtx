@@ -195,8 +195,8 @@ export const groupRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
   // as query param. Same rules as DM voices (1–60s, validated).
   app.post('/groups/:id/voice', { onRequest: [app.authenticate] }, async (request, reply) => {
     const { id } = request.params as { id: string };
-    const durationRaw = (request.query as { durationMs?: string }).durationMs;
-    const durationMs = Number(durationRaw);
+    const query = request.query as { durationMs?: string; replyToMessageId?: string };
+    const durationMs = Number(query.durationMs);
     const part = await request.file({
       limits: { fileSize: 16 * 1024 * 1024 },
     });
@@ -207,6 +207,7 @@ export const groupRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       const message = await sendGroupVoiceMessage(request.user!.id, id, {
         file: part.file,
         durationMs: Number.isFinite(durationMs) ? durationMs : NaN,
+        replyToMessageId: query.replyToMessageId,
       });
       request.log.info(
         {

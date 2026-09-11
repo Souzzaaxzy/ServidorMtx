@@ -113,8 +113,8 @@ export const chatRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
   // `chat_message` realtime frame.
   app.post('/conversations/:id/voice', { onRequest: [app.authenticate] }, async (request, reply) => {
     const { id } = request.params as { id: string };
-    const durationRaw = (request.query as { durationMs?: string }).durationMs;
-    const durationMs = Number(durationRaw);
+    const query = request.query as { durationMs?: string; replyToMessageId?: string };
+    const durationMs = Number(query.durationMs);
     const part = await request.file({
       limits: { fileSize: 16 * 1024 * 1024 },
     });
@@ -125,6 +125,7 @@ export const chatRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       const message = await sendVoiceMessage(request.user!.id, id, {
         file: part.file,
         durationMs: Number.isFinite(durationMs) ? durationMs : NaN,
+        replyToMessageId: query.replyToMessageId,
       });
       // Production-safe telemetry: captures the persisted result so the
       // upload→storage→message chain is auditable (no payload, no tokens).

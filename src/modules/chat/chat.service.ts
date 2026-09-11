@@ -562,7 +562,7 @@ export async function sendMessage(
 export async function sendVoiceMessage(
   userId: string,
   conversationId: string,
-  audio: { file: Readable; durationMs: number },
+  audio: { file: Readable; durationMs: number; replyToMessageId?: string },
 ): Promise<MessageItem> {
   const duration = Math.round(audio.durationMs);
   if (!Number.isFinite(duration) || duration < 1000 || duration > 60_000) {
@@ -583,6 +583,16 @@ export async function sendVoiceMessage(
   if (!(await areFriends(userId, otherId))) {
     throw ApiError.forbidden('Vocês precisam ser amigos para conversar.');
   }
+  if (audio.replyToMessageId && audio.replyToMessageId.trim()) {
+
+    const target = await prisma.message.findUnique({
+      where: { id: audio.replyToMessageId },
+      select: { conversationId: true },
+    });
+    if (!target || target.conversationId !== conversationId) {
+      throw ApiError.invalidRequest('Mensagem respondida não encontrada.');
+    }
+  }
 
   // Persist the file FIRST (validates bytes + size); then the message. If
   // the message insert fails the orphan file is deleted best-effort.
@@ -597,6 +607,7 @@ export async function sendVoiceMessage(
         type: 'voice',
         audioUrl: stored.url,
         durationMs: duration,
+        replyToMessageId: audio.replyToMessageId?.trim() || null,
       },
     });
     await tx.conversation.update({

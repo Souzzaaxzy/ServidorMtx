@@ -1,7 +1,36 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { buildTestServer, closeTestServer, createAndLoginUser } from './helpers.js';
+import { prisma } from '../src/config/prisma.js';
 import type { FastifyInstance } from 'fastify';
+import { Readable } from 'node:stream';
 import { addSocket, removeSocket } from '../src/modules/push/push.service.js';
+
+function m4aFixture(): Buffer {
+  const box = Buffer.alloc(28);
+  box.writeUInt32BE(28, 0);
+  box.write('ftyp', 4, 'latin1');
+  box.write('M4A ', 8, 'latin1');
+  box.writeUInt32BE(0, 12);
+  box.write('M4A ', 16, 'latin1');
+  box.write('mp42', 20, 'latin1');
+  box.write('isom', 24, 'latin1');
+  return box;
+}
+
+const streamOf = (buf: Buffer): Readable => Readable.from([buf]);
+
+function multipartBody(fileBytes: Buffer, filename: string): Buffer {
+  const boundary = '----matrix-group-test-boundary-9f4a';
+  const preamble = Buffer.from(
+    `--${boundary}\r\n` +
+      'Content-Disposition: form-data; name="file"; ' +
+      `filename="${filename}"\r\n` +
+      'Content-Type: audio/mp4\r\n\r\n',
+    'utf8',
+  );
+  const epilogue = Buffer.from(`\r\n--${boundary}--\r\n`, 'utf8');
+  return Buffer.concat([preamble, fileBytes, epilogue]);
+}
 
 let server: FastifyInstance;
 
@@ -221,5 +250,83 @@ describe('Groups', () => {
       headers: { authorization: `Bearer ${owner.accessToken}` },
     });
     expect(JSON.parse(ownerList.payload).groups.some((g: { id: string }) => g.id === group.id)).toBe(true);
+  });
+
+  it('persists a group VOICE reply with replyToMessageId reference', async () => {
+    const owner = await createAndLoginUser(server, { nickname: 'gvox_owner' });
+    const peer = await createAndLoginUser(server, { nickname: 'gvox_peer' });
+    await makeFriends(owner, peer);
+
+    const createRes = await server.inject({
+      method: 'POST',
+      url: '/api/groups',
+      headers: { authorization: `Bearer ${owner.accessToken}` },
+      payload: { name: 'Voice Crew', participantIds: [peer.id] },
+    });
+    const group = JSON.parse(createRes.payload).group;
+
+    const baseRes = await server.inject({
+      method: 'POST',
+      url: `/api/groups/${group.id}/messages`,
+      headers: { authorization: `Bearer ${owner.accessToken}` },
+      payload: { content: 'base mensagem' },
+    });
+    const baseId = JSON.parse(baseRes.payload as string).message.id as string;
+
+    const audio = m4aFixture();
+    const res = await server.inject({
+      method: 'POST',
+      url: `/api/groups/${group.id}/voice?durationMs=3000&replyToMessageId=${baseId}`,
+      headers: {
+        authorization: `Bearer ${peer.accessToken}`,
+        'content-type': 'multipart/form-data; boundary=----matrix-group-test-boundary-9f4a',
+      },
+      payload: multipartBody(audio, 'group_reply.m4a'),
+    });
+    expect(res.statusCode).toBe(201);
+    const msg = JSON.parse(res.payload as string).message as {
+      id: string;
+      type: string;
+      replyTo: { id: string; exists: boolean } | null;
+    };
+    expect(msg.type).toBe('voice');
+    expect(msg.replyTo?.id).toBe(baseId);
+    expect(msg.replyTo?.exists).toBe(true);
+
+    const stored = await prisma.message.findUnique({
+      where: { id: msg.id },
+      select: { replyToMessageId: true },
+    });
+    expect(stored?.replyToMessageId).toBe(baseId);
+
+    const pageRes = await server.inject({
+      method: 'GET',
+      url: `/api/groups/${group.id}/messages?limit=20`,
+      headers: { authorization: `Bearer ${owner.accessToken}` },
+    });
+    const page = JSON.parse(pageRes.payload as string);
+    const reply = page.messages.find((m: { id: string }) => m.id === msg.id);
+    expect(reply.replyTo?.id).toBe(baseId);
+    expect(reply.replyTo?.senderNickname).toBe('gvox_owner');
+    expect(reply.type).toBe('voice');
+
+    const otherGroup = await server.inject({
+      method: 'POST',
+      url: '/api/groups',
+      headers: { authorization: `Bearer ${owner.accessToken}` },
+      payload: { name: 'Other Crew', participantIds: [peer.id] },
+    });
+    expect(otherGroup.statusCode).toBe(201);
+    const otherGroupId = JSON.parse(otherGroup.payload).group.id;
+    const badRes = await server.inject({
+      method: 'POST',
+      url: `/api/groups/${otherGroupId}/voice?durationMs=3000&replyToMessageId=${baseId}`,
+      headers: {
+        authorization: `Bearer ${peer.accessToken}`,
+        'content-type': 'multipart/form-data; boundary=----matrix-group-test-boundary-9f4a',
+      },
+      payload: multipartBody(audio, 'bad_reply.m4a'),
+    });
+    expect(badRes.statusCode).toBe(400);
   });
 });
