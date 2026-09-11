@@ -52,7 +52,7 @@ export async function adminGrantXp(adminId: string, userId: string, amount: numb
   return { userId, amount, totalXp: total };
 }
 
-export async function adminGrantCoins(adminId: string, userId: string, amount: number, note = '') {
+export async function adminGrantCoins(adminId: string, userId: string, amount: number, _note = '') {
   if (amount === 0) throw ApiError.invalidRequest('Quantidade inválida.');
   const balance = await grantCoins({
     userId,
