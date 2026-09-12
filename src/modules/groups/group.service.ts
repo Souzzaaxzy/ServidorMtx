@@ -4,6 +4,7 @@ import { AUTHOR_SELECT, nicknameCosmetics } from '../../utils/dto.js';
 import { areFriends } from '../friends/friend.service.js';
 import { saveAudioFile } from '../uploads/upload.service.js';
 import {
+  dispatchChatGroupBanned,
   dispatchChatGroupUpdated,
   dispatchChatMessage,
   dispatchChatMessageDeleted,
@@ -497,19 +498,30 @@ export async function banGroupMember(
     throw ApiError.forbidden('O dono do grupo não pode ser banido.');
   }
 
-
-
   await prisma.groupMember.update({
     where: { id: target.id },
     data: { bannedAt: new Date(), bannedById: userId },
   });
-
 
   await prisma.group.update({
     where: { id: groupId },
     data: { updatedAt: new Date() },
   });
 
+  const groupRow = await prisma.group.findUnique({
+    where: { id: groupId },
+    select: { name: true },
+  });
+
+  // Realtime fan-out:
+  //  1. The BANNED user gets a `chat_group_banned` frame so their open
+  //     group screen kicks them out live (no waiting for a 403).
+  //  2. The REMAINING members get the standard `chat_group_updated`
+  //     refresh (member count shrinks immediately).
+  dispatchChatGroupBanned(targetUserId, {
+    groupId,
+    groupName: groupRow?.name ?? '',
+  });
 
   await broadcastGroupUpdate(groupId, userId);
   return loadGroupConversationItem(groupId, userId);

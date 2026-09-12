@@ -21,7 +21,7 @@ PostgreSQL). Runs on Pterodactyl/Bronxys via `npm start` (self-provisions).
   migrations removed. `migration_lock.toml` provider = `sqlite`.
 - **Tests**: `tests/setup.ts` uses SQLite `data/test.db` (absolute path). Cleanup
   between tests = `DELETE FROM` with `PRAGMA foreign_keys = OFF` (no TRUNCATE in
-  SQLite). 212 tests pass (22 files).
+  SQLite). 213 tests pass (22 files).
 - **search.service.ts**: no `mode: 'insensitive'` (SQLite LIKE is case-insensitive).
 
 ## Environment
@@ -34,7 +34,7 @@ PostgreSQL). Runs on Pterodactyl/Bronxys via `npm start` (self-provisions).
 - deps: `npm install`
 - generate client: `npx prisma generate` (or `./node_modules/.bin/prisma generate`)
 - build: `npm run build` → `dist/src/app.js`
-- test: `npm test` (64 tests, vitest)
+- test: `npm test` (213 tests, vitest)
 - lint: `npm run lint`
 - dev: `npm run dev`
 - **start (production)**: `npm start` → `scripts/start.sh` (self-provisions:

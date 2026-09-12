@@ -135,6 +135,29 @@ export function dispatchCommentDeleted(
 }
 
 /**
+ * `chat_group_banned` frame dispatched to the BANNED user when the owner
+ * removes them from a group. The payload carries the group id + name so the
+ * receiver's open group screen can kick the user out live (no wait for a
+ * 403 on the next read/write). Uses the SAME in-memory socket hub — never a
+ * second transport.
+ */
+export function dispatchChatGroupBanned(
+  userId: string,
+  payload: { groupId: string; groupName: string },
+): void {
+  const live = sockets.get(userId);
+  if (!live) return;
+  const frame = JSON.stringify({ kind: 'chat_group_banned', data: payload });
+  for (const socket of live) {
+    try {
+      socket.send(frame);
+    } catch (err) {
+      logger.warn({ err }, 'chat group banned send failed');
+    }
+  }
+}
+
+/**
  * `chat_group_updated` frame dispatched to the OTHER members of a group when
  * the owner changes its identity (name/avatar/description) or membership.
  * The payload embeds the full `GroupHeader` so receivers can refresh the

@@ -400,6 +400,41 @@ describe('Groups', () => {
     expect(JSON.parse(ownerList.payload).groups.some((g: { id: string }) => g.id === group.id)).toBe(true);
   });
 
+  it('ban realtime: the banned user receives a chat_group_banned frame', async () => {
+    const owner = await createAndLoginUser(server, { nickname: 'banrt_owner' });
+    const peer = await createAndLoginUser(server, { nickname: 'banrt_peer' });
+    await makeFriends(owner, peer);
+
+    const createRes = await server.inject({
+      method: 'POST',
+      url: '/api/groups',
+      headers: { authorization: `Bearer ${owner.accessToken}` },
+      payload: { name: 'RT Ban Crew', participantIds: [peer.id] },
+    });
+    const group = JSON.parse(createRes.payload).group;
+
+    // The peer keeps an open socket on the group chat.
+    const peerSocket = { send: vi.fn() };
+    addSocket(peer.id, peerSocket);
+    try {
+      const banRes = await server.inject({
+        method: 'POST',
+        url: `/api/groups/${group.id}/members/${peer.id}/ban`,
+        headers: { authorization: `Bearer ${owner.accessToken}` },
+      });
+      expect(banRes.statusCode).toBe(200);
+
+      // The banned user's live socket MUST have received the kick frame.
+      expect(peerSocket.send).toHaveBeenCalledTimes(1);
+      const frame = JSON.parse(peerSocket.send.mock.calls[0][0] as string);
+      expect(frame.kind).toBe('chat_group_banned');
+      expect(frame.data.groupId).toBe(group.id);
+      expect(typeof frame.data.groupName).toBe('string');
+    } finally {
+      removeSocket(peer.id, peerSocket);
+    }
+  });
+
   it('group message deletion permissions: member cannot delete others, owner can, everyone receives realtime', async () => {
     const owner = await createAndLoginUser(server, { nickname: 'delg_owner' });
     const peer = await createAndLoginUser(server, { nickname: 'delg_peer' });
