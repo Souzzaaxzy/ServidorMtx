@@ -21,7 +21,7 @@ PostgreSQL). Runs on Pterodactyl/Bronxys via `npm start` (self-provisions).
   migrations removed. `migration_lock.toml` provider = `sqlite`.
 - **Tests**: `tests/setup.ts` uses SQLite `data/test.db` (absolute path). Cleanup
   between tests = `DELETE FROM` with `PRAGMA foreign_keys = OFF` (no TRUNCATE in
-  SQLite). 64 tests pass.
+  SQLite). 212 tests pass (22 files).
 - **search.service.ts**: no `mode: 'insensitive'` (SQLite LIKE is case-insensitive).
 
 ## Environment
@@ -102,6 +102,16 @@ openhands / openhands@all-hands.dev
 - Every nickname payload (feed, comments, profile, search, friends,
   notifications) embeds the OWNER's `nameColor/nameColorId` via
   `NICKNAME_COSMETICS_SELECT` + `nicknameCosmetics()` in src/utils/dto.ts.
+
+## Group permissions (comment + group-message deletion)
+- **Comments**: `deleteComment` allows ONLY the comment's author OR the post's
+  author (`comment.userId === userId || comment.post.userId === userId`). Comment
+  ORDER grants no extra permission — covered by
+  `tests/comments.test.ts` "comment ORDER grants no extra permission".
+- **Group messages**: `deleteGroupMessageForEveryone` requires the OWNER when
+  deleting another member's message (a member may always delete their own); the
+  broadcast `chat_message_deleted` reaches every group member. Covered by
+  `tests/groups.test.ts` "group message deletion permissions".
 
 ============================================================
 MATRIX — FLUXO OBRIGATÓRIO DE TRABALHO
