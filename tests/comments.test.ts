@@ -473,4 +473,76 @@ describe('Comments', () => {
     });
     expect(del.statusCode).toBe(401);
   });
+
+  it('comment ORDER grants no extra permission: first commenter cannot delete later comments', async () => {
+    const user1 = await createAndLoginUser(server, { nickname: 'ord_owner' });
+    const user2 = await createAndLoginUser(server, { nickname: 'ord_first' });
+    const user3 = await createAndLoginUser(server, { nickname: 'ord_second' });
+
+    // User1 creates the post.
+
+    const post = await prisma.post.create({ data: { userId: user1.id, text: 'post do User1' } });
+
+    // User2 comments FIRST;User3 comments AFTER.
+
+    const first = await server.inject({
+      method: 'POST',
+      url: `/api/posts/${post.id}/comments`,
+      headers: { authorization: `Bearer ${user2.accessToken}` },
+      payload: { text: 'primeiro comentário (User2)' },
+    });
+    const firstId = JSON.parse(first.payload).id;
+    const second = await server.inject({
+      method: 'POST',
+      url: `/api/posts/${post.id}/comments`,
+      headers: { authorization: `Bearer ${user3.accessToken}` },
+      payload: { text: 'segundo comentário (User3)' },
+    });
+    const secondId = JSON.parse(second.payload).id;
+
+    // User2 (first commenter, NOT the post author) tries to delete User3's
+    // comment → MUST BE DENIED despite having commented first..
+    const denied = await server.inject({
+      method: 'DELETE',
+      url: `/api/comments/${secondId}`,
+      headers: { authorization: `Bearer ${user2.accessToken}` },
+    });
+    expect(denied.statusCode).toBe(403);
+
+    // The comment survives the denied attempt..
+    const listAfterDenial = await server.inject({
+      method: 'GET',
+      url: `/api/posts/${post.id}/comments`,
+      headers: { authorization: `Bearer ${user2.accessToken}` },
+    });
+    expect(JSON.parse(listAfterDenial.payload).comments).toHaveLength(2);
+
+    // User1 (post author) CAN delete User3's comment..
+    const byOwner = await server.inject({
+      method: 'DELETE',
+      url: `/api/comments/${secondId}`,
+      headers: { authorization: `Bearer ${user1.accessToken}` },
+    });
+    expect(byOwner.statusCode).toBe(204);
+    const listAfterOwner = await server.inject({
+      method: 'GET',
+      url: `/api/posts/${post.id}/comments`,
+      headers: { authorization: `Bearer ${user2.accessToken}` },
+    });
+    expect(JSON.parse(listAfterOwner.payload).comments).toHaveLength(1);
+
+    // User2 can still delete their OWN comment..
+    const own = await server.inject({
+      method: 'DELETE',
+      url: `/api/comments/${firstId}`,
+      headers: { authorization: `Bearer ${user2.accessToken}` },
+    });
+    expect(own.statusCode).toBe(204);
+    const listAfterOwn = await server.inject({
+      method: 'GET',
+      url: `/api/posts/${post.id}/comments`,
+      headers: { authorization: `Bearer ${user2.accessToken}` },
+    });
+    expect(JSON.parse(listAfterOwn.payload).comments).toHaveLength(0);
+  });
 });

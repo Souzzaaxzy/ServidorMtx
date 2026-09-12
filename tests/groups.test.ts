@@ -2,7 +2,6 @@ import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { buildTestServer, closeTestServer, createAndLoginUser } from './helpers.js';
 import { prisma } from '../src/config/prisma.js';
 import type { FastifyInstance } from 'fastify';
-import { Readable } from 'node:stream';
 import { addSocket, removeSocket } from '../src/modules/push/push.service.js';
 
 function m4aFixture(): Buffer {
@@ -17,7 +16,7 @@ function m4aFixture(): Buffer {
   return box;
 }
 
-const streamOf = (buf: Buffer): Readable => Readable.from([buf]);
+
 
 function multipartBody(fileBytes: Buffer, filename: string): Buffer {
   const boundary = '----matrix-group-test-boundary-9f4a';
@@ -392,12 +391,93 @@ describe('Groups', () => {
     });
     expect(ownerBan.statusCode).toBe(400);
 
-    // The owner still sees the group and can message normally.
+    // The owner still sees the groupand can message normally.
     const ownerList = await server.inject({
       method: 'GET',
       url: '/api/groups',
       headers: { authorization: `Bearer ${owner.accessToken}` },
     });
     expect(JSON.parse(ownerList.payload).groups.some((g: { id: string }) => g.id === group.id)).toBe(true);
+  });
+
+  it('group message deletion permissions: member cannot delete others, owner can, everyone receives realtime', async () => {
+    const owner = await createAndLoginUser(server, { nickname: 'delg_owner' });
+    const peer = await createAndLoginUser(server, { nickname: 'delg_peer' });
+    await makeFriends(owner, peer);
+
+    const createRes = await server.inject({
+      method: 'POST',
+      url: '/api/groups',
+      headers: { authorization: `Bearer ${owner.accessToken}` },
+      payload: { name: 'Del Crew', participantIds: [peer.id] },
+    });
+    const group = JSON.parse(createRes.payload).group;
+
+    // The peer sends a message.
+    const peerMsg = await server.inject({
+      method: 'POST',
+      url: `/api/groups/${group.id}/messages`,
+      headers: { authorization: `Bearer ${peer.accessToken}` },
+      payload: { content: 'mensagem do peer' },
+    });
+    const peerMessageId = JSON.parse(peerMsg.payload).message.id;
+
+    // A NON-owner COMMON member cannot delete another member's message
+    // FOR EVERYONE (server re-validates the sender/owner).
+    const other = await createAndLoginUser(server, { nickname: 'delg_other' });
+    await makeFriends(owner, other);
+    await server.inject({
+      method: 'POST',
+      url: `/api/groups/${group.id}/members`,
+      headers: { authorization: `Bearer ${owner.accessToken}` },
+      payload: { userId: other.id },
+    });
+    const forbidden = await server.inject({
+      method: 'DELETE',
+      url: `/api/groups/${group.id}/messages/${peerMessageId}/everyone`,
+      headers: { authorization: `Bearer ${other.accessToken}` },
+    });
+    expect(forbidden.statusCode).toBe(403);
+
+    // The owner CAN delete another member's message FOR EVERYONE. The
+    // broadcast reaches BOTH the peer and the owner's other sockets.
+
+    const peerSocket = { send: vi.fn() };
+    addSocket(peer.id, peerSocket);
+    const ownerSocket2 = { send: vi.fn() };
+    addSocket(owner.id, ownerSocket2);
+    try {
+      const delRes = await server.inject({
+        method: 'DELETE',
+        url: `/api/groups/${group.id}/messages/${peerMessageId}/everyone`,
+        headers: { authorization: `Bearer ${owner.accessToken}` },
+      });
+      expect(delRes.statusCode).toBe(204);
+
+      for (const socket of [peerSocket, ownerSocket2]) {
+        expect(socket.send).toHaveBeenCalledTimes(1);
+        const frame = JSON.parse(socket.send.mock.calls[0][0] as string);
+        expect(frame.kind).toBe('chat_message_deleted');
+        expect(frame.data.messageId).toBe(peerMessageId);
+      }
+    } finally {
+      removeSocket(peer.id, peerSocket);
+      removeSocket(owner.id, ownerSocket2);
+    }
+
+    // A member may delete their OWN message for everyone (no owner needed).
+    const peerSend2 = await server.inject({
+      method: 'POST',
+      url: `/api/groups/${group.id}/messages`,
+      headers: { authorization: `Bearer ${peer.accessToken}` },
+      payload: { content: 'própria mensagem' },
+    });
+    const peerOwnId = JSON.parse(peerSend2.payload).message.id;
+    const peerOwnDel = await server.inject({
+      method: 'DELETE',
+      url: `/api/groups/${group.id}/messages/${peerOwnId}/everyone`,
+      headers: { authorization: `Bearer ${peer.accessToken}` },
+    });
+    expect(peerOwnDel.statusCode).toBe(204);
   });
 });
