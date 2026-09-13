@@ -678,4 +678,211 @@ describe('Groups', () => {
       removeSocket(watcher.id, watcherSocket);
     }
   });
+
+  it('owner permanently deletes the group: members/messages/hides removed, everyone receives realtime, group rejects messages', async () => {
+    const owner = await createAndLoginUser(server, { nickname: 'delg_owner2' });
+    const peer = await createAndLoginUser(server, { nickname: 'delg_peer2' });
+    await makeFriends(owner, peer);
+
+    const createRes = await server.inject({
+      method: 'POST',
+      url: '/api/groups',
+      headers: { authorization: `Bearer ${owner.accessToken}` },
+      payload: { name: 'Delete Crew', participantIds: [peer.id] },
+    });
+    expect(createRes.statusCode).toBe(201);
+    const group = JSON.parse(createRes.payload).group;
+
+    // Some messages flow so deletion has rows to clean up.
+    await server.inject({
+      method: 'POST',
+      url: `/api/groups/${group.id}/messages`,
+      headers: { authorization: `Bearer ${owner.accessToken}` },
+      payload: { content: 'mensagem do dono' },
+    });
+    await server.inject({
+      method: 'POST',
+      url: `/api/groups/${group.id}/messages`,
+      headers: { authorization: `Bearer ${peer.accessToken}` },
+      payload: { content: 'mensagem do membro' },
+    });
+    // Peer hides the group "para mim" → GroupHidden row must be cleaned too.
+    await server.inject({
+      method: 'DELETE',
+      url: `/api/groups/${group.id}`,
+      headers: { authorization: `Bearer ${peer.accessToken}` },
+    });
+
+    // Every participant keeps a live socket to receive the deletion frame.
+    const ownerSocket = { send: vi.fn() };
+    const peerSocket = { send: vi.fn() };
+    addSocket(owner.id, ownerSocket);
+    addSocket(peer.id, peerSocket);
+    try {
+      // A NON-owner (peer) cannot delete the group — forge-proof.
+      const forbidden = await server.inject({
+        method: 'DELETE',
+        url: `/api/groups/${group.id}/permanent`,
+        headers: { authorization: `Bearer ${peer.accessToken}` },
+      });
+      expect(forbidden.statusCode).toBe(403);
+
+      // Owner deletes the group permanently.
+      const delRes = await server.inject({
+        method: 'DELETE',
+        url: `/api/groups/${group.id}/permanent`,
+        headers: { authorization: `Bearer ${owner.accessToken}` },
+      });
+      expect(delRes.statusCode).toBe(204);
+
+      // Group row is GONE — no stale re-listing. The info endpoint refuses
+      // (403: membership is gone too / 404: row deleted — both prove the
+      // group no longer exists for any member).
+      const infoRes = await server.inject({
+        method: 'GET',
+        url: `/api/groups/${group.id}`,
+        headers: { authorization: `Bearer ${owner.accessToken}` },
+      });
+      expect(infoRes.statusCode).not.toBe(200);
+
+      // Membership rows removed — the peer is no longer a member.
+      const listRes = await server.inject({
+        method: 'GET',
+        url: '/api/groups',
+        headers: { authorization: `Bearer ${peer.accessToken}` },
+      });
+      const listed = JSON.parse(listRes.payload).groups;
+      expect(listed.some((g: { id: string }) => g.id === group.id)).toBe(false);
+
+      // The group can NEVER receive messages again (rejected: the group is
+      // gone and the owner's membership was deleted too).
+      const sendAfter = await server.inject({
+        method: 'POST',
+        url: `/api/groups/${group.id}/messages`,
+        headers: { authorization: `Bearer ${owner.accessToken}` },
+        payload: { content: 'depois da exclusão' },
+      });
+      expect(sendAfter.statusCode).not.toBe(201);
+
+      // Every live participant's socket got the deletion frame (owner's own
+      // other devices included).
+      expect(ownerSocket.send).toHaveBeenCalledTimes(1);
+      expect(peerSocket.send).toHaveBeenCalledTimes(1);
+      const ownerFrame = JSON.parse(ownerSocket.send.mock.calls[0][0] as string);
+      const peerFrame = JSON.parse(peerSocket.send.mock.calls[0][0] as string);
+      expect(ownerFrame.kind).toBe('chat_group_deleted');
+      expect(ownerFrame.data.groupId).toBe(group.id);
+      expect(peerFrame.kind).toBe('chat_group_deleted');
+      expect(peerFrame.data.groupId).toBe(group.id);
+    } finally {
+      removeSocket(owner.id, ownerSocket);
+      removeSocket(peer.id, peerSocket);
+    }
+  });
+
+  it('member leaves the group: removed for them, kept for others, realtime to both sides', async () => {
+    const owner = await createAndLoginUser(server, { nickname: 'leave_owner' });
+    const member = await createAndLoginUser(server, { nickname: 'leave_member' });
+    const other = await createAndLoginUser(server, { nickname: 'leave_other' });
+    await makeFriends(owner, member);
+    await makeFriends(owner, other);
+
+    const createRes = await server.inject({
+      method: 'POST',
+      url: '/api/groups',
+      headers: { authorization: `Bearer ${owner.accessToken}` },
+      payload: { name: 'Leave Crew', participantIds: [member.id, other.id] },
+    });
+    const group = JSON.parse(createRes.payload).group;
+
+    const memberSocket = { send: vi.fn() };
+    const otherSocket = { send: vi.fn() };
+    addSocket(member.id, memberSocket);
+    addSocket(other.id, otherSocket);
+    try {
+      // The OWNER cannot leave — leaving would orphan the group.
+      const ownerLeave = await server.inject({
+        method: 'POST',
+        url: `/api/groups/${group.id}/leave`,
+        headers: { authorization: `Bearer ${owner.accessToken}` },
+      });
+      expect(ownerLeave.statusCode).toBe(403);
+
+      // Active member leaves successfully.
+      const leaveRes = await server.inject({
+        method: 'POST',
+        url: `/api/groups/${group.id}/leave`,
+        headers: { authorization: `Bearer ${member.accessToken}` },
+      });
+      expect(leaveRes.statusCode).toBe(204);
+
+      // The leaving user is removed from the group and cannot message/read.
+      const listMine = await server.inject({
+        method: 'GET',
+        url: '/api/groups',
+        headers: { authorization: `Bearer ${member.accessToken}` },
+      });
+      const myList = JSON.parse(listMine.payload).groups;
+      expect(myList.some((g: { id: string }) => g.id === group.id)).toBe(false);
+      const sendAfter = await server.inject({
+        method: 'POST',
+        url: `/api/groups/${group.id}/messages`,
+        headers: { authorization: `Bearer ${member.accessToken}` },
+        payload: { content: 'depois de sair' },
+      });
+      expect(sendAfter.statusCode).toBe(403);
+
+      // The OTHER members still see the group.
+      const listOther = await server.inject({
+        method: 'GET',
+        url: '/api/groups',
+        headers: { authorization: `Bearer ${other.accessToken}` },
+      });
+      const otherList = JSON.parse(listOther.payload).groups;
+      expect(otherList.some((g: { id: string }) => g.id === group.id)).toBe(true);
+
+      // Realtime: the leaver's sockets get chat_group_deleted; the other
+      // member gets the chat_group_updated refresh (fresh member count).
+      expect(memberSocket.send).toHaveBeenCalledTimes(1);
+      const memberFrame = JSON.parse(memberSocket.send.mock.calls[0][0] as string);
+      expect(memberFrame.kind).toBe('chat_group_deleted');
+      expect(memberFrame.data.groupId).toBe(group.id);
+      const otherFrame = JSON.parse(otherSocket.send.mock.calls[0][0] as string);
+      expect(otherFrame.kind).toBe('chat_group_updated');
+      expect(otherFrame.data.group.memberCount).toBe(2); // owner + other
+    } finally {
+      removeSocket(member.id, memberSocket);
+      removeSocket(other.id, otherSocket);
+    }
+  });
+
+  it('leave is rejected for a user who is not an active member (banned)', async () => {
+    const owner = await createAndLoginUser(server, { nickname: 'leave2_owner' });
+    const member = await createAndLoginUser(server, { nickname: 'leave2_member' });
+    await makeFriends(owner, member);
+
+    const createRes = await server.inject({
+      method: 'POST',
+      url: '/api/groups',
+      headers: { authorization: `Bearer ${owner.accessToken}` },
+      payload: { name: 'Leave2 Crew', participantIds: [member.id] },
+    });
+    const group = JSON.parse(createRes.payload).group;
+
+    // The owner bans the member → they are no longer an ACTIVE member.
+    const banRes = await server.inject({
+      method: 'POST',
+      url: `/api/groups/${group.id}/members/${member.id}/ban`,
+      headers: { authorization: `Bearer ${owner.accessToken}` },
+    });
+    expect(banRes.statusCode).toBe(200);
+
+    // A banned user cannot call "Sair do grupo".
+    const leaveRes = await server.inject({
+      method: 'POST',
+      url: `/api/groups/${group.id}/leave`,
+      headers: { authorization: `Bearer ${member.accessToken}` },
+    });
+    expect(leaveRes.statusCode).toBe(403);
+  });
 });

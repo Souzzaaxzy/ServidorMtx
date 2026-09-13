@@ -2,9 +2,10 @@ import { prisma } from '../../config/prisma.js';
 import { ApiError } from '../../utils/errors.js';
 import { AUTHOR_SELECT, nicknameCosmetics } from '../../utils/dto.js';
 import { areFriends } from '../friends/friend.service.js';
-import { saveAudioFile } from '../uploads/upload.service.js';
+import { deleteLocalFileByUrl, saveAudioFile } from '../uploads/upload.service.js';
 import {
   dispatchChatGroupBanned,
+  dispatchChatGroupDeleted,
   dispatchChatGroupUpdated,
   dispatchChatMessage,
   dispatchChatMessageDeleted,
@@ -1193,6 +1194,107 @@ export async function hideGroup(
     update: {},
     create: { groupId, userId },
   });
+}
+
+// ── Permanently DELETE a group (owner-only) ────────────────
+// The owner destroys the group AND everything tied to it through a single
+// transaction: every membership row (active + banned), every per-user hide,
+// every message + per-message hide + reply references + audio files. The
+// row is really deleted — a deleted group can never reappear via a stale
+// cache/re-sync. All live sockets (every member, banned members included)
+// get a `chat_group_deleted` frame so open screens and cached lists drop it
+// immediately.
+export async function deleteGroup(
+  userId: string,
+  groupId: string,
+): Promise<void> {
+  await assertGroupOwner(groupId, userId);
+
+  const group = await prisma.group.findUnique({
+    where: { id: groupId },
+    select: { name: true, createdById: true },
+  });
+  if (!group) throw ApiError.notFound('Grupo não encontrado.');
+
+  const memberRows = await prisma.groupMember.findMany({
+    where: { groupId },
+    select: { userId: true },
+  });
+  const recipientIds = memberRows.map((r) => r.userId);
+
+  const voiceMessages = await prisma.message.findMany({
+    where: { groupId, type: 'voice' },
+    select: { audioUrl: true },
+  });
+
+  await prisma.$transaction(async (tx) => {
+    // Order matters on SQLite + Prisma: erase the child rows whose ON DELETE
+    // behavior could block or leave dangling references BEFORE the parent,
+    // so the final cascade has nothing left to fight over.
+    await tx.messageHide.deleteMany({ where: { message: { groupId } } });
+    await tx.message.deleteMany({ where: { groupId } });
+    await tx.groupMember.deleteMany({ where: { groupId } });
+    await tx.groupHidden.deleteMany({ where: { groupId } });
+    await tx.group.delete({ where: { id: groupId } });
+  });
+
+  // Best-effort: drop the persisted voice files referenced by this group.
+  for (const m of voiceMessages) {
+    if (!m.audioUrl) continue;
+    await deleteLocalFileByUrl(m.audioUrl).catch(() => void 0);
+  }
+
+  // Realtime fan-out — every participant (active + banned) is told the group
+  // is gone. Banned users receive it too so their stale list never holds a
+  // group they can't even see.
+  const frame = { groupId, groupName: group.name };
+  for (const id of recipientIds) {
+    dispatchChatGroupDeleted(id, frame);
+  }
+}
+
+// ── Leave a group (member-initiated) ────────────────────────
+// Removes ONLY the caller from the group. The group — its other members,
+// messages and history — keeps existing. The OWNER cannot leave without
+// destroying the group (there is no transfer mechanism in the current
+// architecture; leaving would orphan every member). Every other member gets
+// the standard `chat_group_updated` refresh so their member count / list
+// stay in sync without polling.
+export async function leaveGroup(
+  userId: string,
+  groupId: string,
+): Promise<void> {
+  const member = await assertGroupMembership(groupId, userId);
+  if (member.role === 'OWNER') {
+    throw ApiError.forbidden(
+      'O dono do grupo não pode sair. Para encerrar o grupo, use "Excluir grupo".',
+    );
+  }
+
+  await prisma.groupMember.delete({
+    where: { groupId_userId: { groupId, userId } },
+  });
+  await prisma.groupHidden.deleteMany({ where: { groupId, userId } });
+  await prisma.group.update({
+    where: { id: groupId },
+    data: { updatedAt: new Date() },
+  });
+
+  // The leaving user's own devices drop the group immediately; the other
+  // members get the standard group-updated refresh (fresh member count).
+  dispatchChatGroupDeleted(userId, {
+    groupId,
+    groupName: (await groupNameById(groupId)) ?? '',
+  });
+  await broadcastGroupUpdate(groupId, userId);
+}
+
+async function groupNameById(groupId: string): Promise<string | null> {
+  const group = await prisma.group.findUnique({
+    where: { id: groupId },
+    select: { name: true },
+  });
+  return group?.name ?? null;
 }
 
 // ── Unread groups badge (Chat tab) ─────────────────────────

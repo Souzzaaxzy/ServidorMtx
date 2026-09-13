@@ -158,6 +158,30 @@ export function dispatchChatGroupBanned(
 }
 
 /**
+ * `chat_group_deleted` frame dispatched to a user whose access to a group
+ * ended — either the group was permanently deleted by the owner (every
+ * membership row, active + banned) or the user left the group. The payload
+ * carries the group id + name so every live socket drops the group from its
+ * cache and closes any open group screen, without waiting for a 403/404 on
+ * the next read.
+ */
+export function dispatchChatGroupDeleted(
+  userId: string,
+  payload: { groupId: string; groupName: string },
+): void {
+  const live = sockets.get(userId);
+  if (!live) return;
+  const frame = JSON.stringify({ kind: 'chat_group_deleted', data: payload });
+  for (const socket of live) {
+    try {
+      socket.send(frame);
+    } catch (err) {
+      logger.warn({ err }, 'chat group deleted send failed');
+    }
+  }
+}
+
+/**
  * `chat_group_updated` frame dispatched to the OTHER members of a group when
  * the owner changes its identity (name/avatar/description) or membership.
  * The payload embeds the full `GroupHeader` so receivers can refresh the

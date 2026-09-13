@@ -6,12 +6,14 @@ import {
   banGroupMember,
   unbanGroupMember,
   createGroup,
+  deleteGroup,
   deleteGroupMessageForEveryone,
   deleteGroupMessageForMe,
   getGroupInfo,
   getGroupMessages,
   groupUnreadCount,
   hideGroup,
+  leaveGroup,
   listGroups,
   markGroupRead,
   sendGroupMessage,
@@ -330,6 +332,37 @@ export const groupRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     const { id } = request.params as { id: string };
     try {
       await hideGroup(request.user!.id, id);
+      return reply.status(204).send();
+    } catch (err) {
+      throw toApiError(err);
+    }
+  });
+
+  // PERMANENTLY DELETE the group — owner-only (server re-validates the
+  // persisted `createdById`; a forged client flag is never trusted). All
+  // membership rows (active + banned), per-user hides, messages, replies and
+  // voice files are removed in one transaction; every participant's live
+  // sockets get a `chat_group_deleted` frame. After this the group can never
+  // reappear or receive messages again.
+  app.delete('/groups/:id/permanent', { onRequest: [app.authenticate] }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    try {
+      await deleteGroup(request.user!.id, id);
+      return reply.status(204).send();
+    } catch (err) {
+      throw toApiError(err);
+    }
+  });
+
+  // SAIR DO GRUPO — member-initiated removal. Only an ACTIVE member may call
+  // it (server re-validates membership; the OWNER is rejected — leaving would
+  // orphan the group). The group keeps existing for the other members; the
+  // leaving user's sockets get `chat_group_deleted` and the others a
+  // `chat_group_updated` refresh.
+  app.post('/groups/:id/leave', { onRequest: [app.authenticate] }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    try {
+      await leaveGroup(request.user!.id, id);
       return reply.status(204).send();
     } catch (err) {
       throw toApiError(err);
