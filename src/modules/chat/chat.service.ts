@@ -68,13 +68,17 @@ export interface MessageItem {
    * original's PREVIEW is resolved server-side (never stored on this row);
    * null/invalid when not a reply or the original was deleted. */
   replyTo: ReplyInfo | null;
-  /** "text" (default) | "voice". Voice messages carry [audioUrl] +
-   * [durationMs] instead of rendering [content] as plain text. */
-  type: 'text' | 'voice' | string;
+  /** "text" (default) | "voice" | "image" | "video". Voice messages carry
+   * [audioUrl]+[durationMs]; media messages carry [imageUrl]/[videoUrl]. */
+  type: 'text' | 'voice' | 'image' | 'video' | string;
   /** Absolute URL of the persisted voice-message audio file (voice only). */
   audioUrl: string | null;
   /** Recorded length in milliseconds, validated server-side (3–60s). */
   durationMs: number | null;
+  /** Absolute URL of the persisted image (media messages only). */
+  imageUrl: string | null;
+  /** Absolute URL of the persisted video (media messages only). */
+  videoUrl: string | null;
 }
 
 /** Optional sender identity embedded on realtime incoming frames so the
@@ -456,8 +460,79 @@ async function toMessageItems(
       type: m.type ?? 'text',
       audioUrl: m.audioUrl ?? null,
       durationMs: m.durationMs ?? null,
+      imageUrl: m.imageUrl ?? null,
+      videoUrl: m.videoUrl ?? null,
     };
   });
+}
+
+// ── Send a media message (image/video) ───────────────────────
+// The file is ALREADY stored via the standard upload endpoints and the
+// client passes the resulting URL. This function persists the message
+// (type = "image"|"video", stable preview label) with the media reference,
+// validates the reply target belongs to the same conversation and fans the
+// message out via the SAME realtime channel as text/voice.
+export async function sendMediaMessage(
+  userId: string,
+  conversationId: string,
+  media: { kind: 'image' | 'video'; url: string; replyToMessageId?: string },
+): Promise<MessageItem> {
+  const conversation = await prisma.conversation.findUnique({
+    where: { id: conversationId },
+    select: { id: true, userOneId: true, userTwoId: true },
+  });
+  if (!conversation) throw ApiError.notFound('Conversa não encontrada.');
+  const isMember =
+    conversation.userOneId === userId || conversation.userTwoId === userId;
+  if (!isMember) {
+    throw ApiError.forbidden('Você não tem acesso a esta conversa.');
+  }
+  const otherId =
+    conversation.userOneId === userId
+      ? conversation.userTwoId
+      : conversation.userOneId;
+
+  if (media.replyToMessageId && media.replyToMessageId.trim()) {
+    const target = await prisma.message.findUnique({
+      where: { id: media.replyToMessageId },
+      select: { conversationId: true },
+    });
+    if (!target || target.conversationId !== conversationId) {
+      throw ApiError.invalidRequest('Mensagem respondida não encontrada.');
+    }
+  }
+
+  const label = media.kind === 'video' ? '🎥 Vídeo' : '📷 Foto';
+  const message = await prisma.message.create({
+    data: {
+      conversationId,
+      senderId: userId,
+      content: label,
+      type: media.kind,
+      ...(media.kind === 'image'
+        ? { imageUrl: media.url }
+        : { videoUrl: media.url }),
+      replyToMessageId: media.replyToMessageId?.trim() || null,
+    },
+  });
+
+  await prisma.conversation.update({
+    where: { id: conversationId },
+    data: { updatedAt: new Date() },
+  });
+  await prisma.conversationHidden.deleteMany({
+    where: { conversationId, userId: otherId },
+  });
+
+  const [recipientView] = await toMessageItems([message], conversationId, otherId);
+  const chatPeer = await chatPeerPayload(userId);
+  dispatchChatMessage(otherId, {
+    conversationId,
+    message: recipientView,
+    peer: chatPeer,
+  });
+  const [ownView] = await toMessageItems([message], conversationId, userId);
+  return ownView;
 }
 
 // ── Send a message ───────────────────────────────────────────

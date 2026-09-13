@@ -886,6 +886,89 @@ describe('Groups', () => {
     expect(leaveRes.statusCode).toBe(403);
   });
 
+  it('persists a group MEDIA message (image) with a reply reference and exposes it to peers', async () => {
+    const owner = await createAndLoginUser(server, { nickname: 'gmed_owner' });
+    const peer = await createAndLoginUser(server, { nickname: 'gmed_peer' });
+    await makeFriends(owner, peer);
+
+    const createRes = await server.inject({
+      method: 'POST',
+      url: '/api/groups',
+      headers: { authorization: `Bearer ${owner.accessToken}` },
+      payload: { name: 'Media Crew', participantIds: [peer.id] },
+    });
+    const group = JSON.parse(createRes.payload).group;
+
+    const baseRes = await server.inject({
+      method: 'POST',
+      url: `/api/groups/${group.id}/messages`,
+      headers: { authorization: `Bearer ${owner.accessToken}` },
+      payload: { content: 'base para foto' },
+    });
+    const baseId = JSON.parse(baseRes.payload).message.id;
+
+    const mediaRes = await server.inject({
+      method: 'POST',
+      url: `/api/groups/${group.id}/media`,
+      headers: { authorization: `Bearer ${owner.accessToken}` },
+      payload: {
+        kind: 'image',
+        url: 'https://cdn.matrix.app/static/img1.png',
+        replyToMessageId: baseId,
+      },
+    });
+    expect(mediaRes.statusCode).toBe(201);
+    const msg = JSON.parse(mediaRes.payload).message;
+    expect(msg.type).toBe('image');
+    expect(msg.imageUrl).toBe('https://cdn.matrix.app/static/img1.png');
+    expect(msg.replyTo?.id).toBe(baseId);
+
+    // The peer sees the image message (type + url).
+    const page = await server.inject({
+      method: 'GET',
+      url: `/api/groups/${group.id}/messages?limit=10`,
+      headers: { authorization: `Bearer ${peer.accessToken}` },
+    });
+    const found = JSON.parse(page.payload).messages.find(
+      (m: { id: string }) => m.id === msg.id,
+    );
+    expect(found.type).toBe('image');
+    expect(found.imageUrl).toBe('https://cdn.matrix.app/static/img1.png');
+  });
+
+  it('rejects group media sent by a NON-member (403) and invalid reply (400)', async () => {
+    const owner = await createAndLoginUser(server, { nickname: 'gmed2_owner' });
+    const peer = await createAndLoginUser(server, { nickname: 'gmed2_peer' });
+    const outsider = await createAndLoginUser(server, { nickname: 'gmed2_out' });
+    await makeFriends(owner, peer);
+
+    const createRes = await server.inject({
+      method: 'POST',
+      url: '/api/groups',
+      headers: { authorization: `Bearer ${owner.accessToken}` },
+      payload: { name: 'Media2 Crew', participantIds: [peer.id] },
+    });
+    const group = JSON.parse(createRes.payload).group;
+
+    // Outsider (not a member) cannot send media.
+    const forbidden = await server.inject({
+      method: 'POST',
+      url: `/api/groups/${group.id}/media`,
+      headers: { authorization: `Bearer ${outsider.accessToken}` },
+      payload: { kind: 'image', url: 'https://cdn/x.png' },
+    });
+    expect(forbidden.statusCode).toBe(403);
+
+    // Invalid reply target is rejected.
+    const bad = await server.inject({
+      method: 'POST',
+      url: `/api/groups/${group.id}/media`,
+      headers: { authorization: `Bearer ${owner.accessToken}` },
+      payload: { kind: 'video', url: 'https://cdn/x.mp4', replyToMessageId: 'nao-existe' },
+    });
+    expect(bad.statusCode).toBe(400);
+  });
+
   it('persists and resolves individual mentions (@user) with real user ids', async () => {
     const owner = await createAndLoginUser(server, { nickname: 'ment_owner' });
     const peer = await createAndLoginUser(server, { nickname: 'ment_peer' });

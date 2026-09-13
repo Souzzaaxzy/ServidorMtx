@@ -9,6 +9,7 @@ import {
   hideConversation,
   listConversations,
   markConversationRead,
+  sendMediaMessage,
   sendMessage,
   sendVoiceMessage,
   unreadConversationCount,
@@ -97,6 +98,30 @@ export const chatRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         parsed.data.content,
         parsed.data.replyToMessageId,
       );
+      return reply.status(201).send({ message });
+    } catch (err) {
+      throw toApiError(err);
+    }
+  });
+
+  // Send a MEDIA message (image/video) — the file is uploaded via the
+  // standard /api/uploads (image) or /api/uploads/video endpoints and the
+  // resulting URL is passed here with the kind. The server validates the URL
+  // shape, membership, and the reply target, then persists a "image"/"video"
+  // message and fans it out through the SAME realtime channel.
+  app.post('/conversations/:id/media', { onRequest: [app.authenticate] }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const mediaSchema = z.object({
+      kind: z.enum(['image', 'video']),
+      url: z.string().min(1).max(500),
+      replyToMessageId: z.string().min(1).max(64).optional(),
+    });
+    const parsed = mediaSchema.safeParse(request.body);
+    if (!parsed.success) {
+      throw ApiError.validation('Dados inválidos.', parsed.error.issues);
+    }
+    try {
+      const message = await sendMediaMessage(request.user!.id, id, parsed.data);
       return reply.status(201).send({ message });
     } catch (err) {
       throw toApiError(err);

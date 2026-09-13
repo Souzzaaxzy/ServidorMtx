@@ -91,6 +91,8 @@ export interface GroupMessageItem {
    type: 'text' | 'voice' | string;
    audioUrl: string | null;
    durationMs: number | null;
+   imageUrl: string | null;
+   videoUrl: string | null;
    /** Structured mentions: every mentioned user id + live nickname. */
    mentions: MentionInfo[];
    /** True when this message contains @todos. */
@@ -952,6 +954,8 @@ async function toGroupMessageItems(
       type: m.type ?? 'text',
       audioUrl: m.audioUrl ?? null,
       durationMs: m.durationMs ?? null,
+      imageUrl: m.imageUrl ?? null,
+      videoUrl: m.videoUrl ?? null,
       mentions,
       mentionAll,
       mentioned,
@@ -1138,6 +1142,64 @@ export async function sendGroupMessage(
   // correctly on each device. `peer` is the chunk sender identity for the
   // receiving app's avatar + notification.
  const peers = await otherMemberIds(groupId, userId);
+  const [ownView] = await toGroupMessageItems([message], groupId, userId);
+  for (const peerId of peers) {
+    const [peerView] = await toGroupMessageItems([message], groupId, peerId);
+    dispatchChatMessage(peerId, {
+      groupId,
+      message: peerView,
+      peer: await chatPeerPayload(userId),
+    });
+  }
+  return ownView;
+}
+
+/** Send a media message (image/video) to a GROUP. The file is already
+ * stored via the standard upload endpoints; this persists the message
+ * (type = "image"|"video", stable preview label) with the media reference,
+ * validates the reply target belongs to the SAME group and fans it out
+ * through the exact same realtime channel as text/voice. */
+export async function sendGroupMediaMessage(
+  userId: string,
+  groupId: string,
+  media: { kind: 'image' | 'video'; url: string; replyToMessageId?: string },
+): Promise<GroupMessageItem> {
+  await assertGroupMembership(groupId, userId);
+  if (media.replyToMessageId && media.replyToMessageId.trim()) {
+    const target = await prisma.message.findUnique({
+      where: { id: media.replyToMessageId },
+      select: { groupId: true },
+    });
+    if (!target || target.groupId !== groupId) {
+      throw ApiError.invalidRequest('Mensagem respondida não encontrada.');
+    }
+  }
+
+  const label = media.kind === 'video' ? '🎥 Vídeo' : '📷 Foto';
+  const message = await prisma.$transaction(async (tx) => {
+    const created = await tx.message.create({
+      data: {
+        groupId,
+        senderId: userId,
+        content: label,
+        type: media.kind,
+        ...(media.kind === 'image'
+          ? { imageUrl: media.url }
+          : { videoUrl: media.url }),
+        replyToMessageId: media.replyToMessageId?.trim() || null,
+      },
+    });
+    await tx.group.update({
+      where: { id: groupId },
+      data: { updatedAt: new Date() },
+    });
+    await tx.groupHidden.deleteMany({
+      where: { groupId, userId: { not: userId } },
+    });
+    return created;
+  });
+
+  const peers = await otherMemberIds(groupId, userId);
   const [ownView] = await toGroupMessageItems([message], groupId, userId);
   for (const peerId of peers) {
     const [peerView] = await toGroupMessageItems([message], groupId, peerId);

@@ -329,9 +329,15 @@ model Message {
   // NULL → text message. Non-null → a voice message: `type` is "voice",
   // `content` holds "🎤 Áudio", `audioUrl` points at the persisted file and
   // `durationMs` is the recorded length (3–60s, validated server-side).
+  // Media messages (image/video) also ride this table: `type` is "image" or
+  // "video", `content` holds a stable preview label, and the real file URL
+  // is stored in imageUrl/videoUrl (uploaded via the standard upload
+  // endpoints; validated server-side).
   type         String?
   audioUrl     String?
   durationMs   Int?
+  imageUrl     String?
+  videoUrl     String?
 
   // Soft-delete marker for "Excluir para todos". When set, the message is
   // hidden for BOTH participants (all read paths filter it out). The row + a

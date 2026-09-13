@@ -819,3 +819,112 @@ describe('Private chat', () => {
     expect(unauth.statusCode).toBe(401);
   });
 });
+
+describe('Private chat — mídia (foto/vídeo)', () => {
+  it('sends an image message and a video message (with reply) and they persist', async () => {
+    const a = await createAndLoginUser(server, { nickname: 'mx_media_a' });
+    const b = await createAndLoginUser(server, { nickname: 'mx_media_b' });
+    await makeFriends(a, b);
+
+    const convRes = await server.inject({
+      method: 'POST',
+      url: `/api/conversations/${b.id}`,
+      headers: { authorization: `Bearer ${a.accessToken}` },
+    });
+    const conv = JSON.parse(convRes.payload).conversation;
+
+    // Base text message to reply to.
+    const base = await server.inject({
+      method: 'POST',
+      url: `/api/conversations/${conv.id}/messages`,
+      headers: { authorization: `Bearer ${a.accessToken}` },
+      payload: { content: 'olha isso' },
+    });
+    const baseId = JSON.parse(base.payload).message.id;
+
+    // Image message.
+    const imgRes = await server.inject({
+      method: 'POST',
+      url: `/api/conversations/${conv.id}/media`,
+      headers: { authorization: `Bearer ${a.accessToken}` },
+      payload: {
+        kind: 'image',
+        url: 'https://cdn.matrix.app/static/img1.png',
+        replyToMessageId: baseId,
+      },
+    });
+    expect(imgRes.statusCode).toBe(201);
+    const img = JSON.parse(imgRes.payload).message;
+    expect(img.type).toBe('image');
+    expect(img.imageUrl).toBe('https://cdn.matrix.app/static/img1.png');
+    expect(img.replyTo?.id).toBe(baseId);
+
+    // Video message.
+    const vidRes = await server.inject({
+      method: 'POST',
+      url: `/api/conversations/${conv.id}/media`,
+      headers: { authorization: `Bearer ${a.accessToken}` },
+      payload: {
+        kind: 'video',
+        url: 'https://cdn.matrix.app/static/video/v1.mp4',
+      },
+    });
+    expect(vidRes.statusCode).toBe(201);
+    const vid = JSON.parse(vidRes.payload).message;
+    expect(vid.type).toBe('video');
+    expect(vid.videoUrl).toBe('https://cdn.matrix.app/static/video/v1.mp4');
+
+    // The peer reads the page and sees both media messages.
+    const page = await server.inject({
+      method: 'GET',
+      url: `/api/conversations/${conv.id}/messages?limit=10`,
+      headers: { authorization: `Bearer ${b.accessToken}` },
+    });
+    const messages = JSON.parse(page.payload).messages;
+    expect(messages.some((m: { id: string; type: string }) => m.id === img.id && m.type === 'image')).toBe(true);
+    expect(messages.some((m: { id: string; type: string }) => m.id === vid.id && m.type === 'video')).toBe(true);
+  });
+
+  it('rejects a media message with an invalid reply target (400)', async () => {
+    const a = await createAndLoginUser(server, { nickname: 'mx_media_bad' });
+    const b = await createAndLoginUser(server, { nickname: 'mx_media_bad2' });
+    await makeFriends(a, b);
+
+    const convRes = await server.inject({
+      method: 'POST',
+      url: `/api/conversations/${b.id}`,
+      headers: { authorization: `Bearer ${a.accessToken}` },
+    });
+    const conv = JSON.parse(convRes.payload).conversation;
+
+    const res = await server.inject({
+      method: 'POST',
+      url: `/api/conversations/${conv.id}/media`,
+      headers: { authorization: `Bearer ${a.accessToken}` },
+      payload: { kind: 'image', url: 'https://cdn/x.png', replyToMessageId: 'nao-existe' },
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('forbids sending media into a conversation the user does not belong to (403)', async () => {
+    const a = await createAndLoginUser(server, { nickname: 'mx_media_intr' });
+    const b = await createAndLoginUser(server, { nickname: 'mx_media_intr2' });
+    const intruder = await createAndLoginUser(server, { nickname: 'mx_media_intr3' });
+    await makeFriends(a, b);
+
+    const convRes = await server.inject({
+      method: 'POST',
+      url: `/api/conversations/${b.id}`,
+      headers: { authorization: `Bearer ${a.accessToken}` },
+    });
+    const conv = JSON.parse(convRes.payload).conversation;
+
+    const res = await server.inject({
+      method: 'POST',
+      url: `/api/conversations/${conv.id}/media`,
+      headers: { authorization: `Bearer ${intruder.accessToken}` },
+      payload: { kind: 'image', url: 'https://cdn/x.png' },
+    });
+    expect(res.statusCode).toBe(403);
+  });
+});

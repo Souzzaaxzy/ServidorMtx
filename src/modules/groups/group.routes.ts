@@ -17,6 +17,7 @@ import {
   leaveGroup,
   listGroups,
   markGroupRead,
+  sendGroupMediaMessage,
   sendGroupMessage,
   sendGroupVoiceMessage,
   setGroupRecording,
@@ -235,6 +236,28 @@ export const groupRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         parsed.data.mentionUserIds,
         parsed.data.mentionAll,
       );
+      return reply.status(201).send({ message });
+    } catch (err) {
+      throw toApiError(err);
+    }
+  });
+
+  // MEDIA group message (image/video) — the file is uploaded via the
+  // standard upload endpoints; here the client passes kind + url (and an
+  // optional reply). Server validates membership, URL and reply target.
+  app.post('/groups/:id/media', { onRequest: [app.authenticate] }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const mediaSchema = z.object({
+      kind: z.enum(['image', 'video']),
+      url: z.string().min(1).max(500),
+      replyToMessageId: z.string().min(1).max(64).optional(),
+    });
+    const parsed = mediaSchema.safeParse(request.body);
+    if (!parsed.success) {
+      throw ApiError.validation('Dados inválidos.', parsed.error.issues);
+    }
+    try {
+      const message = await sendGroupMediaMessage(request.user!.id, id, parsed.data);
       return reply.status(201).send({ message });
     } catch (err) {
       throw toApiError(err);
