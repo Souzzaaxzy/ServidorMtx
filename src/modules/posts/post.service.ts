@@ -22,6 +22,7 @@ export async function createPost(
       text: input.text?.trim() || null,
       imageUrl: input.imageUrl ?? null,
       videoUrl: input.videoUrl ?? null,
+      thumbnailUrl: input.thumbnailUrl ?? null,
     },
     include: {
       ...FEED_INCLUDE,

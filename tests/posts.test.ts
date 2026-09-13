@@ -279,6 +279,44 @@ describe('Posts — vídeos', () => {
     expect(res.statusCode).toBe(400);
   });
 
+  it('persists a video post with a thumbnailUrl (capa) and exposes it in the feed', async () => {
+    const u = await createAndLoginUser(server, { nickname: 'vid_cover' });
+    const postRes = await server.inject({
+      method: 'POST',
+      url: '/api/posts',
+      headers: { authorization: `Bearer ${u.accessToken}` },
+      payload: {
+        text: 'vídeo com capa',
+        videoUrl: '/static/video/v2.mp4',
+        thumbnailUrl: '/static/cover.png',
+      },
+    });
+    expect(postRes.statusCode).toBe(201);
+    const post = JSON.parse(postRes.payload);
+    expect(post.videoUrl).toBe('/static/video/v2.mp4');
+    expect(post.thumbnailUrl).toBe('/static/cover.png');
+
+    const feed = await server.inject({
+      method: 'GET',
+      url: '/api/posts',
+      headers: { authorization: `Bearer ${u.accessToken}` },
+    });
+    const body = JSON.parse(feed.payload);
+    const found = body.posts.find((p: { id: string }) => p.id === post.id);
+    expect(found.thumbnailUrl).toBe('/static/cover.png');
+  });
+
+  it('rejects a thumbnailUrl without a videoUrl (400)', async () => {
+    const u = await createAndLoginUser(server, { nickname: 'vid_covbad' });
+    const res = await server.inject({
+      method: 'POST',
+      url: '/api/posts',
+      headers: { authorization: `Bearer ${u.accessToken}` },
+      payload: { text: 'x', thumbnailUrl: '/static/cover.png' },
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
   it('deleting a video post cleans its stored file reference', async () => {
     const u = await createAndLoginUser(server, { nickname: 'vid_del' });
     const upRes = await server.inject({

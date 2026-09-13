@@ -102,6 +102,11 @@ model Post {
   // (text-only posts keep both null). Kept as a separate nullable column so
   // existing image posts are fully untouched.
   videoUrl  String?
+  // Cover/thumbnail of a VIDEO post (generated client-side from the video and
+  // uploaded like an image; served via /static/...). Null for image/text
+  // posts and for OLD videos without a cover (the app falls back to a dark
+  // tile + play badge). Persisted so the cover survives restarts/reloads.
+  thumbnailUrl String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

@@ -25,6 +25,7 @@ export const createPostSchema = z
     text: z.string().trim().max(2000, 'Texto muito longo').optional().nullable(),
     imageUrl: imageUrlSchema.optional().nullable(),
     videoUrl: videoUrlSchema.optional().nullable(),
+    thumbnailUrl: imageUrlSchema.optional().nullable(),
   })
   .refine(
     (data) =>
@@ -35,6 +36,9 @@ export const createPostSchema = z
   )
   .refine((data) => !(data.imageUrl && data.videoUrl), {
     message: 'A publicação não pode conter imagem e vídeo ao mesmo tempo.',
+  })
+  .refine((data) => !data.thumbnailUrl || !!data.videoUrl, {
+    message: 'A capa só pode ser definida para publicações com vídeo.',
   });
 
 export const feedQuerySchema = z.object({
