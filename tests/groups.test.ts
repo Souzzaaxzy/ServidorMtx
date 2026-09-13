@@ -515,4 +515,167 @@ describe('Groups', () => {
     });
     expect(peerOwnDel.statusCode).toBe(204);
   });
+
+  it('ban → re-add blocked (banned ≠ member), unban → active again, messages tagged banned', async () => {
+    const owner = await createAndLoginUser(server, { nickname: 'cycle_owner' });
+    const peer = await createAndLoginUser(server, { nickname: 'cycle_peer' });
+    await makeFriends(owner, peer);
+
+    const createRes = await server.inject({
+      method: 'POST',
+      url: '/api/groups',
+      headers: { authorization: `Bearer ${owner.accessToken}` },
+      payload: { name: 'Cycle Crew', participantIds: [peer.id] },
+    });
+    expect(createRes.statusCode).toBe(201);
+    const group = JSON.parse(createRes.payload).group;
+
+    // The peer sends a message BEFORE the ban — it must survive the ban and
+    // be tagged as belonging to a currently-banned sender.
+    const sendRes = await server.inject({
+      method: 'POST',
+      url: `/api/groups/${group.id}/messages`,
+      headers: { authorization: `Bearer ${peer.accessToken}` },
+      payload: { content: 'mensagem pré-banimento' },
+    });
+    expect(sendRes.statusCode).toBe(201);
+    const messageId = JSON.parse(sendRes.payload).message.id;
+    expect(JSON.parse(sendRes.payload).message.sender.banned).toBe(false);
+
+    // Owner bans the peer.
+    const banRes = await server.inject({
+      method: 'POST',
+      url: `/api/groups/${group.id}/members/${peer.id}/ban`,
+      headers: { authorization: `Bearer ${owner.accessToken}` },
+    });
+    expect(banRes.statusCode).toBe(200);
+    expect(JSON.parse(banRes.payload).group.group.memberCount).toBe(1);
+
+    // Group info: the peer is NOT in the active members and IS in
+    // bannedMembers (state separation, history preserved).
+    const infoRes = await server.inject({
+      method: 'GET',
+      url: `/api/groups/${group.id}`,
+      headers: { authorization: `Bearer ${owner.accessToken}` },
+    });
+    expect(infoRes.statusCode).toBe(200);
+    const info = JSON.parse(infoRes.payload);
+    expect(info.group.memberCount).toBe(1);
+    expect(info.members.some((m: { id: string }) => m.id === peer.id)).toBe(false);
+    expect(info.bannedMembers.some((m: { id: string }) => m.id === peer.id)).toBe(true);
+
+    // The pre-ban message is still readable and its sender is flagged banned.
+    const pageRes = await server.inject({
+      method: 'GET',
+      url: `/api/groups/${group.id}/messages?limit=10`,
+      headers: { authorization: `Bearer ${owner.accessToken}` },
+    });
+    const page = JSON.parse(pageRes.payload);
+    const oldMessage = page.messages.find((m: { id: string }) => m.id === messageId);
+    expect(oldMessage).toBeDefined();
+    expect(oldMessage.sender.banned).toBe(true);
+
+    // Attempting to re-add the BANNED peer must NOT say "já participa do
+    // grupo" — the system must recognize the banned (non-active) state.
+    const readdRes = await server.inject({
+      method: 'POST',
+      url: `/api/groups/${group.id}/members`,
+      headers: { authorization: `Bearer ${owner.accessToken}` },
+      payload: { userId: peer.id },
+    });
+    expect(readdRes.statusCode).toBe(400);
+    const readdError = JSON.parse(readdRes.payload).error?.message ?? '';
+    expect(readdError).toContain('banido');
+    expect(readdError).not.toContain('já participa');
+
+    // A NON-owner cannot unban.
+    const outsider = await createAndLoginUser(server, { nickname: 'cycle_out' });
+    const outsiderUnban = await server.inject({
+      method: 'POST',
+      url: `/api/groups/${group.id}/members/${peer.id}/unban`,
+      headers: { authorization: `Bearer ${outsider.accessToken}` } as never,
+    });
+    expect(outsiderUnban.statusCode).toBe(403);
+
+    // Owner unbans → the peer is an ACTIVE member again.
+    const unbanRes = await server.inject({
+      method: 'POST',
+      url: `/api/groups/${group.id}/members/${peer.id}/unban`,
+      headers: { authorization: `Bearer ${owner.accessToken}` },
+    });
+    expect(unbanRes.statusCode).toBe(200);
+    expect(JSON.parse(unbanRes.payload).group.group.memberCount).toBe(2);
+
+    const afterInfo = JSON.parse((await server.inject({
+      method: 'GET',
+      url: `/api/groups/${group.id}`,
+      headers: { authorization: `Bearer ${owner.accessToken}` },
+    })).payload);
+    expect(afterInfo.members.some((m: { id: string }) => m.id === peer.id)).toBe(true);
+    expect(afterInfo.bannedMembers).toHaveLength(0);
+
+    // The same message now renders with banned=false again.
+    const afterPage = JSON.parse((await server.inject({
+      method: 'GET',
+      url: `/api/groups/${group.id}/messages?limit=10`,
+      headers: { authorization: `Bearer ${owner.accessToken}` },
+    })).payload);
+    const afterOld = afterPage.messages.find((m: { id: string }) => m.id === messageId);
+    expect(afterOld.sender.banned).toBe(false);
+
+    // Unbanning a NON-banned member is rejected.
+    const doubleUnban = await server.inject({
+      method: 'POST',
+      url: `/api/groups/${group.id}/members/${peer.id}/unban`,
+      headers: { authorization: `Bearer ${owner.accessToken}` },
+    });
+    expect(doubleUnban.statusCode).toBe(400);
+
+    // Re-adding the peer now (active member) yields the standard message.
+    const readdActive = await server.inject({
+      method: 'POST',
+      url: `/api/groups/${group.id}/members`,
+      headers: { authorization: `Bearer ${owner.accessToken}` },
+      payload: { userId: peer.id },
+    });
+    expect(readdActive.statusCode).toBe(400);
+    expect(JSON.parse(readdActive.payload).error?.message).toContain('já participa');
+  });
+
+  it('ban realtime broadcast carries bannedUserIds for other members', async () => {
+    const owner = await createAndLoginUser(server, { nickname: 'bw_owner' });
+    const peer = await createAndLoginUser(server, { nickname: 'bw_peer' });
+    const watcher = await createAndLoginUser(server, { nickname: 'bw_watcher' });
+    await makeFriends(owner, peer);
+    await makeFriends(owner, watcher);
+
+    const createRes = await server.inject({
+      method: 'POST',
+      url: '/api/groups',
+      headers: { authorization: `Bearer ${owner.accessToken}` },
+      payload: { name: 'Broadcast Crew', participantIds: [peer.id, watcher.id] },
+    });
+    expect(createRes.statusCode).toBe(201);
+    const group = JSON.parse(createRes.payload).group;
+
+    const watcherSocket = { send: vi.fn() };
+    addSocket(watcher.id, watcherSocket);
+    try {
+      const banRes = await server.inject({
+        method: 'POST',
+        url: `/api/groups/${group.id}/members/${peer.id}/ban`,
+        headers: { authorization: `Bearer ${owner.accessToken}` },
+      });
+      expect(banRes.statusCode).toBe(200);
+
+      // The OTHER member receives a chat_group_updated frame whose payload
+      // lists the banned user id, so open screens can tag messages live.
+      const frame = JSON.parse(watcherSocket.send.mock.calls[0][0] as string);
+      expect(frame.kind).toBe('chat_group_updated');
+      expect(frame.data.bannedUserIds).toEqual([peer.id]);
+      expect(frame.data.group.memberCount).toBe(2); // owner + watcher
+    } finally {
+      removeSocket(watcher.id, watcherSocket);
+    }
+  });
 });

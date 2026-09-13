@@ -39,6 +39,10 @@ export interface ChatUser {
   nameColorId: string | null;
   frameId: string | null;
    frameAsset: string | null;
+  /** Group-scoped ban state: true when this user is CURRENTLY banned from the
+   * group the payload belongs to (set only in group-message senders). Private
+   * chat peers never carry it — the flag is meaningless outside a group. */
+  banned: boolean;
 }
 
 export interface GroupHeader {
@@ -110,36 +114,49 @@ export interface GroupMessagePage {
 }
 
 export const CHAT_USER_SELECT = AUTHOR_SELECT;
-
 function toChatUser(
-  
+
   user: { id: string; nickname: string; avatarUrl: string | null } & {
     equippedItems?: {
-  
+
       slot: string;
       item: { id: string; name: string; assetUrl: string; config: string };
     }[];
   },
+  banned = false,
 ): ChatUser {
   const cosmetics = nicknameCosmetics(user);
   return {
-  
+
     id: user.id,
     nickname: user.nickname,
     avatarUrl: user.avatarUrl,
     ...cosmetics,
+    banned,
   };
 }
 
 async function mapChatUsers(
  senderIds: string[],
+ groupId?: string,
 ): Promise<Map<string, ChatUser>> {
  if (senderIds.length === 0) return new Map();
  const users = await prisma.user.findMany({
    where: { id: { in: senderIds } },
    select: CHAT_USER_SELECT,
  });
- return new Map(users.map((u) => [u.id, toChatUser(u)]));
+ // Group-scoped ban state: only meaningful in group contexts. Resolved from
+ // the SAME membership row the read paths enforce, so the flag always
+ // matches the persisted state (never a client-supplied value).
+ let bannedIds = new Set<string>();
+ if (groupId) {
+   const rows = await prisma.groupMember.findMany({
+     where: { groupId, userId: { in: senderIds }, bannedAt: { not: null } },
+     select: { userId: true },
+   });
+   bannedIds = new Set(rows.map((r) => r.userId));
+ }
+ return new Map(users.map((u) => [u.id, toChatUser(u, bannedIds.has(u.id))]));
 }
 
 async function chatPeerPayload(userId: string): Promise<ChatPeerPayload> {
@@ -326,7 +343,11 @@ export async function createGroup(
 export async function getGroupInfo(
   userId: string,
   groupId: string,
-): Promise<{ group: GroupHeader; members: { id: string; nickname: string; avatarUrl: string | null; isOwner: boolean }[] }> {
+): Promise<{
+  group: GroupHeader;
+  members: { id: string; nickname: string; avatarUrl: string | null; isOwner: boolean }[];
+  bannedMembers: { id: string; nickname: string; avatarUrl: string | null }[];
+}> {
 
   await assertGroupMembership(groupId, userId);
 
@@ -335,6 +356,15 @@ export async function getGroupInfo(
     include: { members: { where: { bannedAt: null }, select: { role: true, user: { select: { id: true, nickname: true, avatarUrl: true } } } } },
   });
   if (!group) throw ApiError.notFound('Grupo não encontrado.');
+
+  // Banned participants are NOT active members — they never appear in the
+  // member list/count. They are returned separately (id/nickname/avatar) so
+  // the owner UI can list them and unban without ever confusing them with
+  // active members.
+  const bannedMemberRows = await prisma.groupMember.findMany({
+    where: { groupId, bannedAt: { not: null } },
+    select: { user: { select: { id: true, nickname: true, avatarUrl: true } } },
+  });
 
   const memberIds = group.members.map((m) => m.user.id);
   return {
@@ -351,6 +381,11 @@ export async function getGroupInfo(
       nickname: m.user.nickname,
       avatarUrl: m.user.avatarUrl,
       isOwner: m.user.id === group.createdById,
+    })),
+    bannedMembers: bannedMemberRows.map((b) => ({
+      id: b.user.id,
+      nickname: b.user.nickname,
+      avatarUrl: b.user.avatarUrl,
     })),
   };
 }
@@ -438,11 +473,23 @@ export async function addGroupMember(
     throw ApiError.invalidRequest('Você já participa deste grupo.');
   }
 
+  // The membership row is KEPT when a user is banned (bannedAt set) so
+  // history is preserved. Re-adding must therefore distinguish an ACTIVE
+  // member (bannedAt null) from a BANNED one — a banned user is NOT an
+  // active member and needs to be unbanned first, not reported as
+  // "já participa do grupo".
   const existing = await prisma.groupMember.findUnique({
     where: { groupId_userId: { groupId, userId: newUserId } },
-    select: { id: true },
+    select: { id: true, bannedAt: true },
   });
-  if (existing) throw ApiError.invalidRequest('Esse usuário já participa do grupo.');
+  if (existing) {
+    if (existing.bannedAt) {
+      throw ApiError.invalidRequest(
+        'Este usuário está banido deste grupo. Desbanir antes de adicionar.',
+      );
+    }
+    throw ApiError.invalidRequest('Esse usuário já participa do grupo.');
+  }
 
 
 
@@ -527,6 +574,49 @@ export async function banGroupMember(
   return loadGroupConversationItem(groupId, userId);
 }
 
+/** Owner-only unban: clears the `bannedAt`/`bannedById` markers on the
+ * membership row so the user becomes an ACTIVE member again (same row,
+ * history preserved) and can be re-added / access the group normally.
+ * Requires the target to be a currently-banned member; unbunning a non-banned
+ * member or the OWNER is rejected. Broadcasts the fresh header to the other
+ * members (the unbanned user included) so client state stays in sync. */
+export async function unbanGroupMember(
+  userId: string,
+  groupId: string,
+  targetUserId: string,
+): Promise<GroupConversationItem> {
+
+  await assertGroupOwner(groupId, userId);
+
+  if (targetUserId === userId) {
+    throw ApiError.invalidRequest('O dono do grupo não é um membro banido.');
+  }
+
+  const target = await prisma.groupMember.findUnique({
+    where: { groupId_userId: { groupId, userId: targetUserId } },
+    select: { id: true, role: true, bannedAt: true },
+  });
+  if (!target) throw ApiError.notFound('Usuário não está no grupo.');
+  if (!target.bannedAt) {
+    throw ApiError.invalidRequest('Este usuário não está banido deste grupo.');
+  }
+
+  await prisma.groupMember.update({
+    where: { id: target.id },
+    data: { bannedAt: null, bannedById: null },
+  });
+
+  await prisma.group.update({
+    where: { id: groupId },
+    data: { updatedAt: new Date() },
+  });
+
+  // The unbanned user is an ACTIVE member again → include them in the fan-out
+  // so their cached list/screen refreshes like every other member.
+  await broadcastGroupUpdate(groupId, userId);
+  return loadGroupConversationItem(groupId, userId);
+}
+
 /** Realtime fan-out-of a fresh `GroupHeader` to every member (except the
  * acting user). Called after every owner edit so receivers never poll.. */
 
@@ -541,6 +631,15 @@ async function broadcastGroupUpdate(groupId: string, actingUserId: string): Prom
     where: { groupId, bannedAt: null },
     select: { id: true },
   });
+
+  // Banned sender ids (full list) for the realtime payload — open
+  // conversation screens use them to tag "banido(a)" on the affected
+  // messages live (group-scoped, never leaked to other groups).
+  const bannedRows = await prisma.groupMember.findMany({
+    where: { groupId, bannedAt: { not: null } },
+    select: { userId: true },
+  });
+  const bannedUserIds = bannedRows.map((r) => r.userId);
 
   const group = await prisma.group.findUnique({
     where: { id: groupId },
@@ -557,6 +656,7 @@ async function broadcastGroupUpdate(groupId: string, actingUserId: string): Prom
 
   const payload = {
     groupId,
+    bannedUserIds,
     group: {
       id: groupId,
       name: group.name,
@@ -740,7 +840,7 @@ async function toGroupMessageItems(
   }
 
   const senderIds = [...new Set(messages.map((m) => m.senderId))];
-  const users = await mapChatUsers(senderIds);
+  const users = await mapChatUsers(senderIds, groupId);
 
   return messages.map((m) => {
     let replyTo: ReplyInfo | null = null;

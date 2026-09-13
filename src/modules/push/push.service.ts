@@ -165,7 +165,7 @@ export function dispatchChatGroupBanned(
  */
 export function dispatchChatGroupUpdated(
   userIds: string[],
-  payload: { groupId: string; group: Record<string, unknown> },
+  payload: { groupId: string; bannedUserIds?: string[]; group: Record<string, unknown> },
 ): void {
   for (const userId of userIds) {
     const live = sockets.get(userId);

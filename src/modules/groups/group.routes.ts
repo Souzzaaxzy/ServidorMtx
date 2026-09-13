@@ -4,6 +4,7 @@ import { ApiError, toApiError } from '../../utils/errors.js';
 import {
   addGroupMember,
   banGroupMember,
+  unbanGroupMember,
   createGroup,
   deleteGroupMessageForEveryone,
   deleteGroupMessageForMe,
@@ -137,6 +138,20 @@ export const groupRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     const { id, userId } = request.params as { id: string; userId: string };
     try {
       const group = await banGroupMember(request.user!.id, id, userId);
+      return reply.send({ group });
+    } catch (err) {
+      throw toApiError(err);
+    }
+  });
+
+  // Owner-only: UNBAN a member (server-authoritative). Clears the
+  // `bannedAt` marker so the user is an ACTIVE member again and can be
+  // re-added / access the group normally. The row and message history stay
+  // intact; the header broadcast refreshes every remaining member.
+  app.post('/groups/:id/members/:userId/unban', { onRequest: [app.authenticate] }, async (request, reply) => {
+    const { id, userId } = request.params as { id: string; userId: string };
+    try {
+      const group = await unbanGroupMember(request.user!.id, id, userId);
       return reply.send({ group });
     } catch (err) {
       throw toApiError(err);
