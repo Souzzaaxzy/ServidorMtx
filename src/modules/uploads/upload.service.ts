@@ -4,7 +4,11 @@ import { randomBytes } from 'node:crypto';
 import type { Readable } from 'node:stream';
 import { env } from '../../config/env.js';
 import { ApiError } from '../../utils/errors.js';
-import { validateAudioBuffer, validateImageBuffer } from '../../utils/storage.js';
+import {
+  validateAudioBuffer,
+  validateImageBuffer,
+  validateVideoBuffer,
+} from '../../utils/storage.js';
 
 const UPLOAD_DIR = path.resolve(process.cwd(), 'uploads');
 
@@ -133,4 +137,28 @@ export async function saveAudioFile(
   await fs.writeFile(dest, buffer);
   const url = `${publicBase()}/static/audio/${name}`;
   return { filename: name, mimetype: 'audio/mp4', size: buffer.length, url };
+}
+
+/**
+ * Stores a video file for a Post. The REAL bytes are validated (MP4/ISOBMFF
+ * magic + brand — never the declared extension) and the size is capped at
+ * [MAX_VIDEO_BYTES]. Stored under `uploads/video/<random>.mp4` and returned
+ * as an absolute URL served by `/static/`.
+ */
+export async function saveVideoFile(
+  stream: Readable,
+): Promise<StoredFile> {
+  const buffer = await readStream(stream);
+  const ext = validateVideoBuffer(buffer); // returns 'mp4'
+  await fs.mkdir(path.join(UPLOAD_DIR, 'video'), { recursive: true });
+  const name = `${randomBytes(16).toString('hex')}.${ext}`;
+  const dest = path.join(UPLOAD_DIR, 'video', name);
+  await fs.writeFile(dest, buffer);
+  const url = `${publicBase()}/static/video/${name}`;
+  return { filename: name, mimetype: 'video/mp4', size: buffer.length, url };
+}
+
+/** Best-effort deletion of a video file referenced by a /static/video URL. */
+export async function deleteVideoFileByUrl(url: string): Promise<void> {
+  await deleteLocalFileByUrl(url).catch(() => void 0);
 }

@@ -169,3 +169,146 @@ describe('Posts — feed + create + delete', () => {
     expect(res.statusCode).toBe(403);
   });
 });
+
+describe('Posts — vídeos', () => {
+  // Minimal valid MP4/ISOBMFF (ftyp box with mp42 brand) that passes the
+  // server's real-bytes validation without requiring an actual encoded video.
+  function mp4Fixture(): Buffer {
+    const box = Buffer.alloc(32);
+    box.writeUInt32BE(32, 0);
+    box.write('ftyp', 4, 'latin1');
+    box.write('mp42', 8, 'latin1');
+    box.writeUInt32BE(0, 12);
+    box.writeUInt32BE(0, 16);
+    box.writeUInt32BE(0, 20);
+    box.writeUInt32BE(0, 24);
+    box.writeUInt32BE(0, 28);
+    return box;
+  }
+
+  function multipartBody(bytes: Buffer, filename: string): Buffer {
+    const boundary = '----matrix-video-test-boundary-x7';
+    const preamble = Buffer.from(
+      `--${boundary}\r\n` +
+        'Content-Disposition: form-data; name="file"; ' +
+        `filename="${filename}"\r\n` +
+        'Content-Type: video/mp4\r\n\r\n',
+      'utf8',
+    );
+    const epilogue = Buffer.from(`\r\n--${boundary}--\r\n`, 'utf8');
+    return Buffer.concat([preamble, bytes, epilogue]);
+  }
+
+  it('uploads a video and creates a post with videoUrl (feed exposes it)', async () => {
+    const u = await createAndLoginUser(server, { nickname: 'vid_poster' });
+
+    // Upload a valid MP4.
+    const upRes = await server.inject({
+      method: 'POST',
+      url: '/api/uploads/video',
+      headers: {
+        authorization: `Bearer ${u.accessToken}`,
+        'content-type': 'multipart/form-data; boundary=----matrix-video-test-boundary-x7',
+      },
+      payload: multipartBody(mp4Fixture(), 'clip.mp4'),
+    });
+    expect(upRes.statusCode).toBe(201);
+    const uploaded = JSON.parse(upRes.payload);
+    expect(uploaded.url).toMatch(/\/static\/video\/.+\.mp4$/);
+
+    // Create a post referencing the uploaded video.
+    const postRes = await server.inject({
+      method: 'POST',
+      url: '/api/posts',
+      headers: { authorization: `Bearer ${u.accessToken}` },
+      payload: { text: 'meu vídeo', videoUrl: uploaded.url },
+    });
+    expect(postRes.statusCode).toBe(201);
+    const post = JSON.parse(postRes.payload);
+    expect(post.videoUrl).toBe(uploaded.url);
+    expect(post.imageUrl).toBeNull();
+
+    // The feed exposes videoUrl.
+    const feed = await server.inject({
+      method: 'GET',
+      url: '/api/posts',
+      headers: { authorization: `Bearer ${u.accessToken}` },
+    });
+    const body = JSON.parse(feed.payload);
+    expect(body.posts.some((p: { id: string; videoUrl: string | null }) =>
+        p.id === post.id && p.videoUrl === uploaded.url)).toBe(true);
+  });
+
+  it('rejects fake videos (wrong magic) even with .mp4 name', async () => {
+    const u = await createAndLoginUser(server, { nickname: 'vid_fake' });
+    const res = await server.inject({
+      method: 'POST',
+      url: '/api/uploads/video',
+      headers: {
+        authorization: `Bearer ${u.accessToken}`,
+        'content-type': 'multipart/form-data; boundary=----matrix-video-test-boundary-x7',
+      },
+      payload: multipartBody(Buffer.from('não é um mp4 de verdade...', 'utf8'), 'fake.mp4'),
+    });
+    expect(res.statusCode).toBe(415);
+  });
+
+  it('rejects a post with BOTH imageUrl and videoUrl', async () => {
+    const u = await createAndLoginUser(server, { nickname: 'vid_both' });
+    const res = await server.inject({
+      method: 'POST',
+      url: '/api/posts',
+      headers: { authorization: `Bearer ${u.accessToken}` },
+      payload: {
+        text: 'dupla',
+        imageUrl: '/static/img.png',
+        videoUrl: '/static/video/x.mp4',
+      },
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('rejects an invalid videoUrl', async () => {
+    const u = await createAndLoginUser(server, { nickname: 'vid_badurl' });
+    const res = await server.inject({
+      method: 'POST',
+      url: '/api/posts',
+      headers: { authorization: `Bearer ${u.accessToken}` },
+      payload: { text: 'x', videoUrl: 'javascript:alert(1)' },
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('deleting a video post cleans its stored file reference', async () => {
+    const u = await createAndLoginUser(server, { nickname: 'vid_del' });
+    const upRes = await server.inject({
+      method: 'POST',
+      url: '/api/uploads/video',
+      headers: {
+        authorization: `Bearer ${u.accessToken}`,
+        'content-type': 'multipart/form-data; boundary=----matrix-video-test-boundary-x7',
+      },
+      payload: multipartBody(mp4Fixture(), 'del.mp4'),
+    });
+    const url = JSON.parse(upRes.payload).url as string;
+
+    const postRes = await server.inject({
+      method: 'POST',
+      url: '/api/posts',
+      headers: { authorization: `Bearer ${u.accessToken}` },
+      payload: { text: 'apagar', videoUrl: url },
+    });
+    const post = JSON.parse(postRes.payload);
+
+    const del = await server.inject({
+      method: 'DELETE',
+      url: `/api/posts/${post.id}`,
+      headers: { authorization: `Bearer ${u.accessToken}` },
+    });
+    expect(del.statusCode).toBe(204);
+
+    // The stored row is gone.
+    const row = await prisma.post.findUnique({ where: { id: post.id } });
+    expect(row).toBeNull();
+  });
+});

@@ -192,6 +192,7 @@ export interface FeedPost {
   id: string;
   text: string | null;
   imageUrl: string | null;
+  videoUrl: string | null;
   createdAt: string;
   author: Pick<PublicUser, 'id' | 'nickname' | 'avatarUrl'> & NicknameCosmeticsPayload;
   likeCount: number;
@@ -218,6 +219,7 @@ export function toFeedPost(
     id: post.id,
     text: post.text,
     imageUrl: post.imageUrl,
+    videoUrl: post.videoUrl,
     createdAt: post.createdAt.toISOString(),
     author: {
       id: post.user.id,

@@ -96,6 +96,12 @@ model Post {
   userId    String
   text      String?
   imageUrl  String?
+  // Video publication: when set the post's media is a VIDEO (uploaded via
+  // /api/uploads/video and served from /static/video/...). imageUrl stays
+  // for image posts; exactly one media slot is used at a time on the client
+  // (text-only posts keep both null). Kept as a separate nullable column so
+  // existing image posts are fully untouched.
+  videoUrl  String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

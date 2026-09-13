@@ -166,3 +166,41 @@ export function validateAudioBuffer(buffer: Buffer): string {
   }
   return detectAudioExtension(buffer);
 }
+
+// ── Video validation ──────────────────────────────────────────
+// Post videos are MP4/ISOBMFF (the widely-supported Android container). We
+// verify the REAL bytes (ftyp box + brand) so a spoofed ".mp4" can never
+// bypass the type check. Size is capped by [MAX_VIDEO_BYTES].
+export const MAX_VIDEO_BYTES = 100 * 1024 * 1024; // 100 MB
+
+/**
+ * Returns 'mp4' when the buffer starts with an ISO-BMFF/MPEG-4 container
+ * (`....ftyp....`) declaring a supported video brand. Throws otherwise.
+ */
+export function detectVideoExtension(buffer: Buffer): string {
+  if (buffer.length < 12) {
+    throw ApiError.unsupportedMediaType('Tipo de vídeo não permitido.');
+  }
+  const ftyp = buffer.subarray(4, 8).toString('latin1');
+  if (ftyp !== 'ftyp') {
+    throw ApiError.unsupportedMediaType('Tipo de vídeo não permitido.');
+  }
+  const brand = buffer.subarray(8, 12).toString('latin1');
+  const allowedBrands = ['mp42', 'mp41', 'isom', 'avc1', 'M4V ', 'mp4v'];
+  if (!allowedBrands.includes(brand)) {
+    throw ApiError.unsupportedMediaType('Tipo de vídeo não permitido.');
+  }
+  return 'mp4';
+}
+
+export function validateVideoBuffer(buffer: Buffer): string {
+  if (buffer.length === 0) {
+    throw ApiError.invalidRequest('Arquivo vazio.');
+  }
+  if (buffer.length > MAX_VIDEO_BYTES) {
+    throw ApiError.payloadTooLarge(
+      'O vídeo excede o tamanho permitido (máx. 100 MB).',
+    );
+  }
+  return detectVideoExtension(buffer);
+}

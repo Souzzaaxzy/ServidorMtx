@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
-import { saveAudioFile, storeUpload } from './upload.service.js';
+import { saveAudioFile, saveVideoFile, storeUpload } from './upload.service.js';
+import { MAX_VIDEO_BYTES } from '../../utils/storage.js';
 import { ApiError } from '../../utils/errors.js';
 
 export const uploadRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
@@ -23,6 +24,19 @@ export const uploadRoutes: FastifyPluginAsync = async (app: FastifyInstance) => 
       throw ApiError.validation('Nenhum arquivo enviado. Use o campo "file".');
     }
     const result = await saveAudioFile(file.file);
+    return reply.status(201).send(result);
+  });
+
+  // POST /uploads/video — multipart "file" field (MP4/ISOBMFF for Post
+  // videos). The real bytes are validated (never the declared extension) and
+  // the size is capped at MAX_VIDEO_BYTES. This route allows the video limit
+  // (larger than the generic 5MB upload cap).
+  app.post('/uploads/video', { onRequest: [app.authenticate] }, async (request, reply) => {
+    const file = await request.file({ limits: { fileSize: MAX_VIDEO_BYTES } });
+    if (!file) {
+      throw ApiError.validation('Nenhum arquivo enviado. Use o campo "file".');
+    }
+    const result = await saveVideoFile(file.file);
     return reply.status(201).send(result);
   });
 };

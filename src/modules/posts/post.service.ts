@@ -21,6 +21,7 @@ export async function createPost(
       userId,
       text: input.text?.trim() || null,
       imageUrl: input.imageUrl ?? null,
+      videoUrl: input.videoUrl ?? null,
     },
     include: {
       ...FEED_INCLUDE,
@@ -92,7 +93,7 @@ export async function getPostById(id: string, currentUserId?: string): Promise<F
 export async function deletePost(userId: string, postId: string): Promise<void> {
   const post = await prisma.post.findUnique({
     where: { id: postId },
-    select: { userId: true, imageUrl: true },
+    select: { userId: true, imageUrl: true, videoUrl: true },
   });
   if (!post) throw ApiError.notFound('Publicação não encontrada.');
   // Authorization is checked server-side; never trust a client id alone.
@@ -110,6 +111,13 @@ export async function deletePost(userId: string, postId: string): Promise<void> 
       (await prisma.user.count({ where: { avatarUrl: post.imageUrl } })) > 0;
     if (!stillUsed) {
       await deleteLocalFileByUrl(post.imageUrl).catch(() => void 0);
+    }
+  }
+  if (post.videoUrl) {
+    const stillUsed =
+      (await prisma.post.count({ where: { videoUrl: post.videoUrl } })) > 0;
+    if (!stillUsed) {
+      await deleteLocalFileByUrl(post.videoUrl).catch(() => void 0);
     }
   }
 }

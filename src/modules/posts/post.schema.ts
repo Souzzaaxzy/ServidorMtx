@@ -10,12 +10,32 @@ const imageUrlSchema = z
     'URL da imagem inválida',
   );
 
-export const createPostSchema = z.object({
-  text: z.string().trim().max(2000, 'Texto muito longo').optional().nullable(),
-  imageUrl: imageUrlSchema.optional().nullable(),
-}).refine((data) => (data.text && data.text.length > 0) || data.imageUrl, {
-  message: 'A publicação deve conter texto ou imagem.',
-});
+// Video reference: same URL shapes as images, or the /static/video/...
+// path produced by POST /uploads/video.
+const videoUrlSchema = z
+  .string()
+  .max(500, 'URL do vídeo muito longa')
+  .refine(
+    (v) => /^https?:\/\/.+/.test(v) || /^\/static\/[a-zA-Z0-9._/-]+$/.test(v),
+    'URL do vídeo inválida',
+  );
+
+export const createPostSchema = z
+  .object({
+    text: z.string().trim().max(2000, 'Texto muito longo').optional().nullable(),
+    imageUrl: imageUrlSchema.optional().nullable(),
+    videoUrl: videoUrlSchema.optional().nullable(),
+  })
+  .refine(
+    (data) =>
+      (data.text && data.text.length > 0) ||
+      data.imageUrl ||
+      data.videoUrl,
+    { message: 'A publicação deve conter texto ou mídia.' },
+  )
+  .refine((data) => !(data.imageUrl && data.videoUrl), {
+    message: 'A publicação não pode conter imagem e vídeo ao mesmo tempo.',
+  });
 
 export const feedQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(50).default(20),
