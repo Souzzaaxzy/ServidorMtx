@@ -68,6 +68,11 @@ export interface GroupConversationItem {
   } | null;
    lastMine: boolean;
    unreadCount: number;
+   /** True when the last visible message of this group MENTIONS the viewer
+    * (individual @user or @todos) — powers the "@" indicator in the Chat
+    * list, WhatsApp-style. Resolved from the persisted mention rows (never a
+    * client flag). */
+   mentioned: boolean;
    updatedAt: string;
 }
 
@@ -86,6 +91,18 @@ export interface GroupMessageItem {
    type: 'text' | 'voice' | string;
    audioUrl: string | null;
    durationMs: number | null;
+   /** Structured mentions: every mentioned user id + live nickname. */
+   mentions: MentionInfo[];
+   /** True when this message contains @todos. */
+   mentionAll: boolean;
+   /** True when the VIEWER is directly mentioned (their id is inside
+    * [mentions] or mentionAll is true). Render highlight accordingly. */
+   mentioned: boolean;
+}
+
+export interface MentionInfo {
+   userId: string;
+   nickname: string;
 }
 
 export interface ChatPeerPayload {
@@ -256,6 +273,17 @@ async function loadGroupConversationItem(
       hiddenBy: { none: { userId } },
     },
   });
+  // "@" indicator: does the last visible message MENTION the viewer?
+  let mentioned = false;
+  if (last) {
+    const lastMentions = await prisma.messageMention.findMany({
+      where: { messageId: last.id },
+      select: { userId: true, mentionAll: true },
+    });
+    mentioned = lastMentions.some(
+      (m) => m.mentionAll || m.userId === userId,
+    );
+  }
   return {
     id: group.id,
     group: {
@@ -277,6 +305,7 @@ async function loadGroupConversationItem(
       : null,
     lastMine: last ? last.senderId === userId : false,
     unreadCount,
+    mentioned,
     updatedAt: group.updatedAt.toISOString(),
   };
 }
@@ -761,6 +790,22 @@ export async function listGroups(
     unreadMap.set(row.groupId, Number(row.c));
   }
  
+  // "@" indicator map: which groups' last message mentions the viewer.
+  const lastIds = [...lastByGroup.values()].map((m) => m.id);
+  const mentionActive = new Set<string>();
+  if (lastIds.length > 0) {
+    const lastMentions = await prisma.messageMention.findMany({
+      where: { userId, messageId: { in: lastIds } },
+      select: { messageId: true, mentionAll: true },
+    });
+    const mentionAllIds = await prisma.messageMention.findMany({
+      where: { mentionAll: true, messageId: { in: lastIds } },
+      select: { messageId: true },
+    });
+    for (const row of lastMentions) mentionActive.add(row.messageId);
+    for (const row of mentionAllIds) mentionActive.add(row.messageId);
+  }
+
   return memberships.map((m) => {
     const group = m.group;
     const last = lastByGroup.get(m.groupId) ?? null;
@@ -785,6 +830,7 @@ export async function listGroups(
           }
         : null,
       lastMine: last ? last.senderId === userId : false,
+      mentioned: last ? mentionActive.has(last.id) : false,
       unreadCount: unreadMap.get(m.groupId) ?? 0,
       updatedAt: group.updatedAt.toISOString(),
     };
@@ -843,6 +889,29 @@ async function toGroupMessageItems(
   const senderIds = [...new Set(messages.map((m) => m.senderId))];
   const users = await mapChatUsers(senderIds, groupId);
 
+  // Resolve structured mentions for all these messages in one query.
+  const messageIds = messages.map((m) => m.id);
+  const mentionRows = await prisma.messageMention.findMany({
+    where: { messageId: { in: messageIds } },
+    select: {
+      messageId: true,
+      mentionAll: true,
+      user: { select: { id: true, nickname: true } },
+    },
+  });
+  const mentionsByMessage = new Map<string, MentionInfo[]>();
+  const allByMessage = new Set<string>();
+  for (const row of mentionRows) {
+    if (row.mentionAll) {
+      allByMessage.add(row.messageId);
+      continue;
+    }
+    if (row.user == null) continue;
+    const list = mentionsByMessage.get(row.messageId) ?? [];
+    list.push({ userId: row.user.id, nickname: row.user.nickname });
+    mentionsByMessage.set(row.messageId, list);
+  }
+
   return messages.map((m) => {
     let replyTo: ReplyInfo | null = null;
     if (m.replyToMessageId) {
@@ -865,6 +934,10 @@ async function toGroupMessageItems(
         };
       }
     }
+    const mentions = mentionsByMessage.get(m.id) ?? [];
+    const mentionAll = allByMessage.has(m.id);
+    const mentioned =
+      mentionAll || mentions.some((mention) => mention.userId === viewerId);
     return {
       id: m.id,
       conversationId: null,
@@ -879,6 +952,9 @@ async function toGroupMessageItems(
       type: m.type ?? 'text',
       audioUrl: m.audioUrl ?? null,
       durationMs: m.durationMs ?? null,
+      mentions,
+      mentionAll,
+      mentioned,
     };
   });
 }
@@ -911,6 +987,52 @@ export async function getGroupMessages(
  };
 }
 
+/** Visto/Enviado — resolves WHO has read a specific group message and who
+ * has not, from the persisted per-user MessageRead rows (the ONLY source of
+ * truth — never "online"/"received"/"opened" proxies). Only the message
+ * SENDER may query the full breakdown; other active members may still call
+ * it but only learn their own state. Result users are active (non-banned)
+ * members at the moment of the call, so removed/banned members drop out. */
+export async function getGroupMessageReaders(
+  viewerId: string,
+  groupId: string,
+  messageId: string,
+): Promise<{ read: ChatUser[]; unread: ChatUser[] }> {
+  await assertGroupMembership(groupId, viewerId);
+
+  const message = await prisma.message.findUnique({
+    where: { id: messageId, groupId },
+    select: { id: true, senderId: true },
+  });
+  if (!message) throw ApiError.notFound('Mensagem não encontrada.');
+
+  // Everyone (except the sender) is a candidate reader.
+  const members = await prisma.groupMember.findMany({
+    where: { groupId, bannedAt: null, userId: { not: message.senderId } },
+    select: { userId: true },
+  });
+  const memberIds = members.map((m) => m.userId);
+
+  const readRows = await prisma.messageRead.findMany({
+    where: { messageId, userId: { in: memberIds } },
+    select: { userId: true },
+  });
+  const readIds = new Set(readRows.map((r) => r.userId));
+
+  // Common members may only see their OWN receipt state.
+  const asSender = message.senderId === viewerId;
+  const visibleIds = asSender
+    ? memberIds
+    : memberIds.filter((id) => id === viewerId);
+
+  const read = await mapChatUsers(visibleIds.filter((id) => readIds.has(id)), groupId);
+  const unread = await mapChatUsers(visibleIds.filter((id) => !readIds.has(id)), groupId);
+  return {
+    read: [...read.values()].map((u) => u),
+    unread: [...unread.values()].map((u) => u),
+  };
+}
+
 /** Resolves the OTHER members of a group (all except the session user).
  * Used by every realtime broadcast so all participants get live updates. */
 async function otherMemberIds(groupId: string, userId: string): Promise<string[]> {
@@ -926,9 +1048,10 @@ export async function sendGroupMessage(
   groupId: string,
   content: string,
   replyToMessageId?: string,
+  mentionUserIds: string[] = [],
+  mentionAll = false,
 ): Promise<GroupMessageItem> {
- 
- 
+
   await assertGroupMembership(groupId, userId);
 
   const trimmed = content.trim();
@@ -952,6 +1075,39 @@ export async function sendGroupMessage(
     }
   }
 
+
+  // Mentions — SERVER-authoritative. `@todos` is ONLY allowed for the
+  // OWNER (persisted group creator / OWNER member); every individual
+  // mention must reference a REAL user that is an ACTIVE member
+  // (bannedAt null) of this group. A common member forging the payload
+  // is rejected.
+  const validatedMentionIds = new Set<string>();
+  if (mentionAll) {
+    const group = await prisma.group.findUnique({
+      where: { id: groupId },
+      select: { createdById: true },
+    });
+    if (!group) throw ApiError.notFound('Grupo não encontrado.');
+    if (group.createdById !== userId) {
+      throw ApiError.forbidden('Somente o dono do grupo pode usar "@todos".');
+    }
+  }
+  if (mentionUserIds.length > 0) {
+    const uniqueIds = [...new Set(mentionUserIds)];
+    const rows = await prisma.groupMember.findMany({
+      where: { groupId, userId: { in: uniqueIds }, bannedAt: null },
+      select: { userId: true },
+    });
+    const active = new Set(rows.map((r) => r.userId));
+    for (const id of uniqueIds) {
+      if (!active.has(id)) {
+        throw ApiError.invalidRequest(
+          'Menção inválida: usuário não pertence ao grupo.',
+        );
+      }
+      if (id !== userId) validatedMentionIds.add(id);
+    }
+  }
   const message = await prisma.$transaction(async (tx) => {
     const created = await tx.message.create({
       data: {
@@ -959,6 +1115,12 @@ export async function sendGroupMessage(
         senderId: userId,
         content: trimmed,
         replyToMessageId: replyToMessageId?.trim() || null,
+        mentions: {
+          create: [
+            ...(mentionAll ? [{ mentionAll: true }] as const : []),
+            ...[...validatedMentionIds].map((id) => ({ userId: id }) as const),
+          ],
+        },
       },
     });
     await tx.group.update({
@@ -1055,22 +1217,46 @@ export async function markGroupRead(
   userId: string,
   groupId: string,
 ): Promise<void> {
- 
- 
+
   await assertGroupMembership(groupId, userId);
 
-  const updated = await prisma.message.updateMany({
+  // The group coarse `readAt` badge stays (marks that the reader caught
+  // up), and we ALSO persist a per-user MessageRead row for every
+  // message the reader just caught up on — that row is the source for
+  // "Visto/Enviado". Idempotent: re-reading never duplicates.
+  const unread = await prisma.message.findMany({
     where: {
       groupId,
       senderId: { not: userId },
       readAt: null,
+      deletedAt: null,
     },
-    data: { readAt: new Date() },
+    select: { id: true },
   });
-  if (updated.count > 0) {
+  if (unread.length > 0) {
+    const ids = unread.map((m) => m.id);
+    await prisma.$transaction(async (tx) => {
+      const readRows: { messageId: string; userId: string }[] = ids.map(
+        (id) => ({ messageId: id, userId }),
+      );
+      // Idempotence: the unique (messageId, userId) constraint makes a
+      // duplicate create a no-op failure we can swallow safely.
+      for (const row of readRows) {
+        await tx.messageRead
+          .create({ data: row })
+          .catch((err) => {
+            if (err?.code === 'P2002') return; // already read
+            throw err;
+          });
+      }
+      await tx.message.updateMany({
+        where: { id: { in: ids } },
+        data: { readAt: new Date() },
+      });
+    });
     const peers = await otherMemberIds(groupId, userId);
     for (const peerId of peers) {
-      dispatchChatRead(peerId, { groupId });
+      dispatchChatRead(peerId, { groupId, userId, messageIds: ids });
     }
   }
 }

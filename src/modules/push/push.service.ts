@@ -264,10 +264,17 @@ export function dispatchChatRecording(
 
 /** `chat_read` frame dispatched to the peer after the session user marks a
  * conversation read: the peer's own last sent message in that conversation
- * can flip its "enviado" hint to "visto agora" in realtime. */
+ * can flip its "enviado" hint to "visto agora" in realtime. For GROUPS the
+ * payload also carries the reader [userId] + the exact [messageIds] just
+ * read, so an open "Visto/Enviado" panel can move those users live. */
 export function dispatchChatRead(
   peerUserId: string,
-  payload: { conversationId?: string; groupId?: string },
+  payload: {
+    conversationId?: string;
+    groupId?: string;
+    userId?: string;
+    messageIds?: string[];
+  },
 ): void {
   const live = sockets.get(peerUserId);
   if (!live) return;

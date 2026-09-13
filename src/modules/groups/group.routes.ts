@@ -10,6 +10,7 @@ import {
   deleteGroupMessageForEveryone,
   deleteGroupMessageForMe,
   getGroupInfo,
+  getGroupMessageReaders,
   getGroupMessages,
   groupUnreadCount,
   hideGroup,
@@ -35,6 +36,8 @@ const createGroupSchema = z.object({
 const sendMessageSchema = z.object({
   content: z.string().max(GROUP_MESSAGE_LIMIT, 'Mensagem muito longa.'),
   replyToMessageId: z.string().min(1).max(64).optional(),
+  mentionUserIds: z.array(z.string().min(1).max(64)).max(64).optional().default([]),
+  mentionAll: z.boolean().optional().default(false),
 });
 
 const typingBodySchema = z.object({
@@ -200,6 +203,20 @@ export const groupRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     }
   });
 
+  // Visto/Enviado — who read a specific group message and who hasn't yet.
+  // Resolved from the persisted per-user MessageRead rows (the ONLY source
+  // of truth). Only the message SENDER receives the full breakdown; other
+  // members can call it but only learn their OWN state.
+  app.get('/groups/:id/messages/:messageId/readers', { onRequest: [app.authenticate] }, async (request, reply) => {
+    const { id, messageId } = request.params as { id: string; messageId: string };
+    try {
+      const readers = await getGroupMessageReaders(request.user!.id, id, messageId);
+      return reply.send(readers);
+    } catch (err) {
+      throw toApiError(err);
+    }
+  });
+
   // Send a group message. SenderId is ALWAYS the auth token's user; the
   // sender identity is embedded in every persisted bubble. May carry an
   // optional replyToMessageId belonging to the SAME group (server-validated).
@@ -215,6 +232,8 @@ export const groupRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         id,
         parsed.data.content,
         parsed.data.replyToMessageId,
+        parsed.data.mentionUserIds,
+        parsed.data.mentionAll,
       );
       return reply.status(201).send({ message });
     } catch (err) {

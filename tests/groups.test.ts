@@ -885,4 +885,172 @@ describe('Groups', () => {
     });
     expect(leaveRes.statusCode).toBe(403);
   });
+
+  it('persists and resolves individual mentions (@user) with real user ids', async () => {
+    const owner = await createAndLoginUser(server, { nickname: 'ment_owner' });
+    const peer = await createAndLoginUser(server, { nickname: 'ment_peer' });
+    await makeFriends(owner, peer);
+
+    const createRes = await server.inject({
+      method: 'POST',
+      url: '/api/groups',
+      headers: { authorization: `Bearer ${owner.accessToken}` },
+      payload: { name: 'Mention Crew', participantIds: [peer.id] },
+    });
+    const group = JSON.parse(createRes.payload).group;
+
+    // Owner sends a message mentioning the peer by real id.
+    const sendRes = await server.inject({
+      method: 'POST',
+      url: `/api/groups/${group.id}/messages`,
+      headers: { authorization: `Bearer ${owner.accessToken}` },
+      payload: {
+        content: 'Oi @joao, olha isso!',
+        mentionUserIds: [peer.id],
+      },
+    });
+    expect(sendRes.statusCode).toBe(201);
+    const msg = JSON.parse(sendRes.payload).message;
+    expect(msg.mentioned).toBe(false); // owner view: not mentioned
+    expect(msg.mentions).toHaveLength(1);
+    expect(msg.mentions[0].userId).toBe(peer.id);
+    expect(msg.mentions[0].nickname).toBe('ment_peer');
+
+    // Peer view: the message resolves as `mentioned` (highlight).
+    const pageRes = await server.inject({
+      method: 'GET',
+      url: `/api/groups/${group.id}/messages?limit=10`,
+      headers: { authorization: `Bearer ${peer.accessToken}` },
+    });
+    const page = JSON.parse(pageRes.payload);
+    const peerView = page.messages.find((m: { id: string }) => m.id === msg.id);
+    expect(peerView.mentioned).toBe(true);
+    expect(peerView.mentions.some((x: { userId: string }) => x.userId === peer.id)).toBe(true);
+  });
+
+  it('rejects a mention for a user who is NOT an active member of the group', async () => {
+    const owner = await createAndLoginUser(server, { nickname: 'ment2_owner' });
+    const peer = await createAndLoginUser(server, { nickname: 'ment2_peer' });
+    const outsider = await createAndLoginUser(server, { nickname: 'ment2_out' });
+    await makeFriends(owner, peer);
+
+    const createRes = await server.inject({
+      method: 'POST',
+      url: '/api/groups',
+      headers: { authorization: `Bearer ${owner.accessToken}` },
+      payload: { name: 'Ment2 Crew', participantIds: [peer.id] },
+    });
+    const group = JSON.parse(createRes.payload).group;
+
+    // outsider is not a member → mentioning them is refused server-side.
+    const sendRes = await server.inject({
+      method: 'POST',
+      url: `/api/groups/${group.id}/messages`,
+      headers: { authorization: `Bearer ${owner.accessToken}` },
+      payload: {
+        content: 'Oi @forasteiro!',
+        mentionUserIds: [outsider.id],
+      },
+    });
+    expect(sendRes.statusCode).toBe(400);
+
+    // A NON-EXISTENT user is also refused.
+    const badRes = await server.inject({
+      method: 'POST',
+      url: `/api/groups/${group.id}/messages`,
+      headers: { authorization: `Bearer ${owner.accessToken}` },
+      payload: { content: 'oi', mentionUserIds: ['nao-existe'] },
+    });
+    expect(badRes.statusCode).toBe(400);
+  });
+
+  it('@todos is ONLY allowed for the owner; a common member forging it is rejected', async () => {
+    const owner = await createAndLoginUser(server, { nickname: 'all_owner' });
+    const peer = await createAndLoginUser(server, { nickname: 'all_peer' });
+    const other = await createAndLoginUser(server, { nickname: 'all_other' });
+    await makeFriends(owner, peer);
+    await makeFriends(owner, other);
+
+    const createRes = await server.inject({
+      method: 'POST',
+      url: '/api/groups',
+      headers: { authorization: `Bearer ${owner.accessToken}` },
+      payload: { name: 'All Crew', participantIds: [peer.id, other.id] },
+    });
+    const group = JSON.parse(createRes.payload).group;
+
+    // Owner can send @todos.
+    const okRes = await server.inject({
+      method: 'POST',
+      url: `/api/groups/${group.id}/messages`,
+      headers: { authorization: `Bearer ${owner.accessToken}` },
+      payload: { content: '@todos olhem isso', mentionAll: true },
+    });
+    expect(okRes.statusCode).toBe(201);
+    const msg = JSON.parse(okRes.payload).message;
+    expect(msg.mentionAll).toBe(true);
+    // For any member the viewer is "mentioned" by @todos.
+    expect(msg.mentioned).toBe(true);
+
+    // A COMMON member forging the payload is rejected by the SERVER.
+    const forged = await server.inject({
+      method: 'POST',
+      url: `/api/groups/${group.id}/messages`,
+      headers: { authorization: `Bearer ${peer.accessToken}` },
+      payload: { content: '@todos hack', mentionAll: true },
+    });
+    expect(forged.statusCode).toBe(403);
+  });
+
+  it('Visto/Enviado: readers endpoint returns who read and who did not (sender-only full view)', async () => {
+    const owner = await createAndLoginUser(server, { nickname: 'read_owner' });
+    const a = await createAndLoginUser(server, { nickname: 'read_a' });
+    const b = await createAndLoginUser(server, { nickname: 'read_b' });
+    await makeFriends(owner, a);
+    await makeFriends(owner, b);
+
+    const createRes = await server.inject({
+      method: 'POST',
+      url: '/api/groups',
+      headers: { authorization: `Bearer ${owner.accessToken}` },
+      payload: { name: 'Read Crew', participantIds: [a.id, b.id] },
+    });
+    const group = JSON.parse(createRes.payload).group;
+
+    // Owner sends a message; A reads it (marks read via the read endpoint).
+    const sendRes = await server.inject({
+      method: 'POST',
+      url: `/api/groups/${group.id}/messages`,
+      headers: { authorization: `Bearer ${owner.accessToken}` },
+      payload: { content: 'mensagem de teste' },
+    });
+    const msg = JSON.parse(sendRes.payload).message;
+
+    await server.inject({
+      method: 'POST',
+      url: `/api/groups/${group.id}/read`,
+      headers: { authorization: `Bearer ${a.accessToken}` },
+    });
+
+    // The SENDER sees the full breakdown: A in VISTO, B in ENVIADO.
+    const readersRes = await server.inject({
+      method: 'GET',
+      url: `/api/groups/${group.id}/messages/${msg.id}/readers`,
+      headers: { authorization: `Bearer ${owner.accessToken}` },
+    });
+    expect(readersRes.statusCode).toBe(200);
+    const readers = JSON.parse(readersRes.payload);
+    expect(readers.read.map((r: { id: string }) => r.id)).toContain(a.id);
+    expect(readers.unread.map((r: { id: string }) => r.id)).toContain(b.id);
+    expect(readers.read.map((r: { id: string }) => r.id)).not.toContain(b.id);
+
+    // A common member (B) only learns their OWN state, not the full list.
+    const bView = await server.inject({
+      method: 'GET',
+      url: `/api/groups/${group.id}/messages/${msg.id}/readers`,
+      headers: { authorization: `Bearer ${b.accessToken}` },
+    });
+    const bReaders = JSON.parse(bView.payload);
+    expect(bReaders.read.length + bReaders.unread.length).toBeLessThanOrEqual(1);
+  });
 });

@@ -70,6 +70,8 @@ model User {
   createdGroups         Group[]        @relation("groupCreator")
   groupMemberships      GroupMember[]
   hiddenGroups          GroupHidden[]
+  messageMentions       MessageMention[]
+  messageReads          MessageRead[]
   notificationsReceived Notification[] @relation("notificationsReceived")
   notificationsSent     Notification[] @relation("notificationsSent")
 
@@ -336,6 +338,8 @@ model Message {
   // Per-user "Excluir para mim": each participant can hide the message for
   // themselves only (the peer keeps seeing it). One-to-many join rows.
   hiddenBy     MessageHide[]
+  mentions     MessageMention[]
+  readBy       MessageRead[]
 
   conversation Conversation? @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   group        Group?        @relation(fields: [groupId], references: [id], onDelete: Cascade)
@@ -413,6 +417,47 @@ model GroupHidden {
   @@unique([groupId, userId])
   @@index([userId])
   @@map("group_hidden")
+}
+
+// Structured mention of a user inside a GROUP message. The row stores the
+// real user id (never the display nickname — nicknames are mutable), so the
+// server can always resolve who was mentioned even after a nickname change.
+// `@todos` is stored with mentionAll=true and NO userId rows (it targets
+// every active member eligible at read time).
+model MessageMention {
+  id        String   @id @default(cuid())
+  messageId String
+  // Real user id of the mentioned member. NULL for the `@todos` row
+  // (mentionAll=true) — that targets every eligible active member.
+  userId    String?
+  // true when this row represents `@todos` (userId is null).
+  mentionAll Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  user    User?   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([messageId])
+  @@index([userId])
+  @@map("message_mentions")
+}
+
+// Per-user read receipt for a GROUP message. One row per (message, reader):
+// this is what powers "Visto/Enviado" — a user appears in VISTO only when
+// this row exists (real confirmation of reading), never from "online"/
+// "received"/"opened the group" proxies. Creation is idempotent.
+model MessageRead {
+  id        String   @id @default(cuid())
+  messageId String
+  userId    String
+  readAt    DateTime @default(now())
+
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([messageId, userId])
+  @@index([userId])
+  @@map("message_reads")
 }
 
 
