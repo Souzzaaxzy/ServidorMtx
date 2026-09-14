@@ -11,6 +11,7 @@ import {
   markConversationRead,
   sendMediaMessage,
   sendMessage,
+  sendStickerMessage,
   sendVoiceMessage,
   unreadConversationCount,
   setTyping,
@@ -122,6 +123,32 @@ export const chatRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     }
     try {
       const message = await sendMediaMessage(request.user!.id, id, parsed.data);
+      return reply.status(201).send({ message });
+    } catch (err) {
+      throw toApiError(err);
+    }
+  });
+
+  // Send a STICKER message. The sticker id references the server catalog
+  // (validated server-side); the persisted message carries only the
+  // references and fans out through the SAME realtime channel.
+  app.post('/conversations/:id/sticker', { onRequest: [app.authenticate] }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const stickerSchema = z.object({
+      stickerId: z.string().min(1).max(64),
+      replyToMessageId: z.string().min(1).max(64).optional(),
+    });
+    const parsed = stickerSchema.safeParse(request.body);
+    if (!parsed.success) {
+      throw ApiError.validation('Dados inválidos.', parsed.error.issues);
+    }
+    try {
+      const message = await sendStickerMessage(
+        request.user!.id,
+        id,
+        parsed.data.stickerId,
+        parsed.data.replyToMessageId,
+      );
       return reply.status(201).send({ message });
     } catch (err) {
       throw toApiError(err);

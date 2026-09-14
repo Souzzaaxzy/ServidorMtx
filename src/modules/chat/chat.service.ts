@@ -10,6 +10,7 @@ import {
   dispatchChatRecording,
   dispatchChatTyping,
 } from '../push/push.service.js';
+import { addStickerRecent } from '../stickers/sticker.service.js';
 import type { Message } from '../../generated/index.js';
 import type { Readable } from 'node:stream';
 
@@ -68,9 +69,10 @@ export interface MessageItem {
    * original's PREVIEW is resolved server-side (never stored on this row);
    * null/invalid when not a reply or the original was deleted. */
   replyTo: ReplyInfo | null;
-  /** "text" (default) | "voice" | "image" | "video". Voice messages carry
-   * [audioUrl]+[durationMs]; media messages carry [imageUrl]/[videoUrl]. */
-  type: 'text' | 'voice' | 'image' | 'video' | string;
+  /** "text" (default) | "voice" | "image" | "video" | "sticker". Voice messages carry
+   * [audioUrl]+[durationMs]; media messages carry [imageUrl]/[videoUrl];
+   * stickers carry [stickerUrl]+[stickerId]+[stickerPackageId]. */
+  type: 'text' | 'voice' | 'image' | 'video' | 'sticker' | string;
   /** Absolute URL of the persisted voice-message audio file (voice only). */
   audioUrl: string | null;
   /** Recorded length in milliseconds, validated server-side (3–60s). */
@@ -79,6 +81,13 @@ export interface MessageItem {
   imageUrl: string | null;
   /** Absolute URL of the persisted video (media messages only). */
   videoUrl: string | null;
+  /** Absolute URL of the persisted sticker art (sticker messages only). */
+  stickerUrl: string | null;
+  /** The sticker's stable id (sticker messages only) — lets the receiver
+   * favorite / resend it even after the package was removed locally. */
+  stickerId: string | null;
+  /** The package this sticker belongs to (sticker messages only). */
+  stickerPackageId: string | null;
 }
 
 /** Optional sender identity embedded on realtime incoming frames so the
@@ -462,6 +471,9 @@ async function toMessageItems(
       durationMs: m.durationMs ?? null,
       imageUrl: m.imageUrl ?? null,
       videoUrl: m.videoUrl ?? null,
+      stickerUrl: m.stickerUrl ?? null,
+      stickerId: m.stickerId ?? null,
+      stickerPackageId: m.stickerPackageId ?? null,
     };
   });
 }
@@ -534,6 +546,96 @@ export async function sendMediaMessage(
   const [ownView] = await toMessageItems([message], conversationId, userId);
   return ownView;
 }
+
+// ── Send a sticker message ───────────────────────────────────
+// The sticker file is ALREADY persisted under /static/stickers (part of the
+// server catalog). This function validates the sticker REALLY EXISTS
+// (server-authoritative — never trusted client-side), persists a
+// type="sticker" message carrying only the references (stickerUrl +
+// stickerId + stickerPackageId), records the sticker in the sender's
+// recents (deduped + bounded) and fans the message out through the SAME
+// realtime channel as text/voice/media.
+export async function sendStickerMessage(
+  userId: string,
+  conversationId: string,
+  stickerId: string,
+  replyToMessageId?: string,
+): Promise<MessageItem> {
+  const conversation = await prisma.conversation.findUnique({
+    where: { id: conversationId },
+  });
+  if (!conversation) throw ApiError.notFound('Conversa não encontrada.');
+  const isMember =
+    conversation.userOneId === userId || conversation.userTwoId === userId;
+  if (!isMember) {
+    throw ApiError.forbidden('Você não tem acesso a esta conversa.');
+  }
+  const otherId =
+    conversation.userOneId === userId ? conversation.userTwoId : conversation.userOneId;
+  if (!(await areFriends(userId, otherId))) {
+    throw ApiError.forbidden('Vocês precisam ser amigos para conversar.');
+  }
+  if (replyToMessageId && replyToMessageId.trim()) {
+    const target = await prisma.message.findUnique({
+      where: { id: replyToMessageId },
+      select: { conversationId: true },
+    });
+    if (!target || target.conversationId !== conversationId) {
+      throw ApiError.invalidRequest('Mensagem respondida não encontrada.');
+    }
+  }
+
+  // Server-authoritative sticker resolution: the id must reference a real
+  // sticker in the catalog (active package). The URL/packageId come from the
+  // DB — a crafted payload can never inject arbitrary URLs.
+  const sticker = await prisma.sticker.findUnique({
+    where: { id: stickerId },
+    include: { package: { select: { id: true, active: true } } },
+  });
+  if (!sticker || !sticker.package.active) {
+    throw ApiError.notFound('Figurinha não encontrada.');
+  }
+
+  const message = await prisma.$transaction(async (tx) => {
+    const created = await tx.message.create({
+      data: {
+        conversationId,
+        senderId: userId,
+        content: STICKER_PREVIEW,
+        type: 'sticker',
+        stickerUrl: sticker.fileUrl,
+        stickerId: sticker.id,
+        stickerPackageId: sticker.packageId,
+        replyToMessageId: replyToMessageId?.trim() || null,
+      },
+    });
+    await tx.conversation.update({
+      where: { id: conversationId },
+      data: { updatedAt: new Date() },
+    });
+    await tx.conversationHidden.deleteMany({
+      where: { conversationId, userId: otherId },
+    });
+    return created;
+  });
+
+  // Record the send in the sender's recents (idempotent move-to-front).
+  await addStickerRecent(userId, sticker.id);
+
+  const [recipientView] = await toMessageItems([message], conversationId, otherId);
+  dispatchChatMessage(otherId, {
+    conversationId,
+    message: recipientView,
+    peer: await chatPeerPayload(userId),
+  });
+  const [ownView] = await toMessageItems([message], conversationId, userId);
+  return ownView;
+}
+
+/** Stable preview content stored for every sticker message. The app uses the
+ * message `type` to render the sticker image and shows this label as the
+ * conversation-list preview. */
+export const STICKER_PREVIEW = '🧩 Figurinha';
 
 // ── Send a message ───────────────────────────────────────────
 // Server is authoritative: sender from token, membership enforced, friends-only

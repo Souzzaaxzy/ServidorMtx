@@ -87,6 +87,11 @@ model User {
   gameSessions      GameSession[]
   musicVotes        MusicVote[]
 
+  // ── Stickers ─────────────────────────────────────────────
+  installedStickerPackages UserStickerPackage[] @relation("userInstalledPackages")
+  stickerFavorites         StickerFavorite[]
+  stickerRecents           StickerRecent[]
+
   @@index([nickname])
   @@map("users")
 }
@@ -343,6 +348,16 @@ model Message {
   durationMs   Int?
   imageUrl     String?
   videoUrl     String?
+  // STICKER messages: `type` is "sticker", `content` holds a stable preview
+  // label ("🧩 Figurinha"), and the file reference lives in `stickerUrl`.
+  // `stickerId`/`stickerPackageId` identify WHICH sticker was sent so the
+  // receiver can favorite it / open its package / resend it even after the
+  // package was removed locally. The sticker file itself is persisted
+  // server-side (never deleted with the package), so old history always
+  // keeps rendering the image.
+  stickerUrl     String?
+  stickerId      String?
+  stickerPackageId String?
 
   // Soft-delete marker for "Excluir para todos". When set, the message is
   // hidden for BOTH participants (all read paths filter it out). The row + a
@@ -898,4 +913,111 @@ model AppConfig {
   createdAt DateTime @default(now())
 
   @@map("app_config")
+}
+
+// ── Stickers (figurinhas) ────────────────────────────────────
+// Native sticker collection, WhatsApp-style UX built on the MATRIX stack:
+// packages (server-owned catalog), per-user installs, favorites and recents.
+// Messages reuse the existing `Message` table with type="sticker" plus
+// stickerUrl/stickerId/stickerPackageId columns — no parallel message system.
+
+// A sticker package (server-owned catalog entry). `iconUrl` is a small image
+// used in the picker's package navigation; `thumbUrl` is an OPTIONAL compact
+// preview the app may use to render the grid faster (falls back to fileUrl).
+// Sticker `fileUrl` files are NOT tied to the package's lifetime — message
+// history and favorites keep rendering them even if a package is deactivated.
+model StickerPackage {
+  id          String   @id @default(cuid())
+  name        String
+  // Short code used for stable package ids in seed/tests (e.g. "matrix").
+  slug        String   @unique
+  description String   @default("")
+  author      String   @default("MATRIX")
+  iconUrl     String
+  // Active packages are installable/visible; deactivated ones are kept for
+  // history (old messages/favorites keep rendering) but hidden from install.
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  stickers   Sticker[]
+  installs   UserStickerPackage[]
+
+  @@index([active])
+  @@map("sticker_packages")
+}
+
+// A single sticker inside a package. `fileUrl` points at the persisted PNG
+// (stored server-side in /static/stickers/...). The `authorId` is nullable
+// because seed/system stickers have no user author.
+model Sticker {
+  id        String   @id @default(cuid())
+  packageId String
+  // Ordinal inside the package (drives grid ordering).
+  order     Int      @default(0)
+  fileUrl   String
+  thumbUrl  String?
+  width     Int?
+  height    Int?
+  authorId  String?
+  createdAt DateTime @default(now())
+
+  package   StickerPackage    @relation(fields: [packageId], references: [id], onDelete: Cascade)
+  favorites StickerFavorite[]
+  recents   StickerRecent[]
+
+  @@unique([packageId, order])
+  @@index([packageId])
+  @@index([authorId])
+  @@map("stickers")
+}
+
+// "Pacote instalado" — which packages the user has installed for the picker.
+// Installing is idempotent (upsert). Removing deletes this row only — the
+// package's stickers keep rendering in favorites/history.
+model UserStickerPackage {
+  id        String   @id @default(cuid())
+  userId    String
+  packageId String
+  createdAt DateTime @default(now())
+
+  user    User           @relation("userInstalledPackages", fields: [userId], references: [id], onDelete: Cascade)
+  package StickerPackage @relation(fields: [packageId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, packageId])
+  @@index([userId])
+  @@map("user_sticker_packages")
+}
+
+// A sticker the user favorited. Independent of the package — a favorite keeps
+// working after the package was removed (we never delete the file).
+model StickerFavorite {
+  id        String   @id @default(cuid())
+  userId    String
+  stickerId String
+  createdAt DateTime @default(now())
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sticker Sticker @relation(fields: [stickerId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, stickerId])
+  @@index([userId])
+  @@map("sticker_favorites")
+}
+
+// Recents: every sticker the user sent, newest first, deduped per sticker
+// (sending the same sticker again moves it to the front). Bounded to
+// [STICKER_RECENTS_LIMIT] rows per user.
+model StickerRecent {
+  id        String   @id @default(cuid())
+  userId    String
+  stickerId String
+  usedAt    DateTime @default(now())
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sticker Sticker @relation(fields: [stickerId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, stickerId])
+  @@index([userId, usedAt])
+  @@map("sticker_recents")
 }

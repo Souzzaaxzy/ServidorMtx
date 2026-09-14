@@ -43,6 +43,11 @@ beforeAll(async () => {
 // PRAGMA foreign_keys is ON (Prisma enables it), so order matters.
 const TABLES = [
   'messages',
+  'sticker_recents',
+  'sticker_favorites',
+  'user_sticker_packages',
+  'stickers',
+  'sticker_packages',
   'group_members',
   'group_hidden',
   'groups',

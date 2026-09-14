@@ -19,6 +19,7 @@ import {
   markGroupRead,
   sendGroupMediaMessage,
   sendGroupMessage,
+  sendGroupStickerMessage,
   sendGroupVoiceMessage,
   setGroupRecording,
   setGroupTyping,
@@ -271,6 +272,32 @@ export const groupRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     }
     try {
       const message = await sendGroupMediaMessage(request.user!.id, id, parsed.data);
+      return reply.status(201).send({ message });
+    } catch (err) {
+      throw toApiError(err);
+    }
+  });
+
+  // STICKER group message — the sticker id references the server catalog
+  // (validated server-side). Same rules + realtime channel as the other
+  // group message kinds.
+  app.post('/groups/:id/sticker', { onRequest: [app.authenticate] }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const stickerSchema = z.object({
+      stickerId: z.string().min(1).max(64),
+      replyToMessageId: z.string().min(1).max(64).optional(),
+    });
+    const parsed = stickerSchema.safeParse(request.body);
+    if (!parsed.success) {
+      throw ApiError.validation('Dados inválidos.', parsed.error.issues);
+    }
+    try {
+      const message = await sendGroupStickerMessage(
+        request.user!.id,
+        id,
+        parsed.data.stickerId,
+        parsed.data.replyToMessageId,
+      );
       return reply.status(201).send({ message });
     } catch (err) {
       throw toApiError(err);

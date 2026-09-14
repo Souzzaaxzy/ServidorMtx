@@ -1,5 +1,6 @@
 import { PrismaClient } from '../src/generated/index.js';
 import { hashPassword, generateRecoveryCode, hashRecoveryCode } from '../src/utils/auth.js';
+import { seedStickerPackages } from './seed-stickers.js';
 
 const prisma = new PrismaClient();
 
@@ -184,6 +185,9 @@ async function main() {
   const existingUsers = await prisma.user.count();
   if (existingUsers > 0) {
     await syncCatalog();
+    // Sticker packages are idempotent and additive — seed them even when the
+    // demo users already exist (a fresh boot must always ship the catalog).
+    await seedStickerPackages(prisma);
     console.log(`ℹ️  Database already has ${existingUsers} user(s). Skipping demo seed to preserve data.`);
     return;
   }
@@ -211,6 +215,8 @@ async function main() {
     update: l,
     create: l,
   })));
+
+  await seedStickerPackages(prisma);
 
   await prisma.$transaction(GAMES.map((g) => prisma.game.upsert({
     where: { slug: g.slug },

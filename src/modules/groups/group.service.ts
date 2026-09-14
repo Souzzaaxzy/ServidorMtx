@@ -13,6 +13,7 @@ import {
   dispatchChatRecording,
   dispatchChatTyping,
 } from '../push/push.service.js';
+import { addStickerRecent } from '../stickers/sticker.service.js';
 import type { Message } from '../../generated/index.js';
 import type { Readable } from 'node:stream';
 
@@ -31,6 +32,9 @@ const PREVIEW_LENGTH = 80;
 
 /** Stable preview content stored for every voice message. */
 export const VOICE_PREVIEW = '🎤 Áudio';
+
+/** Stable preview content stored for every sticker message. */
+export const STICKER_PREVIEW = '🧩 Figurinha';
 
 export interface ChatUser {
   id: string;
@@ -88,11 +92,17 @@ export interface GroupMessageItem {
    mine: boolean;
    readAt: string | null;
    replyTo: ReplyInfo | null;
-   type: 'text' | 'voice' | string;
+   type: 'text' | 'voice' | 'image' | 'video' | 'sticker' | string;
    audioUrl: string | null;
    durationMs: number | null;
    imageUrl: string | null;
    videoUrl: string | null;
+   /** Absolute URL of the persisted sticker art (sticker messages only). */
+   stickerUrl: string | null;
+   /** The sticker's stable id (sticker messages only). */
+   stickerId: string | null;
+   /** The package this sticker belongs to (sticker messages only). */
+   stickerPackageId: string | null;
    /** Structured mentions: every mentioned user id + live nickname. */
    mentions: MentionInfo[];
    /** True when this message contains @todos. */
@@ -969,6 +979,9 @@ async function toGroupMessageItems(
       durationMs: m.durationMs ?? null,
       imageUrl: m.imageUrl ?? null,
       videoUrl: m.videoUrl ?? null,
+      stickerUrl: m.stickerUrl ?? null,
+      stickerId: m.stickerId ?? null,
+      stickerPackageId: m.stickerPackageId ?? null,
       mentions,
       mentionAll,
       mentioned,
@@ -1350,6 +1363,74 @@ export async function sendGroupMediaMessage(
     });
     return created;
   });
+
+  const peers = await otherMemberIds(groupId, userId);
+  const [ownView] = await toGroupMessageItems([message], groupId, userId);
+  for (const peerId of peers) {
+    const [peerView] = await toGroupMessageItems([message], groupId, peerId);
+    dispatchChatMessage(peerId, {
+      groupId,
+      message: peerView,
+      peer: await chatPeerPayload(userId),
+    });
+  }
+  return ownView;
+}
+
+/** Sends a STICKER message to a GROUP. The sticker id is validated against
+ * the server catalog (server-authoritative); the persisted message carries
+ * only the references and fans out to every OTHER member through the SAME
+ * realtime channel as text/voice/media. The sticker is also recorded in the
+ * sender's recents (deduped + bounded). */
+export async function sendGroupStickerMessage(
+  userId: string,
+  groupId: string,
+  stickerId: string,
+  replyToMessageId?: string,
+): Promise<GroupMessageItem> {
+  await assertGroupMembership(groupId, userId);
+  if (replyToMessageId && replyToMessageId.trim()) {
+    const target = await prisma.message.findUnique({
+      where: { id: replyToMessageId },
+      select: { groupId: true },
+    });
+    if (!target || target.groupId !== groupId) {
+      throw ApiError.invalidRequest('Mensagem respondida não encontrada.');
+    }
+  }
+
+  const sticker = await prisma.sticker.findUnique({
+    where: { id: stickerId },
+    include: { package: { select: { id: true, active: true } } },
+  });
+  if (!sticker || !sticker.package.active) {
+    throw ApiError.notFound('Figurinha não encontrada.');
+  }
+
+  const message = await prisma.$transaction(async (tx) => {
+    const created = await tx.message.create({
+      data: {
+        groupId,
+        senderId: userId,
+        content: STICKER_PREVIEW,
+        type: 'sticker',
+        stickerUrl: sticker.fileUrl,
+        stickerId: sticker.id,
+        stickerPackageId: sticker.packageId,
+        replyToMessageId: replyToMessageId?.trim() || null,
+      },
+    });
+    await tx.group.update({
+      where: { id: groupId },
+      data: { updatedAt: new Date() },
+    });
+    await tx.groupHidden.deleteMany({
+      where: { groupId, userId: { not: userId } },
+    });
+    return created;
+  });
+
+  await addStickerRecent(userId, sticker.id);
 
   const peers = await otherMemberIds(groupId, userId);
   const [ownView] = await toGroupMessageItems([message], groupId, userId);
