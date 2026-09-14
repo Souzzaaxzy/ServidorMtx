@@ -957,6 +957,9 @@ model Sticker {
   order     Int      @default(0)
   fileUrl   String
   thumbUrl  String?
+  // SHA-256 (hex) of the file bytes. Set only for user-imported stickers so
+  // repeated shares of the same file are deduplicated on import.
+  hash      String?
   width     Int?
   height    Int?
   authorId  String?
@@ -968,6 +971,7 @@ model Sticker {
 
   @@unique([packageId, order])
   @@index([packageId])
+  @@index([hash])
   @@index([authorId])
   @@map("stickers")
 }

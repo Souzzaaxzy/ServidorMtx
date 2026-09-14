@@ -5,15 +5,33 @@ import {
   addStickerFavorite,
   addStickerRecent,
   getStickerPackage,
+  importStickerPackage,
   installStickerPackage,
   listStickerFavorites,
   listStickerPackages,
   listStickerRecents,
   removeStickerFavorite,
   uninstallStickerPackage,
+  type ImportedStickerInput,
 } from './sticker.service.js';
 
 const idParamSchema = z.string().min(1).max(64);
+
+// Corpo do import de figurinhas vindas do compartilhamento do Android.
+const importSchema = z.object({
+  name: z.string().min(1).max(40).optional(),
+  stickers: z
+    .array(
+      z.object({
+        url: z.string().min(1).max(500),
+        hash: z.string().min(1).max(128).optional().nullable(),
+        width: z.number().int().positive().max(4096).optional().nullable(),
+        height: z.number().int().positive().max(4096).optional().nullable(),
+      }),
+    )
+    .min(1)
+    .max(60),
+});
 
 export const stickerRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
   // Full sticker catalog (active packages with their stickers), each entry
@@ -120,6 +138,27 @@ export const stickerRoutes: FastifyPluginAsync = async (app: FastifyInstance) =>
     try {
       await addStickerRecent(request.user!.id, id);
       return reply.status(204).send();
+    } catch (err) {
+      throw toApiError(err);
+    }
+  });
+
+  // Import stickers received through the Android share intent. The app
+  // uploads the images via /api/uploads and calls this endpoint with the
+  // resulting URLs; the server creates a USER-owned package, installs it
+  // automatically and dedupes by file hash (repeated shares don't duplicate).
+  app.post('/stickers/import', { onRequest: [app.authenticate] }, async (request, reply) => {
+    const parsed = importSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.status(400).send({ error: { code: 'VALIDATION', message: 'Dados inválidos para importar figurinhas.' } });
+    }
+    const { name, stickers } = parsed.data as {
+      name?: string;
+      stickers: ImportedStickerInput[];
+    };
+    try {
+      const result = await importStickerPackage(request.user!.id, name ?? '', stickers);
+      return reply.status(201).send(result);
     } catch (err) {
       throw toApiError(err);
     }

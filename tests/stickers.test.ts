@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { buildTestServer, closeTestServer, createAndLoginUser } from './helpers.js';
 import { prisma } from '../src/config/prisma.js';
@@ -311,5 +312,115 @@ describe('Stickers', () => {
     });
     const messages = JSON.parse(hist.payload).messages;
     expect(messages.some((m: { type: string; stickerId: string }) => m.type === 'sticker' && m.stickerId === s1.id)).toBe(true);
+  });
+
+  it('imports stickers from the Android share (creates + installs a user package)', async () => {
+    const user = await createAndLoginUser(server, { nickname: 'stk_import' });
+    const hashA = createHash('sha256').update('bytes-a').digest('hex');
+    const hashB = createHash('sha256').update('bytes-b').digest('hex');
+
+    const res = await server.inject({
+      method: 'POST',
+      url: '/api/stickers/import',
+      headers: { authorization: `Bearer ${user.accessToken}` },
+      payload: {
+        name: 'Compartilhados',
+        stickers: [
+          { url: 'http://localhost:3000/static/impa.png', hash: hashA, width: 256, height: 256 },
+          { url: 'http://localhost:3000/static/impb.png', hash: hashB, width: 256, height: 256 },
+        ],
+      },
+    });
+    expect(res.statusCode).toBe(201);
+    const body = JSON.parse(res.payload);
+    expect(body.created).toBe(2);
+    expect(body.skipped).toBe(0);
+    expect(body.package).not.toBeNull();
+    expect(body.package.installed).toBe(true);
+    expect(body.package.stickers).toHaveLength(2);
+    expect(body.package.stickers[0].fileUrl).toBe('http://localhost:3000/static/impa.png');
+
+    // The catalog now contains the imported (installed) package.
+    const cat = await server.inject({
+      method: 'GET',
+      url: '/api/stickers/packages',
+      headers: { authorization: `Bearer ${user.accessToken}` },
+    });
+    const packages = JSON.parse(cat.payload).packages;
+    const imported = packages.find((p: { slug: string }) => p.slug.startsWith('compartilhados-'));
+    expect(imported).toBeDefined();
+    expect(imported.installed).toBe(true);
+  });
+
+  it('dedupes re-shared files (same hash) and skips only the duplicates', async () => {
+    const user = await createAndLoginUser(server, { nickname: 'stk_import2' });
+    const hashA = createHash('sha256').update('bytes-a2').digest('hex');
+    const hashC = createHash('sha256').update('bytes-c2').digest('hex');
+
+    // First import: A + C
+    const first = await server.inject({
+      method: 'POST',
+      url: '/api/stickers/import',
+      headers: { authorization: `Bearer ${user.accessToken}` },
+      payload: {
+        name: 'Pack Um',
+        stickers: [
+          { url: 'http://localhost:3000/static/a2.png', hash: hashA },
+          { url: 'http://localhost:3000/static/c2.png', hash: hashC },
+        ],
+      },
+    });
+    expect(first.statusCode).toBe(201);
+    expect(JSON.parse(first.payload).created).toBe(2);
+
+    // Reshare everything: same hashes -> nothing new.
+    const again = await server.inject({
+      method: 'POST',
+      url: '/api/stickers/import',
+      headers: { authorization: `Bearer ${user.accessToken}` },
+      payload: {
+        name: 'Pack Um',
+        stickers: [
+          { url: 'http://localhost:3000/static/a2.png', hash: hashA },
+          { url: 'http://localhost:3000/static/c2.png', hash: hashC },
+        ],
+      },
+    });
+    expect(again.statusCode).toBe(201);
+    const againBody = JSON.parse(again.payload);
+    expect(againBody.created).toBe(0);
+    expect(againBody.skipped).toBe(2);
+    expect(againBody.package).toBeNull();
+
+    // Mixed batch: one duplicate + one brand-new hash -> only new is created.
+    const hashD = createHash('sha256').update('bytes-d2').digest('hex');
+    const mixed = await server.inject({
+      method: 'POST',
+      url: '/api/stickers/import',
+      headers: { authorization: `Bearer ${user.accessToken}` },
+      payload: {
+        name: 'Pack Dois',
+        stickers: [
+          { url: 'http://localhost:3000/static/a2.png', hash: hashA },
+          { url: 'http://localhost:3000/static/d2.png', hash: hashD },
+        ],
+      },
+    });
+    expect(mixed.statusCode).toBe(201);
+    const mixedBody = JSON.parse(mixed.payload);
+    expect(mixedBody.created).toBe(1);
+    expect(mixedBody.skipped).toBe(1);
+    expect(mixedBody.package.stickers).toHaveLength(1);
+  });
+
+  it('rejects an invalid import payload', async () => {
+    const user = await createAndLoginUser(server, { nickname: 'stk_importbad' });
+    const res = await server.inject({
+      method: 'POST',
+      url: '/api/stickers/import',
+      headers: { authorization: `Bearer ${user.accessToken}` },
+      payload: { name: 'x', stickers: [] },
+    });
+    expect(res.statusCode).toBe(400);
   });
 });

@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { prisma } from '../../config/prisma.js';
 import { ApiError } from '../../utils/errors.js';
 
@@ -227,4 +228,107 @@ export async function listStickerRecents(userId: string): Promise<StickerItem[]>
     rows.map((r) => r.sticker.id),
   );
   return rows.map((r) => toStickerItem(r.sticker, favs.has(r.sticker.id)));
+}
+
+
+// ── Import (Android share) ───────────────────────────────────
+// Stickers recibidos pelo compartilhamento do Android: o app envia os
+// arquivos pelo upload padrão (/api/uploads) e chama este endpoint com as
+// URLs resultantes. Aqui criamos um pacote DO USUÁRIO (authorId = userId),
+// instalamos para ele e deduplicamos por SHA-256 dos bytes — reenviar a
+// mesma imagem não duplica figuras no mesmo escopo do usuário.
+
+export interface ImportedStickerInput {
+  url: string;
+  hash?: string | null;
+  width?: number | null;
+  height?: number | null;
+}
+
+export interface ImportStickerResult {
+  /** Pacote criado; null quando NADA era novo (tudo já importado). */
+  package: StickerPackageItem | null;
+  created: number;
+  skipped: number;
+}
+
+function slugify(value: string): string {
+  const clean = value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 32);
+  return clean || 'meus-stickers';
+}
+
+export async function importStickerPackage(
+  userId: string,
+  name: string,
+  stickers: ImportedStickerInput[],
+): Promise<ImportStickerResult> {
+  const cleanName = name.trim().slice(0, 40) || 'Meus stickers';
+
+  const hashes = stickers
+    .map((s) => s.hash?.trim())
+    .filter((h): h is string => !!h);
+  let existingHashSet = new Set<string>();
+  if (hashes.length > 0) {
+    const existing = await prisma.sticker.findMany({
+      where: { authorId: userId, hash: { in: Array.from(new Set(hashes)) } },
+      select: { hash: true },
+    });
+    existingHashSet = new Set(existing.map((r) => r.hash).filter(Boolean) as string[]);
+  }
+
+  // Deduplicate within THIS batch too (same file shared twice at once) and
+  // skip anything already imported by this user.
+  const seen = new Set<string>();
+  const toCreate: ImportedStickerInput[] = [];
+  let skipped = 0;
+  for (const st of stickers) {
+    const h = st.hash?.trim();
+    if (h && (existingHashSet.has(h) || seen.has(h))) {
+      skipped++;
+      continue;
+    }
+    if (h) seen.add(h);
+    toCreate.push(st);
+  }
+
+  if (toCreate.length === 0) {
+    return { package: null, created: 0, skipped };
+  }
+
+  const first = toCreate[0];
+  const pkg = await prisma.stickerPackage.create({
+    data: {
+      name: cleanName,
+      slug: `${slugify(cleanName)}-${randomBytes(4).toString('hex')}`,
+      description: 'Importado do compartilhamento do Android.',
+      author: 'MATRIX',
+      iconUrl: first.url,
+      active: true,
+      stickers: {
+        create: toCreate.map((st, i) => ({
+          order: i,
+          fileUrl: st.url,
+          hash: st.hash?.trim() || null,
+          width: st.width ?? null,
+          height: st.height ?? null,
+          authorId: userId,
+        })),
+      },
+    },
+  });
+
+  await prisma.userStickerPackage.upsert({
+    where: { userId_packageId: { userId, packageId: pkg.id } },
+    update: {},
+    create: { userId, packageId: pkg.id },
+  });
+
+  const packageItem = await getStickerPackage(userId, pkg.id);
+  return { package: packageItem, created: toCreate.length, skipped };
 }

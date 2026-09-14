@@ -52,6 +52,15 @@ PostgreSQL). Runs on Pterodactyl/Bronxys via `npm start` (self-provisions).
 - `prisma/seed.ts` — seeds levels/items/games/users/posts; skips if users exist.
 - All HTTP in data layer; RBAC enforced server-side. AI_API_KEY server-only.
 
+## Stickers — import via Android share
+- `POST /api/stickers/import` cria um pacote DO usuário (authorId = userId)
+  a partir de figuritas enviadas pelo app via `/api/uploads`. Instala o
+  pacote automaticamente e deduplica por SHA-256 (`Sticker.hash`): reenviar a
+  mesma imagem não duplica no escopo do usuário. Quando tudo é duplicado,
+  retorna `package: null` + `skipped`.
+- A coluna `hash` em `stickers` é opcional e usada só nas importações; o
+  catálogo oficial não preenche hash.
+
 ## Conventions / gotchas
 - `npm start` never depends on `.env` or `.env.example` in production — panel
   injects vars via process.env. `.env` is dev-only convenience (loaded with
