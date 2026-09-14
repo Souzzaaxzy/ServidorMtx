@@ -449,6 +449,10 @@ model MessageMention {
   userId    String?
   // true when this row represents `@todos` (userId is null).
   mentionAll Boolean  @default(false)
+  // Exact token range ("@Nickname"/"@todos") inside the message content.
+  // NULL for mentions persisted before this field existed (legacy rows).
+  rangeStart Int?
+  rangeEnd   Int?
   createdAt DateTime @default(now())
 
   message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)

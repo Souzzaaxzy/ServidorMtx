@@ -1085,6 +1085,350 @@ describe('Groups', () => {
     expect(forged.statusCode).toBe(403);
   });
 
+  // ── RANGE-ANCHORED mentions (selection-based) — the ONLY form a real
+  // client sends. The server re-validates every range against the content
+  // so a mention is NEVER inferred from "@nickname" text coincidence and a
+  // forged payload is rejected before persisting anything. ──
+
+  it('range-anchored @user mention persists with the exact token range', async () => {
+    const owner = await createAndLoginUser(server, { nickname: 'rng_owner' });
+    const peer = await createAndLoginUser(server, { nickname: 'rng_peer' });
+    await makeFriends(owner, peer);
+
+    const createRes = await server.inject({
+      method: 'POST',
+      url: '/api/groups',
+      headers: { authorization: `Bearer ${owner.accessToken}` },
+      payload: { name: 'Rng Crew', participantIds: [peer.id] },
+    });
+    const group = JSON.parse(createRes.payload).group;
+
+    // "Oi @rng_peer, veja" → the "@rng_peer" token spans [3, 12).
+    const content = 'Oi @rng_peer, veja';
+    const sendRes = await server.inject({
+      method: 'POST',
+      url: `/api/groups/${group.id}/messages`,
+      headers: { authorization: `Bearer ${owner.accessToken}` },
+      payload: {
+        content,
+        mentions: [{ userId: peer.id, start: 3, end: 12 }],
+      },
+    });
+    expect(sendRes.statusCode).toBe(201);
+    const msg = JSON.parse(sendRes.payload).message;
+    expect(msg.mentions).toHaveLength(1);
+    expect(msg.mentions[0].userId).toBe(peer.id);
+    expect(msg.mentions[0].nickname).toBe('rng_peer');
+    expect(msg.mentions[0].start).toBe(3);
+    expect(msg.mentions[0].end).toBe(12);
+
+    // The persisted row carries the range; the peer view resolves it too.
+    const rows = await prisma.messageMention.findMany({
+      where: { messageId: msg.id },
+    });
+    expect(rows).toHaveLength(1);
+    expect(rows[0].rangeStart).toBe(3);
+    expect(rows[0].rangeEnd).toBe(12);
+
+    const pageRes = await server.inject({
+      method: 'GET',
+      url: `/api/groups/${group.id}/messages?limit=10`,
+      headers: { authorization: `Bearer ${peer.accessToken}` },
+    });
+    const page = JSON.parse(pageRes.payload);
+    const peerView = page.messages.find((m: { id: string }) => m.id === msg.id);
+    expect(peerView.mentioned).toBe(true);
+  });
+
+  it('typing "@nickname" MANUALLY (no range) persists NO mention rows', async () => {
+    const owner = await createAndLoginUser(server, { nickname: 'man_owner' });
+    const peer = await createAndLoginUser(server, { nickname: 'man_peer' });
+    await makeFriends(owner, peer);
+
+    const createRes = await server.inject({
+      method: 'POST',
+      url: '/api/groups',
+      headers: { authorization: `Bearer ${owner.accessToken}` },
+      payload: { name: 'Man Crew', participantIds: [peer.id] },
+    });
+    const group = JSON.parse(createRes.payload).group;
+
+    // The sender types "@man_peer" by hand — the payload has NO mentions.
+    const sendRes = await server.inject({
+      method: 'POST',
+      url: `/api/groups/${group.id}/messages`,
+      headers: { authorization: `Bearer ${owner.accessToken}` },
+      payload: { content: 'Oi @man_peer, tudo bem?' },
+    });
+    expect(sendRes.statusCode).toBe(201);
+    const msg = JSON.parse(sendRes.payload).message;
+    expect(msg.mentions).toHaveLength(0);
+    expect(msg.mentionAll).toBe(false);
+    expect(msg.mentioned).toBe(false);
+  });
+
+  it('typing "@todos" MANUALLY (no range) does NOT create mentionAll', async () => {
+    const owner = await createAndLoginUser(server, { nickname: 'mat_owner' });
+    const peer = await createAndLoginUser(server, { nickname: 'mat_peer' });
+    await makeFriends(owner, peer);
+
+    const createRes = await server.inject({
+      method: 'POST',
+      url: '/api/groups',
+      headers: { authorization: `Bearer ${owner.accessToken}` },
+      payload: { name: 'Mat Crew', participantIds: [peer.id] },
+    });
+    const group = JSON.parse(createRes.payload).group;
+
+    // The OWNER types @todos manually — still plain text (the server never
+    // infers a mention from content).
+    const sendRes = await server.inject({
+      method: 'POST',
+      url: `/api/groups/${group.id}/messages`,
+      headers: { authorization: `Bearer ${owner.accessToken}` },
+      payload: { content: '@todos atenção' },
+    });
+    expect(sendRes.statusCode).toBe(201);
+    const msg = JSON.parse(sendRes.payload).message;
+    expect(msg.mentions).toHaveLength(0);
+    expect(msg.mentionAll).toBe(false);
+  });
+
+  it('rejects a range that does NOT match the nickname text (forged range)', async () => {
+    const owner = await createAndLoginUser(server, { nickname: 'frg_owner' });
+    const peer = await createAndLoginUser(server, { nickname: 'frg_peer' });
+    await makeFriends(owner, peer);
+
+    const createRes = await server.inject({
+      method: 'POST',
+      url: '/api/groups',
+      headers: { authorization: `Bearer ${owner.accessToken}` },
+      payload: { name: 'Frg Crew', participantIds: [peer.id] },
+    });
+    const group = JSON.parse(createRes.payload).group;
+
+    // The sender TYPES "@frg_peer" but claims a DIFFERENT (shorter) range —
+    // the substring at [3, 6) is "@fr" not "@frg_peer" → rejected.
+    const bad = await server.inject({
+      method: 'POST',
+      url: `/api/groups/${group.id}/messages`,
+      headers: { authorization: `Bearer ${owner.accessToken}` },
+      payload: {
+        content: 'Oi @frg_peer, veja',
+        mentions: [{ userId: peer.id, start: 3, end: 6 }],
+      },
+    });
+    expect(bad.statusCode).toBe(400);
+  });
+
+  it('rejects a range pointing at a user NOT in the group', async () => {
+    const owner = await createAndLoginUser(server, { nickname: 'odt_owner' });
+    const peer = await createAndLoginUser(server, { nickname: 'odt_peer' });
+    const outsider = await createAndLoginUser(server, { nickname: 'odt_out' });
+    await makeFriends(owner, peer);
+
+    const createRes = await server.inject({
+      method: 'POST',
+      url: '/api/groups',
+      headers: { authorization: `Bearer ${owner.accessToken}` },
+      payload: { name: 'Odt Crew', participantIds: [peer.id] },
+    });
+    const group = JSON.parse(createRes.payload).group;
+
+    const bad = await server.inject({
+      method: 'POST',
+      url: `/api/groups/${group.id}/messages`,
+      headers: { authorization: `Bearer ${owner.accessToken}` },
+      payload: {
+        content: 'Oi @odt_out!',
+        mentions: [{ userId: outsider.id, start: 3, end: 11 }],
+      },
+    });
+    expect(bad.statusCode).toBe(400);
+
+    // A NON-EXISTENT user id is equally rejected.
+    const none = await server.inject({
+      method: 'POST',
+      url: `/api/groups/${group.id}/messages`,
+      headers: { authorization: `Bearer ${owner.accessToken}` },
+      payload: {
+        content: 'Oi @fantasma',
+        mentions: [{ userId: 'nao-existe', start: 3, end: 12 }],
+      },
+    });
+    expect(none.statusCode).toBe(400);
+  });
+
+  it('rejects overlapping mention ranges (tampered payload)', async () => {
+    const owner = await createAndLoginUser(server, { nickname: 'ovr_owner' });
+    const a = await createAndLoginUser(server, { nickname: 'ovr_a' });
+    const b = await createAndLoginUser(server, { nickname: 'ovr_b' });
+    await makeFriends(owner, a);
+    await makeFriends(owner, b);
+
+    const createRes = await server.inject({
+      method: 'POST',
+      url: '/api/groups',
+      headers: { authorization: `Bearer ${owner.accessToken}` },
+      payload: { name: 'Ovr Crew', participantIds: [a.id, b.id] },
+    });
+    const group = JSON.parse(createRes.payload).group;
+
+    const bad = await server.inject({
+      method: 'POST',
+      url: `/api/groups/${group.id}/messages`,
+      headers: { authorization: `Bearer ${owner.accessToken}` },
+      payload: {
+        content: 'Oi @ovr_a @ovr_b',
+        mentions: [
+          { userId: a.id, start: 3, end: 9 },
+          // Overlaps the first range — a real client can never produce this.
+          { userId: b.id, start: 8, end: 15 },
+        ],
+      },
+    });
+    expect(bad.statusCode).toBe(400);
+  });
+
+  it('rejects mixing range mentions with legacy ids (tampered payload)', async () => {
+    const owner = await createAndLoginUser(server, { nickname: 'mix_owner' });
+    const peer = await createAndLoginUser(server, { nickname: 'mix_peer' });
+    await makeFriends(owner, peer);
+
+    const createRes = await server.inject({
+      method: 'POST',
+      url: '/api/groups',
+      headers: { authorization: `Bearer ${owner.accessToken}` },
+      payload: { name: 'Mix Crew', participantIds: [peer.id] },
+    });
+    const group = JSON.parse(createRes.payload).group;
+
+    const bad = await server.inject({
+      method: 'POST',
+      url: `/api/groups/${group.id}/messages`,
+      headers: { authorization: `Bearer ${owner.accessToken}` },
+      payload: {
+        content: 'Oi @mix_peer',
+        mentions: [{ userId: peer.id, start: 3, end: 12 }],
+        mentionUserIds: [peer.id],
+      },
+    });
+    expect(bad.statusCode).toBe(400);
+  });
+
+  it('rejects a range pointing at the SENDER (self-mention)', async () => {
+    const owner = await createAndLoginUser(server, { nickname: 'slf_owner' });
+    const peer = await createAndLoginUser(server, { nickname: 'slf_peer' });
+    await makeFriends(owner, peer);
+
+    const createRes = await server.inject({
+      method: 'POST',
+      url: '/api/groups',
+      headers: { authorization: `Bearer ${owner.accessToken}` },
+      payload: { name: 'Slf Crew', participantIds: [peer.id] },
+    });
+    const group = JSON.parse(createRes.payload).group;
+
+    const bad = await server.inject({
+      method: 'POST',
+      url: `/api/groups/${group.id}/messages`,
+      headers: { authorization: `Bearer ${owner.accessToken}` },
+      payload: {
+        content: 'Oi @slf_owner',
+        mentions: [{ userId: owner.id, start: 3, end: 13 }],
+      },
+    });
+    expect(bad.statusCode).toBe(400);
+  });
+
+  it('@todos via RANGE works for the owner and is rejected for a member', async () => {
+    const owner = await createAndLoginUser(server, { nickname: 'rta_owner' });
+    const peer = await createAndLoginUser(server, { nickname: 'rta_peer' });
+    await makeFriends(owner, peer);
+
+    const createRes = await server.inject({
+      method: 'POST',
+      url: '/api/groups',
+      headers: { authorization: `Bearer ${owner.accessToken}` },
+      payload: { name: 'Rta Crew', participantIds: [peer.id] },
+    });
+    const group = JSON.parse(createRes.payload).group;
+
+    // Owner selects @todos in the menu → a range-anchored all-mention.
+    const ok = await server.inject({
+      method: 'POST',
+      url: `/api/groups/${group.id}/messages`,
+      headers: { authorization: `Bearer ${owner.accessToken}` },
+      payload: {
+        content: '@todos olhem',
+        mentions: [{ all: true, start: 0, end: 6 }],
+      },
+    });
+    expect(ok.statusCode).toBe(201);
+    const msg = JSON.parse(ok.payload).message;
+    expect(msg.mentionAll).toBe(true);
+    expect(msg.mentions).toHaveLength(0); // @todos never rides inside mentions[]
+
+    // A common member forging a range-anchored @todos is rejected.
+    const forged = await server.inject({
+      method: 'POST',
+      url: `/api/groups/${group.id}/messages`,
+      headers: { authorization: `Bearer ${peer.accessToken}` },
+      payload: {
+        content: '@todos hack',
+        mentions: [{ all: true, start: 0, end: 6 }],
+      },
+    });
+    expect(forged.statusCode).toBe(403);
+  });
+
+  it('bans a mentioned user: older message ranges survive (history stays consistent)', async () => {
+    const owner = await createAndLoginUser(server, { nickname: 'bnh_owner' });
+    const peer = await createAndLoginUser(server, { nickname: 'bnh_peer' });
+    await makeFriends(owner, peer);
+
+    const createRes = await server.inject({
+      method: 'POST',
+      url: '/api/groups',
+      headers: { authorization: `Bearer ${owner.accessToken}` },
+      payload: { name: 'Bnh Crew', participantIds: [peer.id] },
+    });
+    const group = JSON.parse(createRes.payload).group;
+
+    const sendRes = await server.inject({
+      method: 'POST',
+      url: `/api/groups/${group.id}/messages`,
+      headers: { authorization: `Bearer ${owner.accessToken}` },
+      payload: {
+        content: 'Oi @bnh_peer',
+        mentions: [{ userId: peer.id, start: 3, end: 12 }],
+      },
+    });
+    expect(sendRes.statusCode).toBe(201);
+    const msg = JSON.parse(sendRes.payload).message;
+
+    // Owner bans the previously-mentioned peer.
+    await server.inject({
+      method: 'POST',
+      url: `/api/groups/${group.id}/members/${peer.id}/ban`,
+      headers: { authorization: `Bearer ${owner.accessToken}` },
+    });
+
+    // The historical message still resolves its mention reference (steady
+    // history) — the range persists.
+    const pageRes = await server.inject({
+      method: 'GET',
+      url: `/api/groups/${group.id}/messages?limit=10`,
+      headers: { authorization: `Bearer ${owner.accessToken}` },
+    });
+    const page = JSON.parse(pageRes.payload);
+    const hist = page.messages.find((m: { id: string }) => m.id === msg.id);
+    expect(hist.mentions).toHaveLength(1);
+    expect(hist.mentions[0].userId).toBe(peer.id);
+    expect(hist.mentions[0].start).toBe(3);
+    expect(hist.mentions[0].end).toBe(12);
+  });
+
   it('Visto/Enviado: readers endpoint returns who read and who did not (sender-only full view)', async () => {
     const owner = await createAndLoginUser(server, { nickname: 'read_owner' });
     const a = await createAndLoginUser(server, { nickname: 'read_a' });

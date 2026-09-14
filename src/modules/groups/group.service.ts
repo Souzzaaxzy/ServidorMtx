@@ -105,6 +105,10 @@ export interface GroupMessageItem {
 export interface MentionInfo {
    userId: string;
    nickname: string;
+   /** Token range inside the message content — null for legacy (pre-range)
+    * mentions, where the client falls back to a best-effort text scan. */
+   start: number | null;
+   end: number | null;
 }
 
 export interface ChatPeerPayload {
@@ -891,13 +895,17 @@ async function toGroupMessageItems(
   const senderIds = [...new Set(messages.map((m) => m.senderId))];
   const users = await mapChatUsers(senderIds, groupId);
 
-  // Resolve structured mentions for all these messages in one query.
+  // Resolve structured mentions for all these messages in one query. Each
+  // mention carries its exact token RANGE inside the message content (the
+  // only link between text and user reference); legacy rows keep null.
   const messageIds = messages.map((m) => m.id);
   const mentionRows = await prisma.messageMention.findMany({
     where: { messageId: { in: messageIds } },
     select: {
       messageId: true,
       mentionAll: true,
+      rangeStart: true,
+      rangeEnd: true,
       user: { select: { id: true, nickname: true } },
     },
   });
@@ -910,7 +918,12 @@ async function toGroupMessageItems(
     }
     if (row.user == null) continue;
     const list = mentionsByMessage.get(row.messageId) ?? [];
-    list.push({ userId: row.user.id, nickname: row.user.nickname });
+    list.push({
+      userId: row.user.id,
+      nickname: row.user.nickname,
+      start: row.rangeStart,
+      end: row.rangeEnd,
+    });
     mentionsByMessage.set(row.messageId, list);
   }
 
@@ -1047,6 +1060,22 @@ async function otherMemberIds(groupId: string, userId: string): Promise<string[]
   return rows.map((r) => r.userId);
 }
 
+interface IncomingMentionRange {
+  userId?: string;
+  all?: boolean;
+  start: number;
+  end: number;
+}
+
+/// Validates the '@' before a mention token sits at a word boundary and the
+/// char right after the token doesn't glue it to the next word.
+function atWordBoundary(text: string, start: number, end: number): boolean {
+  if (start < 0 || end > text.length || end <= start) return false;
+  if (start > 0 && !/\s/.test(text[start - 1])) return false;
+  if (end < text.length && /[\w\u00C0-\uFFFF]/.test(text[end])) return false;
+  return true;
+}
+
 export async function sendGroupMessage(
   userId: string,
   groupId: string,
@@ -1054,6 +1083,7 @@ export async function sendGroupMessage(
   replyToMessageId?: string,
   mentionUserIds: string[] = [],
   mentionAll = false,
+  mentions: IncomingMentionRange[] = [],
 ): Promise<GroupMessageItem> {
 
   await assertGroupMembership(groupId, userId);
@@ -1079,23 +1109,120 @@ export async function sendGroupMessage(
     }
   }
 
+  // Mentions — SERVER-authoritative. Two accepted wire shapes:
+  //  1. RANGE-ANCHORED ([mentions]) — the ONLY form a real client sends:
+  //     each entry has the exact "@Nickname"/"@todos" token range inside
+  //     [trimmed]. The server re-validates the substring matches a REAL
+  //     ACTIVE member (individual) or `@todos` (owner-only) — a mention is
+  //     NEVER inferred from text coincidence, and a forged range/user is
+  //     rejected.
+  //  2. LEGACY ([mentionUserIds]/[mentionAll]) — kept for older clients;
+  //     the same membership/owner rules apply.
 
-  // Mentions — SERVER-authoritative. `@todos` is ONLY allowed for the
-  // OWNER (persisted group creator / OWNER member); every individual
-  // mention must reference a REAL user that is an ACTIVE member
-  // (bannedAt null) of this group. A common member forging the payload
-  // is rejected.
-  const validatedMentionIds = new Set<string>();
-  if (mentionAll) {
-    const group = await prisma.group.findUnique({
-      where: { id: groupId },
-      select: { createdById: true },
-    });
-    if (!group) throw ApiError.notFound('Grupo não encontrado.');
+  // A real client sends either the range-anchored form OR the legacy ids —
+  // mixing them is a sign of a tampered payload.
+  const hasRanges = mentions.length > 0;
+  if (hasRanges && (mentionUserIds.length > 0 || mentionAll)) {
+    throw ApiError.invalidRequest(
+      'Formato de menção inválido: use intervalos ou ids, não ambos.',
+    );
+  }
+
+  // Resolve the group owner once (needed for @todos both wire shapes).
+  const group = await prisma.group.findUnique({
+    where: { id: groupId },
+    select: { createdById: true },
+  });
+  if (!group) throw ApiError.notFound('Grupo não encontrado.');
+
+  // ── Validate @todos (range or legacy) — owner-only. ──
+  const rangeAll = mentions.filter((m) => m.all === true);
+  if (rangeAll.length > 1) {
+    throw ApiError.invalidRequest('Menção @todos duplicada.');
+  }
+  if (mentionAll || rangeAll.length > 0) {
     if (group.createdById !== userId) {
       throw ApiError.forbidden('Somente o dono do grupo pode usar "@todos".');
     }
+    if (rangeAll.length === 1) {
+      const r = rangeAll[0];
+      if (!atWordBoundary(trimmed, r.start, r.end) ||
+          trimmed.slice(r.start, r.end) !== '@todos') {
+        throw ApiError.invalidRequest('Menção @todos não corresponde ao texto.');
+      }
+    }
   }
+
+  // ── Validate individual ranges — every range must point at a REAL active
+  // member AND its substring must match their CURRENT nickname exactly. ──
+  const validatedRangeRows: {
+    userId: string;
+    start: number;
+    end: number;
+  }[] = [];
+
+  if (mentions.length > 0) {
+    // Reject overlapping/duplicate ranges from a tampering client.
+    const sorted = [...mentions]
+      .filter((m) => m.all !== true)
+      .sort((a, b) => a.start - b.start);
+    for (let i = 0; i < sorted.length; i++) {
+      const prev = sorted[i - 1];
+      const cur = sorted[i];
+      if (cur.end <= cur.start || cur.start >= trimmed.length + 1) {
+        throw ApiError.invalidRequest('Menção com intervalo inválido.');
+      }
+      if (prev && cur.start < prev.end) {
+        throw ApiError.invalidRequest('Menções sobrepostas não são permitidas.');
+      }
+    }
+
+    const rangeUserIds = [
+      ...new Set(sorted.map((m) => m.userId).filter(Boolean) as string[]),
+    ];
+    const memberRows = rangeUserIds.length
+      ? await prisma.groupMember.findMany({
+          where: { groupId, userId: { in: rangeUserIds }, bannedAt: null },
+          select: {
+            userId: true,
+            user: { select: { nickname: true } },
+          },
+        })
+      : [];
+    const memberByUserId = new Map(
+      memberRows.map((r) => [r.userId, r.user.nickname]),
+    );
+
+    for (const m of sorted) {
+      if (!m.userId) {
+        throw ApiError.invalidRequest('Menção sem usuário.');
+      }
+      const nickname = memberByUserId.get(m.userId);
+      if (!nickname) {
+        throw ApiError.invalidRequest(
+          'Menção inválida: usuário não pertence ao grupo.',
+        );
+      }
+      if (m.userId === userId) {
+        throw ApiError.invalidRequest('Você não pode mencionar a si mesmo.');
+      }
+      const expected = `@${nickname}`;
+      if (m.start + expected.length !== m.end) {
+        throw ApiError.invalidRequest('Menção com texto inconsistente.');
+      }
+      const token = trimmed.slice(m.start, m.end);
+      if (token !== expected) {
+        throw ApiError.invalidRequest('Menção não corresponde ao texto.');
+      }
+      if (!atWordBoundary(trimmed, m.start, m.end)) {
+        throw ApiError.invalidRequest('Menção em posição inválida.');
+      }
+      validatedRangeRows.push({ userId: m.userId, start: m.start, end: m.end });
+    }
+  }
+
+  // ── Legacy individual ids — validated membership (kept for old clients). ──
+  const validatedMentionIds = new Set<string>();
   if (mentionUserIds.length > 0) {
     const uniqueIds = [...new Set(mentionUserIds)];
     const rows = await prisma.groupMember.findMany({
@@ -1112,6 +1239,34 @@ export async function sendGroupMessage(
       if (id !== userId) validatedMentionIds.add(id);
     }
   }
+
+  const mentionRows: {
+    userId?: string;
+    mentionAll?: boolean;
+    rangeStart: number | null;
+    rangeEnd: number | null;
+  }[] = [
+    ...(mentionAll || rangeAll.length > 0
+      ? [{
+          mentionAll: true,
+          rangeStart: rangeAll[0]?.start ?? null,
+          rangeEnd: rangeAll[0]?.end ?? null,
+        }]
+      : []),
+    ...validatedRangeRows.map((r) => ({
+      userId: r.userId,
+      rangeStart: r.start,
+      rangeEnd: r.end,
+    })),
+    // Legacy (no-range) rows keep NULL ranges so clients fall back to their
+    // best-effort history scan for these old payloads.
+    ...[...validatedMentionIds].map((id) => ({
+      userId: id,
+      rangeStart: null as number | null,
+      rangeEnd: null as number | null,
+    })),
+  ];
+
   const message = await prisma.$transaction(async (tx) => {
     const created = await tx.message.create({
       data: {
@@ -1120,10 +1275,7 @@ export async function sendGroupMessage(
         content: trimmed,
         replyToMessageId: replyToMessageId?.trim() || null,
         mentions: {
-          create: [
-            ...(mentionAll ? [{ mentionAll: true }] as const : []),
-            ...[...validatedMentionIds].map((id) => ({ userId: id }) as const),
-          ],
+          create: mentionRows,
         },
       },
     });

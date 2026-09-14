@@ -34,11 +34,23 @@ const createGroupSchema = z.object({
   participantIds: z.array(z.string().min(1).max(64)).optional().default([]),
 });
 
+const mentionRangeSchema = z
+  .object({
+    userId: z.string().min(1).max(64).optional(),
+    all: z.boolean().optional(),
+    start: z.number().int().min(0),
+    end: z.number().int().min(0),
+  })
+  .strict();
+
 const sendMessageSchema = z.object({
   content: z.string().max(GROUP_MESSAGE_LIMIT, 'Mensagem muito longa.'),
   replyToMessageId: z.string().min(1).max(64).optional(),
   mentionUserIds: z.array(z.string().min(1).max(64)).max(64).optional().default([]),
   mentionAll: z.boolean().optional().default(false),
+  // Range-anchored mentions (the ONLY mentions a real client sends). Each
+  // carries the exact "@Nickname"/"@todos" token range inside content.
+  mentions: z.array(mentionRangeSchema).max(64).optional().default([]),
 });
 
 const typingBodySchema = z.object({
@@ -235,6 +247,7 @@ export const groupRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         parsed.data.replyToMessageId,
         parsed.data.mentionUserIds,
         parsed.data.mentionAll,
+        parsed.data.mentions,
       );
       return reply.status(201).send({ message });
     } catch (err) {
