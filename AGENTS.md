@@ -61,6 +61,25 @@ PostgreSQL). Runs on Pterodactyl/Bronxys via `npm start` (self-provisions).
 - A coluna `hash` em `stickers` é opcional e usada só nas importações; o
   catálogo oficial não preenche hash.
 
+## Stickers — import via Sticker.ly (código do pacote)
+- `POST /api/stickers/stickerly/preview` (auth) devolve nome/autor/capa/
+  figurinhas + `alreadyInstalled` SEM importar; `.../import` (auth) baixa,
+  valida os BYTES (magic bytes → PNG/WebP/JPEG), guarda no /static e cria um
+  pacote DO usuário com dedupe por origem e por SHA-256. Reimportar o mesmo
+  código não duplica (`alreadyInstalled: true`).
+- `modules/stickers/stickerly.service.ts`: fonte em `api.sticker.ly`
+  (`/v3.1/stickerPack/<CODE>`), NÃO é API pública documentada — por isso a
+  base é configurável (`STICKERLY_API_BASE`), há timeout curto
+  (`AbortController`), limites (60 figurinhas, 5 MB/arquivo, 40 MB total) e
+  o UA é o do app oficial (público, não é credencial). O servidor fala com a
+  fonte; o APK NUNCA. Download com concorrência limitada (4).
+- `StickerPackage` ganhou `authorId`/`source`/`sourceId`: pacotes importados
+  são PRIVADOS ao dono (`listStickerPackages` filtra `authorId` null ou o do
+  usuário) e `source`+`sourceId` deduplica a origem ('share' | 'stickerly').
+  Migração: `20260914200000_stickerly_import`.
+- O código aceita `QSXLKY` ou `https://sticker.ly/s/QSXLKY`; formato é
+  validado antes de qualquer chamada externa (erro 400 amigável).
+
 ## Conventions / gotchas
 - `npm start` never depends on `.env` or `.env.example` in production — panel
   injects vars via process.env. `.env` is dev-only convenience (loaded with

@@ -937,6 +937,14 @@ model StickerPackage {
   // Active packages are installable/visible; deactivated ones are kept for
   // history (old messages/favorites keep rendering) but hidden from install.
   active      Boolean  @default(true)
+  // User-owned packages (imported from share/Sticker.ly). NULL for the
+  // official/system catalog so deactivating doesn't hide user collections.
+  authorId    String?
+  // Origin of an imported package: NULL = catalog/official; 'stickerly'
+  // (or another importer) = dedupe key so reimporting the same source pack
+  // does not create a duplicate.
+  source      String?
+  sourceId    String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -944,6 +952,8 @@ model StickerPackage {
   installs   UserStickerPackage[]
 
   @@index([active])
+  @@index([authorId])
+  @@index([source, sourceId])
   @@map("sticker_packages")
 }
 

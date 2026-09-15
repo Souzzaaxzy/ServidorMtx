@@ -92,7 +92,12 @@ async function installedPackageIds(userId: string, packageIds: string[]): Promis
 // ── Catalog + installed packages ─────────────────────────────
 export async function listStickerPackages(userId: string): Promise<StickerPackageItem[]> {
   const packages = await prisma.stickerPackage.findMany({
-    where: { active: true },
+    // User-imported packages (authorId set) are private to their owner; the
+    // official catalog (authorId null) is shared. Active only.
+    where: {
+      active: true,
+      OR: [{ authorId: null }, { authorId: userId }],
+    },
     orderBy: { createdAt: 'asc' },
     include: {
       stickers: {
@@ -250,6 +255,11 @@ export interface ImportStickerResult {
   package: StickerPackageItem | null;
   created: number;
   skipped: number;
+  /**
+   * True quando o pacote já existia na coleção do usuário (reimportação do
+   * mesmo código/origem) — o app usa isso para informar sem duplicar.
+   */
+  alreadyInstalled?: boolean;
 }
 
 function slugify(value: string): string {
@@ -310,6 +320,9 @@ export async function importStickerPackage(
       author: 'MATRIX',
       iconUrl: first.url,
       active: true,
+      // Owned by the user (source=share) so the catalog only shows it to them.
+      authorId: userId,
+      source: 'share',
       stickers: {
         create: toCreate.map((st, i) => ({
           order: i,
