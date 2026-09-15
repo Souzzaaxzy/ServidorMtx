@@ -586,13 +586,20 @@ export async function sendStickerMessage(
   }
 
   // Server-authoritative sticker resolution: the id must reference a real
-  // sticker in the catalog (active package). The URL/packageId come from the
-  // DB — a crafted payload can never inject arbitrary URLs.
+  // sticker and its URL/packageId come from the DB — a crafted payload can
+  // never inject arbitrary URLs.
+  //
+  // The package must be ACTIVE (normal catalog case) OR the sticker must
+  // belong to the SENDER (their own imported/archived copy). The second case
+  // is what keeps FAVORITES sendable after their original package was
+  // deleted: the favorite is re-created as a standalone sticker owned by the
+  // user, under a hidden (inactive) per-user archive package.
   const sticker = await prisma.sticker.findUnique({
     where: { id: stickerId },
     include: { package: { select: { id: true, active: true } } },
   });
-  if (!sticker || !sticker.package.active) {
+  const ownedBySender = sticker?.authorId != null && sticker.authorId === userId;
+  if (!sticker || (!sticker.package.active && !ownedBySender)) {
     throw ApiError.notFound('Figurinha não encontrada.');
   }
 

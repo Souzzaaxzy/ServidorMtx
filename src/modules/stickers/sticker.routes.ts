@@ -4,6 +4,7 @@ import { toApiError } from '../../utils/errors.js';
 import {
   addStickerFavorite,
   addStickerRecent,
+  deleteStickerPackage,
   getStickerPackage,
   importStickerPackage,
   installStickerPackage,
@@ -77,6 +78,24 @@ export const stickerRoutes: FastifyPluginAsync = async (app: FastifyInstance) =>
     try {
       await installStickerPackage(request.user!.id, id);
       return reply.status(204).send();
+    } catch (err) {
+      throw toApiError(err);
+    }
+  });
+
+  // Delete a package from the collection. Only the OWNER of a user-imported
+  // package may delete it (the official catalog is not deletable by regular
+  // users). The package is ARCHIVED, never physically wiped — old messages
+  // keep rendering — and the user's FAVORITED stickers are preserved as
+  // standalone copies so the favorites collection survives.
+  app.delete('/stickers/packages/:id', { onRequest: [app.authenticate] }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    if (!idParamSchema.safeParse(id).success) {
+      return reply.status(400).send({ error: { code: 'VALIDATION', message: 'Identificador inválido.' } });
+    }
+    try {
+      const result = await deleteStickerPackage(request.user!.id, id);
+      return reply.send(result);
     } catch (err) {
       throw toApiError(err);
     }

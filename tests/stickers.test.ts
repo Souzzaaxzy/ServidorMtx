@@ -63,6 +63,34 @@ async function createSeedStickerPackage(userId: string | null = null) {
   return pkg;
 }
 
+/** A package OWNED by the user (authorId on the PACKAGE) — the only kind a
+ * regular user is allowed to delete. */
+async function createOwnedStickerPackage(userId: string) {
+  const pkg = await prisma.stickerPackage.create({
+    data: {
+      slug: `owned_pack_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      name: 'Owned Pack',
+      description: 'pkg do usuário',
+      author: 'MATRIX',
+      iconUrl: 'http://localhost:3000/static/stickers/test/icon.png',
+      authorId: userId,
+      source: 'stickerly',
+      sourceId: `TEST${Math.random().toString(36).slice(2, 8).toUpperCase()}`,
+      stickers: {
+        create: Array.from({ length: 2 }, (_, i) => ({
+          order: i,
+          fileUrl: `http://localhost:3000/static/stickers/test/o${i + 1}.png`,
+          width: 512,
+          height: 512,
+          authorId: userId,
+        })),
+      },
+    },
+    include: { stickers: true },
+  });
+  return pkg;
+}
+
 describe('Stickers', () => {
   it('catalog endpoints require auth', async () => {
     const res = await server.inject({ method: 'GET', url: '/api/stickers/packages' });
@@ -289,7 +317,7 @@ describe('Stickers', () => {
     });
     const group = JSON.parse(createRes.payload).group;
 
-    const pkg = await createSeedStickerPackage(owner.id);
+    const pkg = await createOwnedStickerPackage(owner.id);
     const [s1] = pkg.stickers;
 
     const sent = await server.inject({
@@ -422,5 +450,117 @@ describe('Stickers', () => {
       payload: { name: 'x', stickers: [] },
     });
     expect(res.statusCode).toBe(400);
+  });
+  describe('delete package (owner-only) + favorites survival', () => {
+    it('rejects deleting a package the user does not own', async () => {
+      const owner = await createAndLoginUser(server, { nickname: 'stk_del_owner' });
+      const other = await createAndLoginUser(server, { nickname: 'stk_del_other' });
+      const pkg = await createOwnedStickerPackage(owner.id);
+
+      const res = await server.inject({
+        method: 'DELETE',
+        url: `/api/stickers/packages/${pkg.id}`,
+        headers: { authorization: `Bearer ${other.accessToken}` },
+      });
+      expect(res.statusCode).toBe(403);
+    });
+
+    it('rejects deleting the official catalog (no owner)', async () => {
+      const user = await createAndLoginUser(server, { nickname: 'stk_del_official' });
+      const pkg = await createSeedStickerPackage(null);
+      const res = await server.inject({
+        method: 'DELETE',
+        url: `/api/stickers/packages/${pkg.id}`,
+        headers: { authorization: `Bearer ${user.accessToken}` },
+      });
+      expect(res.statusCode).toBe(403);
+    });
+
+    it('deletes the owned package and drops it from the catalog', async () => {
+      const user = await createAndLoginUser(server, { nickname: 'stk_del_ok' });
+      const pkg = await createOwnedStickerPackage(user.id);
+
+      // Ensure it is listed first.
+      const before = await server.inject({
+        method: 'GET',
+        url: '/api/stickers/packages',
+        headers: { authorization: `Bearer ${user.accessToken}` },
+      });
+      expect(
+        (JSON.parse(before.payload).packages as Array<{ id: string }>).some(
+          (p) => p.id === pkg.id,
+        ),
+      ).toBe(true);
+
+      const res = await server.inject({
+        method: 'DELETE',
+        url: `/api/stickers/packages/${pkg.id}`,
+        headers: { authorization: `Bearer ${user.accessToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.payload).deleted).toBe(true);
+
+      const after = await server.inject({
+        method: 'GET',
+        url: '/api/stickers/packages',
+        headers: { authorization: `Bearer ${user.accessToken}` },
+      });
+      expect(
+        (JSON.parse(after.payload).packages as Array<{ id: string }>).some(
+          (p) => p.id === pkg.id,
+        ),
+      ).toBe(false);
+    });
+
+    it('preserves favorited stickers after the package is deleted', async () => {
+      const user = await createAndLoginUser(server, { nickname: 'stk_del_fav' });
+      const pkg = await createOwnedStickerPackage(user.id);
+      const stickerId = pkg.stickers[0].id;
+
+      // Favorite one sticker of the package.
+      await server.inject({
+        method: 'POST',
+        url: `/api/stickers/${stickerId}/favorite`,
+        headers: { authorization: `Bearer ${user.accessToken}` },
+      });
+
+      const del = await server.inject({
+        method: 'DELETE',
+        url: `/api/stickers/packages/${pkg.id}`,
+        headers: { authorization: `Bearer ${user.accessToken}` },
+      });
+      expect(del.statusCode).toBe(200);
+      expect(JSON.parse(del.payload).preservedFavorites).toBe(1);
+
+      // The favorite survives, pointing at a STANDALONE copy...
+      const favs = await server.inject({
+        method: 'GET',
+        url: '/api/stickers/favorites',
+        headers: { authorization: `Bearer ${user.accessToken}` },
+      });
+      const favorites = JSON.parse(favs.payload).stickers as Array<{
+        id: string;
+        fileUrl: string;
+      }>;
+      expect(favorites).toHaveLength(1);
+      expect(favorites[0].fileUrl).toBe(pkg.stickers[0].fileUrl);
+      expect(favorites[0].id).not.toBe(stickerId);
+
+      // ...and can STILL BE SENT to a friend even though its original
+      // package was deleted (the sender owns the archived copy).
+      const peer = await createAndLoginUser(server, { nickname: 'stk_del_peer' });
+      await makeFriends(user, peer);
+      const conv = await openConversation(user, peer);
+      const send = await server.inject({
+        method: 'POST',
+        url: `/api/conversations/${conv.id}/sticker`,
+        headers: { authorization: `Bearer ${user.accessToken}` },
+        payload: { stickerId: favorites[0].id },
+      });
+      expect(send.statusCode).toBe(201);
+      const msg = JSON.parse(send.payload).message;
+      expect(msg.type).toBe('sticker');
+      expect(msg.stickerUrl).toBe(pkg.stickers[0].fileUrl);
+    });
   });
 });

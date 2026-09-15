@@ -165,6 +165,122 @@ export async function uninstallStickerPackage(userId: string, packageId: string)
   await prisma.userStickerPackage.deleteMany({ where: { userId, packageId } });
 }
 
+// ── Delete a package (remove from the user's collection) ─────
+// A user may only delete a package THEY own (imported from share/Sticker.ly).
+// The official/system catalog is administered elsewhere (RBAC) — a regular
+// user must not be able to wipe it.
+//
+// Deleting a package must NOT break the user's FAVORITES: favorites are an
+// independent collection. Before archiving the package, every favorited
+// sticker is RE-CREATED as a standalone sticker (same bytes, new row under a
+// hidden per-user archive package) so the favorite — and any message that
+// referenced it — keeps rendering. Sticker files are never deleted with the
+// package (message history depends on them).
+export async function deleteStickerPackage(
+  userId: string,
+  packageId: string,
+): Promise<{ deleted: boolean; preservedFavorites: number }> {
+  const pkg = await prisma.stickerPackage.findFirst({
+    where: { id: packageId },
+    select: {
+      id: true,
+      slug: true,
+      name: true,
+      authorId: true,
+      active: true,
+      stickers: { select: { id: true, fileUrl: true, thumbUrl: true, width: true, height: true, hash: true } },
+    },
+  });
+  if (!pkg || !pkg.active) {
+    throw ApiError.notFound('Pacote de figurinhas não encontrado.');
+  }
+  if (pkg.authorId !== userId) {
+    throw ApiError.forbidden('Você só pode excluir os pacotes que importou.');
+  }
+
+  const stickerIds = pkg.stickers.map((s) => s.id);
+  const favorites = stickerIds.length
+    ? await prisma.stickerFavorite.findMany({
+        where: { userId, stickerId: { in: stickerIds } },
+        select: { stickerId: true },
+      })
+    : [];
+  const favoritedIds = new Set(favorites.map((f) => f.stickerId));
+  const favorited = pkg.stickers.filter((s) => favoritedIds.has(s.id));
+
+  let preservedFavorites = 0;
+  if (favorited.length > 0) {
+    // Hidden per-user archive: keeps favorited stickers usable/sendable
+    // after the original package disappears from the picker.
+    const archive = await ensureFavoriteArchivePackage(userId);
+    const maxOrder = await prisma.sticker.aggregate({
+      where: { packageId: archive.id },
+      _max: { order: true },
+    });
+    let order = (maxOrder._max.order ?? -1) + 1;
+    for (const s of favorited) {
+      const copy = await prisma.sticker.create({
+        data: {
+          packageId: archive.id,
+          order: order++,
+          fileUrl: s.fileUrl,
+          thumbUrl: s.thumbUrl,
+          width: s.width,
+          height: s.height,
+          hash: s.hash,
+          authorId: userId,
+        },
+      });
+      // Move the favorite to the standalone copy (same bytes/URL).
+      await prisma.stickerFavorite.update({
+        where: { userId_stickerId: { userId, stickerId: s.id } },
+        data: { stickerId: copy.id },
+      });
+      // Keep the sender's "recentes" working too.
+      await prisma.stickerRecent.updateMany({
+        where: { userId, stickerId: s.id },
+        data: { stickerId: copy.id },
+      });
+      preservedFavorites++;
+    }
+  }
+
+  // Archive the package: removed from the picker/catalog, kept in the DB so
+  // old messages (which reference the original ids) keep resolving.
+  await prisma.stickerPackage.update({
+    where: { id: pkg.id },
+    data: { active: false },
+  });
+  await prisma.userStickerPackage.deleteMany({ where: { userId, packageId: pkg.id } });
+
+  return { deleted: true, preservedFavorites };
+}
+
+/** Pacote oculto por usuário que guarda cópias autônomas das favoritas. */
+async function ensureFavoriteArchivePackage(userId: string) {
+  const slug = `favoritos-${userId.slice(0, 16)}`;
+  const existing = await prisma.stickerPackage.findFirst({
+    where: { slug },
+    select: { id: true },
+  });
+  if (existing) return existing;
+  return prisma.stickerPackage.create({
+    data: {
+      name: 'Favoritas',
+      slug,
+      description: 'Figurinhas favoritas salvas pelo usuário.',
+      author: 'MATRIX',
+      iconUrl: '',
+      // Inactive on purpose: never appears in the picker/catalog — it exists
+      // only so favorited stickers survive their package's deletion.
+      active: false,
+      authorId: userId,
+      source: 'favorites',
+    },
+    select: { id: true },
+  });
+}
+
 // ── Favorites ────────────────────────────────────────────────
 export async function listStickerFavorites(userId: string): Promise<StickerItem[]> {
   const rows = await prisma.stickerFavorite.findMany({

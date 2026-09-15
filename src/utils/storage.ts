@@ -16,6 +16,20 @@ export interface StorageProvider {
 
 const UPLOAD_ROOT = path.resolve(process.cwd(), 'uploads');
 
+/**
+ * Base pública dos arquivos enviados. Prefere a URL explícita do storage
+ * (STORAGE_PUBLIC_BASE_URL) e, na ausência dela, PUBLIC_API_URL — o endereço
+ * real por onde o APK alcança a API. Quando NENHUMA está configurada devolve
+ * string VAZIA, ou seja, o arquivo é salvo como caminho RELATIVO
+ * (`/static/<nome>`): o app resolve contra a própria `API_BASE_URL`.
+ *
+ * NUNCA usar `http://localhost:<porta>` aqui: isso grava no banco uma URL
+ * que só existe dentro do servidor e o app renderiza o sticker VAZIO.
+ */
+export function publicBase(): string {
+  return (env.storage.publicBaseUrl || env.publicApiUrl || '').replace(/\/$/, '');
+}
+
 export class LocalStorageProvider implements StorageProvider {
   async save(buffer: Buffer, ext: string): Promise<string> {
     await fs.mkdir(UPLOAD_ROOT, { recursive: true });
@@ -23,10 +37,7 @@ export class LocalStorageProvider implements StorageProvider {
     const fullPath = path.join(UPLOAD_ROOT, name);
     await fs.writeFile(fullPath, buffer);
 
-    const publicBase = env.storage.publicBaseUrl
-      ? env.storage.publicBaseUrl.replace(/\/$/, '')
-      : `http://localhost:${env.port}`;
-    return `${publicBase}/static/${name}`;
+    return `${publicBase()}/static/${name}`;
   }
 
   async delete(url: string): Promise<void> {

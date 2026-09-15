@@ -9,6 +9,7 @@ import {
   validateImageBuffer,
   validateVideoBuffer,
 } from '../../utils/storage.js';
+import { publicBase as sharedPublicBase } from '../../utils/storage.js';
 
 const UPLOAD_DIR = path.resolve(process.cwd(), 'uploads');
 
@@ -48,13 +49,11 @@ async function readStream(stream: Readable): Promise<Buffer> {
   return Buffer.concat(chunks);
 }
 
-// Public base for uploaded-file URLs. Prefer the explicit storage URL;
-// fall back to the API's own public URL so the APK receives an ABSOLUTE
-// http(s) URL it can load directly. When neither is configured the path
-// stays relative (/static/...) and the app resolves it against the API
-// base URL — never a localhost/internal path.
+// Public base for uploaded-file URLs: the single shared helper (storage.ts)
+// keeps image/audio/video uploads and sticker imports consistent — never a
+// localhost/internal path.
 function publicBase(): string {
-  return (env.storage.publicBaseUrl || env.publicApiUrl || '').replace(/\/$/, '');
+  return sharedPublicBase();
 }
 
 export async function saveLocalFile(

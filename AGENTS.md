@@ -80,6 +80,31 @@ PostgreSQL). Runs on Pterodactyl/Bronxys via `npm start` (self-provisions).
 - O código aceita `QSXLKY` ou `https://sticker.ly/s/QSXLKY`; formato é
   validado antes de qualquer chamada externa (erro 400 amigável).
 
+## Stickers — URLs públicas (o bug das figurinhas VAZIAS)
+- `utils/storage.ts` exporta `publicBase()` — ÚNICA fonte da base pública:
+  `STORAGE_PUBLIC_BASE_URL` → `PUBLIC_API_URL` → string vazia (o arquivo é
+  salvo como caminho RELATIVO `/static/<nome>` e o app resolve contra a sua
+  própria `API_BASE_URL`).
+- NUNCA voltar a usar `http://localhost:<porta>`: o `LocalStorageProvider`
+  fazia isso e gravava no banco uma URL que só existe dentro do servidor —
+  o app baixava nada e renderizava o sticker VAZIO. `upload.service.ts`
+  (imagem/áudio/vídeo) reusa o MESMO `publicBase()` para não divergir.
+
+## Stickers — excluir pacote + favoritas
+- `DELETE /api/stickers/packages/:id` (auth): só o DONO de um pacote
+  importado (`authorId === userId`) pode excluir; o catálogo oficial
+  responde 403. O pacote é ARQUIVADO (`active = false`), nunca apagado — as
+  mensagens antigas (que referenciam os ids originais) continuam
+  renderizando.
+- Favoritas sobrevivem: cada figurinha favoritada do pacote é RECRIADA como
+  figurinha autônoma (mesmos bytes/URL) num pacote-arquivo oculto por usuário
+  (`slug = favoritos-<userId>`, `active = false`, `source = 'favorites'`) e a
+  linha de `sticker_favorite` (e `sticker_recent`) aponta para a cópia. O
+  endpoint devolve `preservedFavorites`.
+- `chat.service.sendStickerMessage` aceita enviar quando o pacote está ATIVO
+  **ou** quando a figurinha pertence ao remetente (`sticker.authorId ===
+  userId`) — é isso que mantém as favoritas arquivadas ENVIÁVEIS.
+
 ## Conventions / gotchas
 - `npm start` never depends on `.env` or `.env.example` in production — panel
   injects vars via process.env. `.env` is dev-only convenience (loaded with
