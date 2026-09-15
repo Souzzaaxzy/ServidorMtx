@@ -6,8 +6,10 @@ import {
   listActiveStories,
   markStoryViewed,
   purgeExpiredStories,
+  replyToStory,
+  toggleStoryLike,
 } from './story.service.js';
-import { createStorySchema } from './story.schema.js';
+import { createStorySchema, replyStorySchema } from './story.schema.js';
 
 export const storyRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
   // GET /stories — ACTIVE stories (not expired), grouped by author, ordered
@@ -44,6 +46,35 @@ export const storyRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     try {
       await markStoryViewed(request.user!.id, id);
       return reply.status(204).send();
+    } catch (err) {
+      throw toApiError(err);
+    }
+  });
+
+  // POST /stories/:id/like — toggles the session user's like. Same semantics
+  // as the post feed (one row per user+story; never duplicates).
+  app.post('/stories/:id/like', { onRequest: [app.authenticate] }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    try {
+      const result = await toggleStoryLike(request.user!.id, id);
+      return reply.send(result);
+    } catch (err) {
+      throw toApiError(err);
+    }
+  });
+
+  // POST /stories/:id/reply — the reply becomes a REAL direct message to the
+  // story's AUTHOR (existing conversation + realtime infrastructure; the
+  // recipient is never taken from the client).
+  app.post('/stories/:id/reply', { onRequest: [app.authenticate] }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const parsed = replyStorySchema.safeParse(request.body);
+    if (!parsed.success) {
+      throw ApiError.validation('Dados inválidos.', parsed.error.issues);
+    }
+    try {
+      const result = await replyToStory(request.user!.id, id, parsed.data.text);
+      return reply.status(201).send(result);
     } catch (err) {
       throw toApiError(err);
     }

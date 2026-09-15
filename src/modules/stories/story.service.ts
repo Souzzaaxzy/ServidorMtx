@@ -1,6 +1,7 @@
 import { prisma } from '../../config/prisma.js';
 import { ApiError } from '../../utils/errors.js';
 import { deleteLocalFileByUrl } from '../uploads/upload.service.js';
+import { getOrCreateConversation, sendMessage } from '../chat/chat.service.js';
 import {
   AUTHOR_SELECT,
   nicknameCosmetics,
@@ -17,6 +18,12 @@ import {
 /** Server-side lifetime of a story. */
 export const STORY_TTL_MS = 24 * 60 * 60 * 1000;
 
+/** Max length of a TEXT story. */
+export const STORY_TEXT_LIMIT = 300;
+
+/** Max length of a story REPLY (a real chat message). */
+export const STORY_REPLY_LIMIT = 500;
+
 /** Author fragment — EXACTLY the shape the feed embeds for a post author. */
 export type StoryAuthor = {
   id: string;
@@ -27,8 +34,10 @@ export type StoryAuthor = {
 type StoryRow = {
   id: string;
   userId: string;
+  type: string;
   mediaUrl: string;
   mediaType: string;
+  text: string;
   thumbnailUrl: string | null;
   caption: string;
   expiresAt: Date;
@@ -41,8 +50,13 @@ type StoryRow = {
 export interface StoryItem {
   id: string;
   author: StoryAuthor;
-  mediaUrl: string;
+  /** 'image' | 'video' | 'text' — ONE shape for every story kind. */
+  type: 'image' | 'video' | 'text';
+  /** Media reference (IMAGE/VIDEO only; null for a text story). */
+  mediaUrl: string | null;
   mediaType: 'image' | 'video';
+  /** Text content (TEXT stories only; empty for media stories). */
+  text: string;
   thumbnailUrl: string | null;
   caption: string;
   expiresAt: string;
@@ -51,9 +65,25 @@ export interface StoryItem {
   viewed: boolean;
   /** Whether the requesting user is the author (drives the delete action). */
   mine: boolean;
+  /** Whether the REQUESTING user liked this story (same as the feed). */
+  liked: boolean;
+  likeCount: number;
 }
 
-function toStoryItem(story: StoryRow, viewerId: string, viewed: boolean): StoryItem {
+function storyKind(story: { type: string; mediaType: string }): 'image' | 'video' | 'text' {
+  if (story.type === 'text') return 'text';
+  if (story.type === 'video') return 'video';
+  return story.mediaType === 'video' ? 'video' : 'image';
+}
+
+function toStoryItem(
+  story: StoryRow,
+  viewerId: string,
+  viewed: boolean,
+  liked = false,
+  likeCount = 0,
+): StoryItem {
+  const kind = storyKind(story);
   return {
     id: story.id,
     author: {
@@ -62,20 +92,31 @@ function toStoryItem(story: StoryRow, viewerId: string, viewed: boolean): StoryI
       avatarUrl: story.user.avatarUrl,
       ...nicknameCosmetics(story.user),
     },
-    mediaUrl: story.mediaUrl,
-    mediaType: story.mediaType === 'video' ? 'video' : 'image',
+    type: kind,
+    // An empty mediaUrl means "text story" — the app receives null and
+    // renders the centered text instead of trying to load media.
+    mediaUrl: story.mediaUrl ? story.mediaUrl : null,
+    mediaType: kind === 'video' ? 'video' : 'image',
+    text: story.text ?? '',
     thumbnailUrl: story.thumbnailUrl ?? null,
     caption: story.caption ?? '',
     expiresAt: story.expiresAt.toISOString(),
     createdAt: story.createdAt.toISOString(),
     viewed,
     mine: story.userId === viewerId,
+    liked,
+    likeCount,
   };
 }
 
 export interface CreateStoryInput {
-  mediaUrl: string;
-  mediaType: 'image' | 'video';
+  /** 'image' | 'video' | 'text'. */
+  type?: 'image' | 'video' | 'text';
+  /** Required for image/video; ignored (empty) for text. */
+  mediaUrl?: string | null;
+  mediaType?: 'image' | 'video';
+  /** Required for text stories. */
+  text?: string | null;
   thumbnailUrl?: string | null;
   caption?: string | null;
 }
@@ -85,11 +126,43 @@ export async function createStory(
   userId: string,
   input: CreateStoryInput,
 ): Promise<StoryItem> {
+  const type = input.type ?? (input.mediaType === 'video' ? 'video' : 'image');
+  if (type === 'text') {
+    const text = (input.text ?? '').trim();
+    if (text.length === 0) {
+      throw ApiError.validation('Escreva algo para publicar o Story.');
+    }
+    if (text.length > STORY_TEXT_LIMIT) {
+      throw ApiError.validation(
+        `O Story deve ter no máximo ${STORY_TEXT_LIMIT} caracteres.`,
+      );
+    }
+    const story = await prisma.story.create({
+      data: {
+        userId,
+        type: 'text',
+        mediaUrl: '',
+        mediaType: 'image',
+        text: text,
+        expiresAt: new Date(Date.now() + STORY_TTL_MS),
+      },
+      include: { user: { select: AUTHOR_SELECT } },
+    });
+    return toStoryItem(story as unknown as StoryRow, userId, false);
+  }
+
+  // Media story (image/video): the URL was already produced by the standard
+  // uploads pipeline — validated by the route schema.
+  const mediaUrl = (input.mediaUrl ?? '').trim();
+  if (mediaUrl.length === 0) {
+    throw ApiError.validation('Envie uma foto ou um vídeo para o Story.');
+  }
   const story = await prisma.story.create({
     data: {
       userId,
-      mediaUrl: input.mediaUrl,
-      mediaType: input.mediaType,
+      type,
+      mediaUrl,
+      mediaType: type,
       thumbnailUrl: input.thumbnailUrl ?? null,
       caption: input.caption?.trim().slice(0, 200) ?? '',
       expiresAt: new Date(Date.now() + STORY_TTL_MS),
@@ -120,20 +193,44 @@ export async function listActiveStories(
   });
   if (stories.length === 0) return { groups: [] };
 
-  // One lightweight query for the viewer's seen markers (no N+1).
+  // One lightweight query for the viewer's seen markers (no N+1), plus the
+  // like state — both scoped to the requesting user.
+  const storyIds = stories.map((sn) => sn.id);
   const viewedIds = new Set<string>();
+  const likedIds = new Set<string>();
   if (viewerId) {
-    const views = await prisma.storyView.findMany({
-      where: { userId: viewerId, storyId: { in: stories.map((s) => s.id) } },
-      select: { storyId: true },
-    });
+    const [views, likes] = await Promise.all([
+      prisma.storyView.findMany({
+        where: { userId: viewerId, storyId: { in: storyIds } },
+        select: { storyId: true },
+      }),
+      prisma.storyLike.findMany({
+        where: { userId: viewerId, storyId: { in: storyIds } },
+        select: { storyId: true },
+      }),
+    ]);
     for (const v of views) viewedIds.add(v.storyId);
+    for (const l of likes) likedIds.add(l.storyId);
   }
+  // Like counts in ONE grouped query.
+  const likeCounts = new Map<string, number>();
+  const grouped = await prisma.storyLike.groupBy({
+    by: ['storyId'],
+    where: { storyId: { in: storyIds } },
+    _count: { storyId: true },
+  });
+  for (const g of grouped) likeCounts.set(g.storyId, g._count.storyId);
 
   const byAuthor = new Map<string, StoryGroup>();
   for (const story of stories) {
     const viewed = viewerId ? viewedIds.has(story.id) : false;
-    const item = toStoryItem(story as unknown as StoryRow, viewerId ?? '', viewed);
+    const item = toStoryItem(
+      story as unknown as StoryRow,
+      viewerId ?? '',
+      viewed,
+      likedIds.has(story.id),
+      likeCounts.get(story.id) ?? 0,
+    );
     const existing = byAuthor.get(story.userId);
     if (existing) {
       existing.stories.push(item);
@@ -238,4 +335,117 @@ async function cleanupUnusedMedia(urls: (string | null)[]): Promise<void> {
       (await prisma.user.count({ where: { avatarUrl: url } })) > 0;
     if (!stillUsed) await deleteLocalFileByUrl(url).catch(() => void 0);
   }
+}
+
+// ── Likes (same semantics as the post feed) ──────────────────
+/**
+ * Toggles a like on a story. Mirrors the post-like behaviour exactly:
+ * one row per (user, story) enforced by a unique constraint, so repeated
+ * taps can never duplicate a like; toggling again removes it.
+ * Only ACTIVE stories accept likes (server-side expiry check).
+ */
+export async function toggleStoryLike(
+  userId: string,
+  storyId: string,
+): Promise<{ liked: boolean; likeCount: number }> {
+  const story = await prisma.story.findUnique({
+    where: { id: storyId },
+    select: { id: true, expiresAt: true },
+  });
+  if (!story || story.expiresAt <= new Date()) {
+    throw ApiError.notFound('Story não encontrado.');
+  }
+
+  const existing = await prisma.storyLike.findUnique({
+    where: { userId_storyId: { userId, storyId } },
+    select: { id: true },
+  });
+  if (existing) {
+    await prisma.storyLike.delete({ where: { id: existing.id } });
+  } else {
+    // upsert (not create) so a concurrent double-tap can never throw a
+    // unique-constraint error — the row simply stays singular.
+    await prisma.storyLike.upsert({
+      where: { userId_storyId: { userId, storyId } },
+      update: {},
+      create: { userId, storyId },
+    });
+  }
+  const likeCount = await prisma.storyLike.count({ where: { storyId } });
+  return { liked: !existing, likeCount };
+}
+
+// ── Reply to a story (becomes a REAL chat message) ───────────
+/**
+ * Replies to a story. The reply is NOT a separate inbox: it is created as a
+ * normal DIRECT MESSAGE from the replier to the story's author, carrying the
+ * story reference + a lightweight snapshot (type/thumbnail/text preview) so
+ * the chat keeps rendering the reference even after the story expires.
+ *
+ * Reuses the existing conversation + message infrastructure and realtime
+ * dispatch, so read state / history / groups rules all stay consistent.
+ */
+export async function replyToStory(
+  userId: string,
+  storyId: string,
+  text: string,
+): Promise<{ message: unknown; conversationId: string; recipientId: string }> {
+  const trimmed = text.trim();
+  if (trimmed.length === 0) {
+    throw ApiError.validation('Escreva uma resposta.');
+  }
+  if (trimmed.length > STORY_REPLY_LIMIT) {
+    throw ApiError.validation(
+      `A resposta deve ter no máximo ${STORY_REPLY_LIMIT} caracteres.`,
+    );
+  }
+
+  const story = await prisma.story.findUnique({
+    where: { id: storyId },
+    select: {
+      id: true,
+      userId: true,
+      type: true,
+      mediaUrl: true,
+      mediaType: true,
+      text: true,
+      thumbnailUrl: true,
+      expiresAt: true,
+    },
+  });
+  if (!story || story.expiresAt <= new Date()) {
+    throw ApiError.notFound('Story não encontrado.');
+  }
+  if (story.userId === userId) {
+    throw ApiError.invalidRequest('Você não pode responder ao seu próprio Story.');
+  }
+
+  // The recipient is ALWAYS the story author — never a client-supplied id.
+  const conversation = await getOrCreateConversation(userId, story.userId);
+
+  // Message kind carries the story snapshot; type 'story_reply' lets the app
+  // render the contextual reference card instead of a plain bubble.
+  const kind = storyKind(story as { type: string; mediaType: string });
+  const preview = kind === 'text'
+    ? story.text.slice(0, 120)
+    : (story.thumbnailUrl ?? story.mediaUrl ?? '').slice(0, 300);
+
+  const message = await sendMessage(
+    userId,
+    conversation.id,
+    trimmed,
+    undefined,
+    {
+      storyId: story.id,
+      storyType: kind,
+      storyThumbUrl: kind === 'text' ? null : (story.thumbnailUrl ?? story.mediaUrl ?? null),
+      storyPreview: preview,
+    },
+  );
+
+  return {
+    message,
+    conversationId: conversation.id,
+    recipientId: story.userId,
+  };
 }

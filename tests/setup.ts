@@ -42,6 +42,7 @@ beforeAll(async () => {
 // SQLite has no TRUNCATE; we DELETE in dependency-safe (child-first) order.
 // PRAGMA foreign_keys is ON (Prisma enables it), so order matters.
 const TABLES = [
+  'story_likes',
   'story_views',
   'stories',
   'messages',

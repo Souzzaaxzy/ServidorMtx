@@ -88,6 +88,18 @@ export interface MessageItem {
   stickerId: string | null;
   /** The package this sticker belongs to (sticker messages only). */
   stickerPackageId: string | null;
+  /** STORY REPLY messages: the story this message answers + a SNAPSHOT
+   * (type/thumbnail/text preview) so the reference keeps rendering in the
+   * history even after the story expired. Null for every other message. */
+  story: StoryReference | null;
+}
+
+/** Reference to the story a reply message answers. */
+export interface StoryReference {
+  storyId: string;
+  type: 'image' | 'video' | 'text' | string;
+  thumbnailUrl: string | null;
+  preview: string;
 }
 
 /** Optional sender identity embedded on realtime incoming frames so the
@@ -474,6 +486,14 @@ async function toMessageItems(
       stickerUrl: m.stickerUrl ?? null,
       stickerId: m.stickerId ?? null,
       stickerPackageId: m.stickerPackageId ?? null,
+      story: m.storyId
+        ? {
+            storyId: m.storyId,
+            type: m.storyType ?? 'image',
+            thumbnailUrl: m.storyThumbUrl ?? null,
+            preview: m.storyPreview ?? '',
+          }
+        : null,
     };
   });
 }
@@ -647,11 +667,20 @@ export const STICKER_PREVIEW = '🧩 Figurinha';
 // ── Send a message ───────────────────────────────────────────
 // Server is authoritative: sender from token, membership enforced, friends-only
 // rule enforced, size/empty validated. Returns the persisted MessageItem.
+/** Optional contextual reference attached to a message (story reply). */
+export interface MessageStoryRef {
+  storyId: string;
+  storyType: string;
+  storyThumbUrl: string | null;
+  storyPreview: string;
+}
+
 export async function sendMessage(
   userId: string,
   conversationId: string,
   content: string,
   replyToMessageId?: string,
+  storyRef?: MessageStoryRef,
 ): Promise<MessageItem> {
   const conversation = await prisma.conversation.findUnique({
     where: { id: conversationId },
@@ -701,6 +730,13 @@ export async function sendMessage(
         senderId: userId,
         content: trimmed,
         replyToMessageId: replyToMessageId?.trim() || null,
+        // Story reply: the reference travels WITH the message (server-filled
+        // by replyToStory — never from the client payload).
+        storyId: storyRef?.storyId ?? null,
+        storyType: storyRef?.storyType ?? null,
+        storyThumbUrl: storyRef?.storyThumbUrl ?? null,
+        storyPreview: storyRef?.storyPreview ?? null,
+        ...(storyRef ? { type: 'story_reply' } : {}),
       },
     });
     await tx.conversation.update({

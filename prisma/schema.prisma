@@ -52,6 +52,7 @@ model User {
   posts        Post[]
   stories      Story[]
   storyViews   StoryView[]
+  storyLikes   StoryLike[]
   likes        Like[]
   comments     Comment[]
   commentLikes CommentLike[]
@@ -135,10 +136,18 @@ model Post {
 model Story {
   id           String   @id @default(cuid())
   userId       String
-  // Image OR video reference (exactly one is set): /static/... or absolute.
-  mediaUrl     String
-  // 'image' | 'video' — drives the viewer (video autoplays/mutes).
+  // 'image' | 'video' | 'text'. A TEXT story carries no media at all (its
+  // content lives in `text`), so mediaUrl stays null for it. Exactly one
+  // representation is used per story — never a separate table per type.
+  type         String   @default("image")
+  // Image OR video reference: /static/... or absolute. EMPTY for text
+  // stories (kept non-null so the SQLite migration is a plain ADD COLUMN).
+  mediaUrl     String   @default("")
+  // 'image' | 'video' — drives the viewer (video autoplays/mutes). Mirrors
+  // `type` for media stories; kept for backwards compatibility.
   mediaType    String   @default("image")
+  // Text story content (empty for media stories). Rendered centered/legible.
+  text         String   @default("")
   // Optional cover for a VIDEO story (same image upload path as posts).
   thumbnailUrl String?
   // Optional caption shown in the viewer.
@@ -151,6 +160,7 @@ model Story {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   views StoryView[]
+  likes StoryLike[]
 
   @@index([userId])
   @@index([expiresAt])
@@ -172,6 +182,24 @@ model StoryView {
   @@unique([userId, storyId])
   @@index([userId])
   @@map("story_views")
+}
+
+// A like on a story. Reuses the SAME semantics as the post `Like` (one row
+// per user+target fixed by a unique constraint, so repeated taps can never
+// duplicate), just pointed at a story. Expired stories cascade away with
+// their likes.
+model StoryLike {
+  id        String   @id @default(cuid())
+  userId    String
+  storyId   String
+  createdAt DateTime @default(now())
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  story Story @relation(fields: [storyId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, storyId])
+  @@index([storyId])
+  @@map("story_likes")
 }
 
 model Like {
@@ -408,6 +436,15 @@ model Message {
   stickerUrl     String?
   stickerId      String?
   stickerPackageId String?
+  // STORY REPLY messages: `type` is "story_reply", `content` is the reply
+  // text, and the original story is referenced by `storyId` PLUS a snapshot
+  // (type/thumbnail/text preview). The snapshot is intentional: a story
+  // expires after 24h, and the message must keep rendering that reference
+  // without breaking the chat (no full media copy is stored — just the ref).
+  storyId        String?
+  storyType      String?
+  storyThumbUrl  String?
+  storyPreview   String?
 
   // Soft-delete marker for "Excluir para todos". When set, the message is
   // hidden for BOTH participants (all read paths filter it out). The row + a

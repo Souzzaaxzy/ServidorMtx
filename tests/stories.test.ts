@@ -19,6 +19,24 @@ function auth(token: string) {
   return { authorization: `Bearer ${token}` };
 }
 
+/** Makes two users friends (required before a DM can be created). */
+async function makeFriends(
+  a: { id: string; accessToken: string },
+  b: { id: string; accessToken: string },
+) {
+  const send = await server.inject({
+    method: 'POST',
+    url: `/api/friend-requests/${b.id}`,
+    headers: auth(a.accessToken),
+  });
+  const request = JSON.parse(send.payload);
+  await server.inject({
+    method: 'POST',
+    url: `/api/friend-requests/${request.id}/accept`,
+    headers: auth(b.accessToken),
+  });
+}
+
 describe('Stories', () => {
   it('lists for an anonymous caller without leaking viewed/mine', async () => {
     const res = await server.inject({ method: 'GET', url: '/api/stories' });
@@ -283,5 +301,260 @@ describe('Stories', () => {
     const story = JSON.parse(res.payload);
     expect(story.mediaType).toBe('video');
     expect(story.thumbnailUrl).toBe(IMG);
+  });
+  describe('text stories, likes and replies', () => {
+    it('creates a TEXT story (no media) and validates the payload', async () => {
+      const user = await createAndLoginUser(server, { nickname: 'story_txt' });
+      const res = await server.inject({
+        method: 'POST',
+        url: '/api/stories',
+        headers: auth(user.accessToken),
+        payload: { type: 'text', text: 'Bom dia, galera!' },
+      });
+      expect(res.statusCode).toBe(201);
+      const story = JSON.parse(res.payload);
+      expect(story.type).toBe('text');
+      expect(story.text).toBe('Bom dia, galera!');
+      expect(story.mediaUrl).toBeNull();
+      expect(story.liked).toBe(false);
+      expect(story.likeCount).toBe(0);
+
+      // Empty text is rejected.
+      const empty = await server.inject({
+        method: 'POST',
+        url: '/api/stories',
+        headers: auth(user.accessToken),
+        payload: { type: 'text', text: '   ' },
+      });
+      expect(empty.statusCode).toBeGreaterThanOrEqual(400);
+    });
+
+    it('rejects a text story that also carries media', async () => {
+      const user = await createAndLoginUser(server, { nickname: 'story_txt_media' });
+      const res = await server.inject({
+        method: 'POST',
+        url: '/api/stories',
+        headers: auth(user.accessToken),
+        payload: { type: 'text', text: 'oi', mediaUrl: IMG },
+      });
+      expect(res.statusCode).toBe(400);
+    });
+
+    it('toggles a story like and never duplicates it', async () => {
+      const author = await createAndLoginUser(server, { nickname: 'story_like_author' });
+      const liker = await createAndLoginUser(server, { nickname: 'story_like_user' });
+      const created = await server.inject({
+        method: 'POST',
+        url: '/api/stories',
+        headers: auth(author.accessToken),
+        payload: { mediaUrl: IMG, mediaType: 'image' },
+      });
+      const storyId = JSON.parse(created.payload).id as string;
+
+      const like = await server.inject({
+        method: 'POST',
+        url: `/api/stories/${storyId}/like`,
+        headers: auth(liker.accessToken),
+      });
+      expect(like.statusCode).toBe(200);
+      expect(JSON.parse(like.payload)).toMatchObject({ liked: true, likeCount: 1 });
+
+      // Liking again TOGGLES OFF (same as the feed).
+      const again = await server.inject({
+        method: 'POST',
+        url: `/api/stories/${storyId}/like`,
+        headers: auth(liker.accessToken),
+      });
+      expect(JSON.parse(again.payload)).toMatchObject({ liked: false, likeCount: 0 });
+
+      // Multiple likes from the same user can never create two rows.
+      await server.inject({
+        method: 'POST',
+        url: `/api/stories/${storyId}/like`,
+        headers: auth(liker.accessToken),
+      });
+      const rows = await prisma.storyLike.count({ where: { storyId, userId: liker.id } });
+      expect(rows).toBe(1);
+    });
+
+    it('exposes liked/likeCount per viewer in the list', async () => {
+      const author = await createAndLoginUser(server, { nickname: 'story_like_author2' });
+      const liker = await createAndLoginUser(server, { nickname: 'story_like_user2' });
+      const created = await server.inject({
+        method: 'POST',
+        url: '/api/stories',
+        headers: auth(author.accessToken),
+        payload: { mediaUrl: IMG, mediaType: 'image' },
+      });
+      const storyId = JSON.parse(created.payload).id as string;
+      await server.inject({
+        method: 'POST',
+        url: `/api/stories/${storyId}/like`,
+        headers: auth(liker.accessToken),
+      });
+
+      const res = await server.inject({
+        method: 'GET',
+        url: '/api/stories',
+        headers: auth(liker.accessToken),
+      });
+      const groups = JSON.parse(res.payload).groups as Array<{
+        stories: Array<{ id: string; liked: boolean; likeCount: number }>;
+      }>;
+      const item = groups.flatMap((g) => g.stories).find((s) => s.id === storyId)!;
+      expect(item.liked).toBe(true);
+      expect(item.likeCount).toBe(1);
+
+      // The AUTHOR does not see it as liked (per-viewer state).
+      const own = await server.inject({
+        method: 'GET',
+        url: '/api/stories',
+        headers: auth(author.accessToken),
+      });
+      const ownItem = (JSON.parse(own.payload).groups as Array<{
+        stories: Array<{ id: string; liked: boolean }>;
+      }>).flatMap((g) => g.stories).find((s) => s.id === storyId)!;
+      expect(ownItem.liked).toBe(false);
+    });
+
+    it('replies to a story as a REAL message in the DM with its author', async () => {
+      const author = await createAndLoginUser(server, { nickname: 'story_rep_author' });
+      const replier = await createAndLoginUser(server, { nickname: 'story_rep_user' });
+      await makeFriends(author, replier);
+      const created = await server.inject({
+        method: 'POST',
+        url: '/api/stories',
+        headers: auth(author.accessToken),
+        payload: { mediaUrl: IMG, mediaType: 'image' },
+      });
+      const storyId = JSON.parse(created.payload).id as string;
+
+      const reply = await server.inject({
+        method: 'POST',
+        url: `/api/stories/${storyId}/reply`,
+        headers: auth(replier.accessToken),
+        payload: { text: 'Que legal!' },
+      });
+      expect(reply.statusCode).toBe(201);
+      const body = JSON.parse(reply.payload);
+      expect(body.recipientId).toBe(author.id);
+      expect(body.conversationId).toBeTruthy();
+      const msg = body.message;
+      expect(msg.type).toBe('story_reply');
+      expect(msg.content).toBe('Que legal!');
+      // The message carries the story reference + snapshot.
+      expect(msg.story.storyId).toBe(storyId);
+      expect(msg.story.type).toBe('image');
+      expect(msg.story.thumbnailUrl).toBe(IMG);
+
+      // It is a NORMAL message: the author sees it in their history.
+      const history = await server.inject({
+        method: 'GET',
+        url: `/api/conversations/${body.conversationId}/messages`,
+        headers: auth(author.accessToken),
+      });
+      const items = JSON.parse(history.payload).messages as Array<{
+        id: string;
+        content: string;
+        story: { storyId: string } | null;
+      }>;
+      const stored = items.find((m) => m.id === msg.id)!;
+      expect(stored).toBeDefined();
+      expect(stored.content).toBe('Que legal!');
+      expect(stored.story!.storyId).toBe(storyId);
+    });
+
+    it('keeps the story reference AFTER the story expires (chat never breaks)', async () => {
+      const author = await createAndLoginUser(server, { nickname: 'story_rep_exp_a' });
+      const replier = await createAndLoginUser(server, { nickname: 'story_rep_exp_b' });
+      await makeFriends(author, replier);
+      const created = await server.inject({
+        method: 'POST',
+        url: '/api/stories',
+        headers: auth(author.accessToken),
+        payload: { mediaUrl: IMG, mediaType: 'image' },
+      });
+      const storyId = JSON.parse(created.payload).id as string;
+
+      const reply = await server.inject({
+        method: 'POST',
+        url: `/api/stories/${storyId}/reply`,
+        headers: auth(replier.accessToken),
+        payload: { text: 'Boa!' },
+      });
+      const convId = JSON.parse(reply.payload).conversationId as string;
+
+      // Expire the story (and let the list purge it).
+      await prisma.story.update({
+        where: { id: storyId },
+        data: { expiresAt: new Date(Date.now() - 1000) },
+      });
+      await server.inject({
+        method: 'GET',
+        url: '/api/stories',
+        headers: auth(author.accessToken),
+      });
+
+      // The message survives with its snapshot (the story row is gone).
+      const history = await server.inject({
+        method: 'GET',
+        url: `/api/conversations/${convId}/messages`,
+        headers: auth(author.accessToken),
+      });
+      const items = JSON.parse(history.payload).messages as Array<{
+        content: string;
+        story: { storyId: string; thumbnailUrl: string | null } | null;
+      }>;
+      const stored = items.find((m) => m.content === 'Boa!')!;
+      expect(stored).toBeDefined();
+      expect(stored.story!.storyId).toBe(storyId);
+      expect(stored.story!.thumbnailUrl).toBe(IMG);
+    });
+
+    it('refuses replying to your own story / an expired one', async () => {
+      const author = await createAndLoginUser(server, { nickname: 'story_rep_self' });
+      const created = await server.inject({
+        method: 'POST',
+        url: '/api/stories',
+        headers: auth(author.accessToken),
+        payload: { mediaUrl: IMG, mediaType: 'image' },
+      });
+      const storyId = JSON.parse(created.payload).id as string;
+
+      const own = await server.inject({
+        method: 'POST',
+        url: `/api/stories/${storyId}/reply`,
+        headers: auth(author.accessToken),
+        payload: { text: 'oi' },
+      });
+      expect(own.statusCode).toBe(400);
+
+      await prisma.story.update({
+        where: { id: storyId },
+        data: { expiresAt: new Date(Date.now() - 1000) },
+      });
+      const expired = await server.inject({
+        method: 'POST',
+        url: `/api/stories/${storyId}/reply`,
+        headers: auth(author.accessToken),
+        payload: { text: 'oi' },
+      });
+      expect(expired.statusCode).toBe(404);
+
+      // Liking an expired story is refused too.
+      const likeExpired = await server.inject({
+        method: 'POST',
+        url: `/api/stories/${storyId}/like`,
+        headers: auth(author.accessToken),
+      });
+      expect(likeExpired.statusCode).toBe(404);
+    });
+
+    it('requires auth for like/reply', async () => {
+      expect((await server.inject({ method: 'POST', url: '/api/stories/x/like' })).statusCode).toBe(401);
+      expect(
+        (await server.inject({ method: 'POST', url: '/api/stories/x/reply', payload: { text: 'a' } })).statusCode,
+      ).toBe(401);
+    });
   });
 });

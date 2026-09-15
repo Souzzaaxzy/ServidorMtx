@@ -105,24 +105,33 @@ PostgreSQL). Runs on Pterodactyl/Bronxys via `npm start` (self-provisions).
   **ou** quando a figurinha pertence ao remetente (`sticker.authorId ===
   userId`) — é isso que mantém as favoritas arquivadas ENVIÁVEIS.
 
-## Stories (24h)
-- Modelo `Story` (`mediaUrl`, `mediaType` image|video, `thumbnailUrl`,
-  `caption`, `expiresAt`) + `StoryView` (marcador por usuário). Migração
-  `20260915090000_stories` (aditiva).
-- `modules/stories/story.service.ts`: expiração SEMPRE calculada no servidor
-  (`STORY_TTL_MS` = 24h). `createStory` / `listActiveStories` (agrupa por
-  autor, não-vistos primeiro, mais recente dentro do grupo) /
-  `markStoryViewed` (upsert, valida existência+expiração) / `deleteStory`
-  (só o dono; 403 caso contrário) / `purgeExpiredStories`.
-- Rotas (auth): `GET /api/stories` (optionalAuth; PURGA expirados e devolve
-  `{groups}`), `POST /api/stories`, `POST /api/stories/:id/view` (204),
+## Stories (24h) — foto, vídeo e texto + curtidas e respostas
+- Modelo `Story` (`type` image|video|text, `mediaUrl` — VAZIO em text story —,
+  `mediaType`, `text`, `thumbnailUrl`, `caption`, `expiresAt`) +
+  `StoryView` (marcador por usuário) + `StoryLike` (curtida, unique
+  `userId+storyId`). Migração `20260915140000_story_text_and_likes`
+  (ADD COLUMNs + nova tabela — sem rebuild no SQLite).
+- `modules/stories/story.service.ts`: expiração SEMPRE no servidor
+  (`STORY_TTL_MS` = 24h). `createStory` (image|video|text; text exige
+  conteúdo, ≤300 chars), `listActiveStories` (só ativas; agrupa por autor,
+  não-vistos primeiro; `viewed`/`liked`/`likeCount` POR VIEWER em 3 queries),
+  `markStoryViewed`, `deleteStory` (só o dono), `purgeExpiredStories`,
+  `toggleStoryLike` (mesma semântica do feed; upsert → nunca duplica) e
+  `replyToStory`.
+- **Resposta = MENSAGEM REAL:** `replyToStory` valida story ativo + que o
+  autor não é quem responde e chama `getOrCreateConversation` + `sendMessage`
+  com `type='story_reply'` e a referência/snapshot (`storyId`, `storyType`,
+  `storyThumbUrl`, `storyPreview` em `messages`). O destinatário é SEMPRE o
+  autor do Story (nunca vem do cliente); a snapshot mantém a referência
+  legível depois de o Story expirar.
+- Rotas (auth): `GET /api/stories` (optionalAuth; purga expirados),
+  `POST /api/stories`, `POST /api/stories/:id/view` (204),
+  `POST /api/stories/:id/like` (toggle), `POST /api/stories/:id/reply` (201),
   `DELETE /api/stories/:id` (204).
-- O autor usa o MESMO fragmento do feed (`AUTHOR_SELECT` + `nicknameCosmetics`)
-  — nada de segundo sistema de avatar/usuário. A mídia usa as MESMAS
-  referências/upload do post (`/static/...` ou URL absoluta), sem pipeline
-  paralelo. A limpeza de arquivos só remove mídia que nada mais referencia
-  (post, avatar ou outro Story).
-- `tests/setup.ts` limpa `story_views`/`stories` entre testes.
+- Autor/mídia reutilizam EXATAMENTE o que o post usa (`AUTHOR_SELECT` +
+  `nicknameCosmetics`, `/static/...`). Limpeza de arquivos só remove mídia
+  que nada mais referencia.
+- `tests/setup.ts` limpa `story_likes`/`story_views`/`stories`.
 
 ## Stickers — recentes (remoção escopada)
 - `DELETE /api/stickers/:id/recent` (auth, idempotente): remove SÓ a linha de

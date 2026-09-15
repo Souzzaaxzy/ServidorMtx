@@ -21,13 +21,30 @@ const imageUrlSchema = z
 
 export const createStorySchema = z
   .object({
-    mediaUrl: mediaUrlSchema,
+    // 'image' | 'video' | 'text'. When omitted it is inferred from mediaType
+    // (backwards compatible with the previous media-only payload).
+    type: z.enum(['image', 'video', 'text']).optional(),
+    mediaUrl: mediaUrlSchema.optional().nullable(),
     mediaType: z.enum(['image', 'video']).default('image'),
+    text: z.string().trim().max(300, 'Texto muito longo').optional().nullable(),
     thumbnailUrl: imageUrlSchema.optional().nullable(),
     caption: z.string().trim().max(200, 'Legenda muito longa').optional().nullable(),
   })
   .refine((d) => !d.thumbnailUrl || d.mediaType === 'video', {
     message: 'A capa só pode ser definida para Stories com vídeo.',
+  })
+  .refine((d) => {
+    const type = d.type ?? d.mediaType;
+    if (type === 'text') return true; // text is validated in the service
+    return !!d.mediaUrl;
+  }, { message: 'Envie uma foto ou um vídeo para o Story.' })
+  .refine((d) => !(d.type === 'text' && d.mediaUrl), {
+    message: 'Um Story de texto não pode ter mídia.',
   });
 
 export type CreateStoryInput = z.infer<typeof createStorySchema>;
+
+/** A reply to a story — becomes a REAL direct message to its author. */
+export const replyStorySchema = z.object({
+  text: z.string().trim().min(1, 'Escreva uma resposta.').max(500, 'Resposta muito longa'),
+});
