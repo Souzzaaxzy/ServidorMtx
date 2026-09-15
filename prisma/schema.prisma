@@ -50,6 +50,8 @@ model User {
   updatedAt        DateTime @updatedAt
 
   posts        Post[]
+  stories      Story[]
+  storyViews   StoryView[]
   likes        Like[]
   comments     Comment[]
   commentLikes CommentLike[]
@@ -122,6 +124,54 @@ model Post {
   @@index([userId])
   @@index([createdAt])
   @@map("posts")
+}
+
+// A Story — ephemeral media (image or video) that expires 24h after
+// publication. Reuses the EXISTING upload/storage stack (mediaUrl /
+// thumbnailUrl are the same references a Post uses) and the same author
+// payload (nickname + avatar + cosmetics) so no second media/avatar system
+// is introduced. Expiry is enforced server-side against `expiresAt`
+// (written as NOW + 24h at creation, never trusted from the client).
+model Story {
+  id           String   @id @default(cuid())
+  userId       String
+  // Image OR video reference (exactly one is set): /static/... or absolute.
+  mediaUrl     String
+  // 'image' | 'video' — drives the viewer (video autoplays/mutes).
+  mediaType    String   @default("image")
+  // Optional cover for a VIDEO story (same image upload path as posts).
+  thumbnailUrl String?
+  // Optional caption shown in the viewer.
+  caption      String   @default("")
+  // Server-computed expiry (createdAt + 24h). Indexed: the active feed
+  // filters on it and the cleanup sweep deletes past it.
+  expiresAt    DateTime
+  createdAt    DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  views StoryView[]
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@index([createdAt])
+  @@map("stories")
+}
+
+// Per-user "seen" marker for stories — powers the discrete viewed/unviewed
+// ring. Light by design: one row per (viewer, story), no counters.
+model StoryView {
+  id        String   @id @default(cuid())
+  userId    String
+  storyId   String
+  createdAt DateTime @default(now())
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  story Story @relation(fields: [storyId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, storyId])
+  @@index([userId])
+  @@map("story_views")
 }
 
 model Like {

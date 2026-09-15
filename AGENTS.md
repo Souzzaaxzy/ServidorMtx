@@ -105,6 +105,25 @@ PostgreSQL). Runs on Pterodactyl/Bronxys via `npm start` (self-provisions).
   **ou** quando a figurinha pertence ao remetente (`sticker.authorId ===
   userId`) — é isso que mantém as favoritas arquivadas ENVIÁVEIS.
 
+## Stories (24h)
+- Modelo `Story` (`mediaUrl`, `mediaType` image|video, `thumbnailUrl`,
+  `caption`, `expiresAt`) + `StoryView` (marcador por usuário). Migração
+  `20260915090000_stories` (aditiva).
+- `modules/stories/story.service.ts`: expiração SEMPRE calculada no servidor
+  (`STORY_TTL_MS` = 24h). `createStory` / `listActiveStories` (agrupa por
+  autor, não-vistos primeiro, mais recente dentro do grupo) /
+  `markStoryViewed` (upsert, valida existência+expiração) / `deleteStory`
+  (só o dono; 403 caso contrário) / `purgeExpiredStories`.
+- Rotas (auth): `GET /api/stories` (optionalAuth; PURGA expirados e devolve
+  `{groups}`), `POST /api/stories`, `POST /api/stories/:id/view` (204),
+  `DELETE /api/stories/:id` (204).
+- O autor usa o MESMO fragmento do feed (`AUTHOR_SELECT` + `nicknameCosmetics`)
+  — nada de segundo sistema de avatar/usuário. A mídia usa as MESMAS
+  referências/upload do post (`/static/...` ou URL absoluta), sem pipeline
+  paralelo. A limpeza de arquivos só remove mídia que nada mais referencia
+  (post, avatar ou outro Story).
+- `tests/setup.ts` limpa `story_views`/`stories` entre testes.
+
 ## Conventions / gotchas
 - `npm start` never depends on `.env` or `.env.example` in production — panel
   injects vars via process.env. `.env` is dev-only convenience (loaded with

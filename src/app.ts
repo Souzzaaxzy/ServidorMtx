@@ -35,6 +35,7 @@ import { groupRoutes } from './modules/groups/group.routes.js';
 import { notificationRoutes } from './modules/notifications/notification.routes.js';
 import { pushRoutes } from './modules/push/push.routes.js';
 import { stickerRoutes } from './modules/stickers/sticker.routes.js';
+import { storyRoutes } from './modules/stories/story.routes.js';
 import websocket from '@fastify/websocket';
 
 export async function buildServer() {
@@ -144,6 +145,7 @@ export async function buildServer() {
   await app.register(notificationRoutes, { prefix: '/api' });
   await app.register(pushRoutes, { prefix: '/api' });
   await app.register(stickerRoutes, { prefix: '/api' });
+  await app.register(storyRoutes, { prefix: '/api' });
   await app.register(uploadRoutes, { prefix: '/api' });
 
   // Health check (unauthenticated, unrate-limited-friendly). Reports the
