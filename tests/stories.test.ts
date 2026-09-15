@@ -557,4 +557,99 @@ describe('Stories', () => {
       ).toBe(401);
     });
   });
+  describe('video duration limit (2 minutes)', () => {
+    function mp4Fixture(): Buffer {
+      const box = Buffer.alloc(32);
+      box.writeUInt32BE(32, 0);
+      box.write('ftyp', 4, 'latin1');
+      box.write('mp42', 8, 'latin1');
+      return box;
+    }
+
+    function videoMultipart(durationMs?: number): Buffer {
+      const boundary = '----matrix-story-video-boundary-x9';
+      const parts: Buffer[] = [];
+      if (durationMs !== undefined) {
+        parts.push(
+          Buffer.from(
+            `--${boundary}\r\n` +
+              'Content-Disposition: form-data; name="durationMs"\r\n\r\n' +
+              `${durationMs}\r\n`,
+            'utf8',
+          ),
+        );
+      }
+      parts.push(
+        Buffer.from(
+          `--${boundary}\r\n` +
+            'Content-Disposition: form-data; name="file"; filename="clip.mp4"\r\n' +
+            'Content-Type: video/mp4\r\n\r\n',
+          'utf8',
+        ),
+      );
+      parts.push(mp4Fixture());
+      parts.push(Buffer.from(`\r\n--${boundary}--\r\n`, 'utf8'));
+      return Buffer.concat(parts);
+    }
+
+    it('rejects a video longer than 2 minutes at upload', async () => {
+      const user = await createAndLoginUser(server, { nickname: 'story_vid_long' });
+      const res = await server.inject({
+        method: 'POST',
+        url: '/api/uploads/video',
+        headers: {
+          authorization: `Bearer ${user.accessToken}`,
+          'content-type':
+            'multipart/form-data; boundary=----matrix-story-video-boundary-x9',
+        },
+        payload: videoMultipart(121_000),
+      });
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.payload).error.message).toContain('2 minutos');
+    });
+
+    it('accepts a video at/under 2 minutes', async () => {
+      const user = await createAndLoginUser(server, { nickname: 'story_vid_ok' });
+      const res = await server.inject({
+        method: 'POST',
+        url: '/api/uploads/video',
+        headers: {
+          authorization: `Bearer ${user.accessToken}`,
+          'content-type':
+            'multipart/form-data; boundary=----matrix-story-video-boundary-x9',
+        },
+        payload: videoMultipart(120_000),
+      });
+      expect(res.statusCode).toBe(201);
+      expect(JSON.parse(res.payload).url).toMatch(/\/static\/video\/.+\.mp4$/);
+    });
+
+    it('accepts an upload with no declared duration (metadata optional)', async () => {
+      const user = await createAndLoginUser(server, { nickname: 'story_vid_none' });
+      const res = await server.inject({
+        method: 'POST',
+        url: '/api/uploads/video',
+        headers: {
+          authorization: `Bearer ${user.accessToken}`,
+          'content-type':
+            'multipart/form-data; boundary=----matrix-story-video-boundary-x9',
+        },
+        payload: videoMultipart(),
+      });
+      expect(res.statusCode).toBe(201);
+    });
+
+    it('rejects an over-long video story at creation (replay defence)', async () => {
+      const user = await createAndLoginUser(server, { nickname: 'story_vid_replay' });
+      const video = '/static/video/33333333333333333333333333333333.mp4';
+      const res = await server.inject({
+        method: 'POST',
+        url: '/api/stories',
+        headers: auth(user.accessToken),
+        payload: { type: 'video', mediaUrl: video, durationMs: 200_000 },
+      });
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.payload).error.message).toContain('2 minutos');
+    });
+  });
 });

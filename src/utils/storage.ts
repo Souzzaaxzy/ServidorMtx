@@ -185,6 +185,27 @@ export function validateAudioBuffer(buffer: Buffer): string {
 export const MAX_VIDEO_BYTES = 100 * 1024 * 1024; // 100 MB
 
 /**
+ * Maximum duration accepted for a video STORY (Stories spec: 2 minutes).
+ * Deeper than a size cap: an oversized-but-short clip is fine, a long clip
+ * is not. The duration comes from the CLIENT's real media metadata and is
+ * re-validated here so a modified client cannot bypass it.
+ */
+export const MAX_STORY_VIDEO_MS = 120_000;
+
+/** Throws when a video duration exceeds [MAX_STORY_VIDEO_MS]. */
+export function validateVideoDurationMs(durationMs: unknown): number | null {
+  if (durationMs === undefined || durationMs === null) return null;
+  const ms = Math.round(Number(durationMs));
+  if (!Number.isFinite(ms) || ms <= 0) return null;
+  if (ms > MAX_STORY_VIDEO_MS) {
+    throw ApiError.validation(
+      'O vídeo deve ter no máximo 2 minutos.',
+    );
+  }
+  return ms;
+}
+
+/**
  * Returns 'mp4' when the buffer starts with an ISO-BMFF/MPEG-4 container
  * (`....ftyp....`) declaring a supported video brand. Throws otherwise.
  */

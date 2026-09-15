@@ -36,7 +36,12 @@ export const uploadRoutes: FastifyPluginAsync = async (app: FastifyInstance) => 
     if (!file) {
       throw ApiError.validation('Nenhum arquivo enviado. Use o campo "file".');
     }
-    const result = await saveVideoFile(file.file);
+    // Optional `durationMs` multipart field: the REAL media duration read by
+    // the app (media metadata, not a local counter). It is re-validated here
+    // so a modified client cannot exceed the 2-minute video limit.
+    const rawDuration = (file.fields?.durationMs as { value?: unknown } | undefined)?.value;
+    const durationMs = rawDuration === undefined ? null : Number(rawDuration);
+    const result = await saveVideoFile(file.file, durationMs);
     return reply.status(201).send(result);
   });
 };

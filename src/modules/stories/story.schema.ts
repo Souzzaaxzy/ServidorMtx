@@ -27,6 +27,15 @@ export const createStorySchema = z
     mediaUrl: mediaUrlSchema.optional().nullable(),
     mediaType: z.enum(['image', 'video']).default('image'),
     text: z.string().trim().max(300, 'Texto muito longo').optional().nullable(),
+    // Real media duration of a VIDEO (ms). The service re-validates the
+    // 2-minute cap here so a modified client can never bypass the limit.
+    durationMs: z.coerce
+      .number()
+      .int()
+      .positive()
+      .max(3_600_000)
+      .optional()
+      .nullable(),
     thumbnailUrl: imageUrlSchema.optional().nullable(),
     caption: z.string().trim().max(200, 'Legenda muito longa').optional().nullable(),
   })

@@ -1,6 +1,7 @@
 import { prisma } from '../../config/prisma.js';
 import { ApiError } from '../../utils/errors.js';
 import { deleteLocalFileByUrl } from '../uploads/upload.service.js';
+import { validateVideoDurationMs } from '../../utils/storage.js';
 import { getOrCreateConversation, sendMessage } from '../chat/chat.service.js';
 import {
   AUTHOR_SELECT,
@@ -117,6 +118,8 @@ export interface CreateStoryInput {
   mediaType?: 'image' | 'video';
   /** Required for text stories. */
   text?: string | null;
+  /** Real media duration (video only) — validated against the 2-minute cap. */
+  durationMs?: number | null;
   thumbnailUrl?: string | null;
   caption?: string | null;
 }
@@ -156,6 +159,12 @@ export async function createStory(
   const mediaUrl = (input.mediaUrl ?? '').trim();
   if (mediaUrl.length === 0) {
     throw ApiError.validation('Envie uma foto ou um vídeo para o Story.');
+  }
+  // The 2-minute cap for video stories is enforced by the /uploads/video
+  // route when the file arrives; re-checking the declared duration here
+  // keeps a replayed/stale URL from slipping past a modified client.
+  if (type === 'video') {
+    validateVideoDurationMs(input.durationMs ?? null);
   }
   const story = await prisma.story.create({
     data: {

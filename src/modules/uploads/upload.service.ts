@@ -8,6 +8,7 @@ import {
   validateAudioBuffer,
   validateImageBuffer,
   validateVideoBuffer,
+  validateVideoDurationMs,
 } from '../../utils/storage.js';
 import { publicBase as sharedPublicBase } from '../../utils/storage.js';
 
@@ -146,7 +147,11 @@ export async function saveAudioFile(
  */
 export async function saveVideoFile(
   stream: Readable,
+  durationMs?: number | null,
 ): Promise<StoredFile> {
+  // Duration limit (2 min for Stories) is re-validated HERE — the client
+  // metadata is never trusted on its own.
+  validateVideoDurationMs(durationMs);
   const buffer = await readStream(stream);
   const ext = validateVideoBuffer(buffer); // returns 'mp4'
   await fs.mkdir(path.join(UPLOAD_DIR, 'video'), { recursive: true });

@@ -133,6 +133,13 @@ PostgreSQL). Runs on Pterodactyl/Bronxys via `npm start` (self-provisions).
   que nada mais referencia.
 - `tests/setup.ts` limpa `story_likes`/`story_views`/`stories`.
 
+## Stories — limite de vídeo (2 min) validado no servidor
+- `utils/storage.ts`: `MAX_STORY_VIDEO_MS` (120000) +
+  `validateVideoDurationMs`. `saveVideoFile(stream, durationMs?)` valida a
+  duração REAL declarada (campo multipart `durationMs` de
+  `/api/uploads/video`, lido de `file.fields`), e `createStory` revalida
+  `durationMs` (defesa contra replay de URL). Nunca confia só no app.
+
 ## Stickers — recentes (remoção escopada)
 - `DELETE /api/stickers/:id/recent` (auth, idempotente): remove SÓ a linha de
   `sticker_recent` do usuário. Não apaga a figurinha, o pacote, o favorito
