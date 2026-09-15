@@ -351,6 +351,17 @@ export async function listStickerRecents(userId: string): Promise<StickerItem[]>
   return rows.map((r) => toStickerItem(r.sticker, favs.has(r.sticker.id)));
 }
 
+/**
+ * Removes a sticker from the user's RECENTS only (idempotent).
+ *
+ * Deliberately scoped: it deletes just the `sticker_recent` row of THIS
+ * user. The sticker itself, its package, its FAVORITE and any message that
+ * references it are untouched — the art file is never removed here.
+ */
+export async function removeStickerRecent(userId: string, stickerId: string): Promise<void> {
+  await prisma.stickerRecent.deleteMany({ where: { userId, stickerId } });
+}
+
 
 // ── Import (Android share) ───────────────────────────────────
 // Stickers recibidos pelo compartilhamento do Android: o app envia os

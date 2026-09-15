@@ -563,4 +563,79 @@ describe('Stickers', () => {
       expect(msg.stickerUrl).toBe(pkg.stickers[0].fileUrl);
     });
   });
+  describe('remove from recents (scoped)', () => {
+    it('removes ONLY the recent entry — sticker/favorite/message survive', async () => {
+      const user = await createAndLoginUser(server, { nickname: 'stk_rec_del' });
+      const pkg = await createSeedStickerPackage(user.id);
+      const s1 = pkg.stickers[0];
+
+      // Register as recent + favorite it.
+      await server.inject({
+        method: 'POST',
+        url: `/api/stickers/${s1.id}/recent`,
+        headers: { authorization: `Bearer ${user.accessToken}` },
+      });
+      await server.inject({
+        method: 'POST',
+        url: `/api/stickers/${s1.id}/favorite`,
+        headers: { authorization: `Bearer ${user.accessToken}` },
+      });
+
+      let rec = await server.inject({
+        method: 'GET',
+        url: '/api/stickers/recents',
+        headers: { authorization: `Bearer ${user.accessToken}` },
+      });
+      expect((JSON.parse(rec.payload).stickers as Array<{ id: string }>).some((r) => r.id === s1.id)).toBe(true);
+
+      // Remove from recents.
+      const del = await server.inject({
+        method: 'DELETE',
+        url: `/api/stickers/${s1.id}/recent`,
+        headers: { authorization: `Bearer ${user.accessToken}` },
+      });
+      expect(del.statusCode).toBe(204);
+
+      rec = await server.inject({
+        method: 'GET',
+        url: '/api/stickers/recents',
+        headers: { authorization: `Bearer ${user.accessToken}` },
+      });
+      expect((JSON.parse(rec.payload).stickers as Array<{ id: string }>).some((r) => r.id === s1.id)).toBe(false);
+
+      // The sticker itself, its package and the FAVORITE are untouched.
+      expect(await prisma.sticker.findUnique({ where: { id: s1.id } })).not.toBeNull();
+      expect(
+        await prisma.stickerPackage.findUnique({ where: { id: pkg.id } }),
+      ).not.toBeNull();
+      const favs = await server.inject({
+        method: 'GET',
+        url: '/api/stickers/favorites',
+        headers: { authorization: `Bearer ${user.accessToken}` },
+      });
+      expect((JSON.parse(favs.payload).stickers as Array<{ id: string }>).some((r) => r.id === s1.id)).toBe(true);
+    });
+
+    it('is idempotent (removing twice is a no-op)', async () => {
+      const user = await createAndLoginUser(server, { nickname: 'stk_rec_idem' });
+      const pkg = await createSeedStickerPackage(user.id);
+      const s1 = pkg.stickers[0];
+      for (let i = 0; i < 2; i++) {
+        const res = await server.inject({
+          method: 'DELETE',
+          url: `/api/stickers/${s1.id}/recent`,
+          headers: { authorization: `Bearer ${user.accessToken}` },
+        });
+        expect(res.statusCode).toBe(204);
+      }
+    });
+
+    it('requires authentication', async () => {
+      const res = await server.inject({
+        method: 'DELETE',
+        url: '/api/stickers/whatever/recent',
+      });
+      expect(res.statusCode).toBe(401);
+    });
+  });
 });

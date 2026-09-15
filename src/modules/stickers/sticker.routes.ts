@@ -12,6 +12,7 @@ import {
   listStickerPackages,
   listStickerRecents,
   removeStickerFavorite,
+  removeStickerRecent,
   uninstallStickerPackage,
   type ImportedStickerInput,
 } from './sticker.service.js';
@@ -167,6 +168,22 @@ export const stickerRoutes: FastifyPluginAsync = async (app: FastifyInstance) =>
     }
     try {
       await addStickerRecent(request.user!.id, id);
+      return reply.status(204).send();
+    } catch (err) {
+      throw toApiError(err);
+    }
+  });
+
+  // Remove a sticker from the user's RECENTS only (idempotent). The sticker,
+  // its package, its favorite and any message referencing it are untouched —
+  // the art file is never deleted here.
+  app.delete('/stickers/:id/recent', { onRequest: [app.authenticate] }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    if (!idParamSchema.safeParse(id).success) {
+      return reply.status(400).send({ error: { code: 'VALIDATION', message: 'Identificador inválido.' } });
+    }
+    try {
+      await removeStickerRecent(request.user!.id, id);
       return reply.status(204).send();
     } catch (err) {
       throw toApiError(err);

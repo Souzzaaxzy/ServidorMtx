@@ -124,6 +124,12 @@ PostgreSQL). Runs on Pterodactyl/Bronxys via `npm start` (self-provisions).
   (post, avatar ou outro Story).
 - `tests/setup.ts` limpa `story_views`/`stories` entre testes.
 
+## Stickers — recentes (remoção escopada)
+- `DELETE /api/stickers/:id/recent` (auth, idempotente): remove SÓ a linha de
+  `sticker_recent` do usuário. Não apaga a figurinha, o pacote, o favorito
+  nem o arquivo — mensagens que a referenciam continuam renderizando.
+  (`removeStickerRecent` em `sticker.service.ts`.)
+
 ## Conventions / gotchas
 - `npm start` never depends on `.env` or `.env.example` in production — panel
   injects vars via process.env. `.env` is dev-only convenience (loaded with
