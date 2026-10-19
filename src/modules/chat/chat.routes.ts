@@ -18,10 +18,25 @@ import {
   setRecording,
   CONVERSATION_MESSAGE_LIMIT,
 } from './chat.service.js';
+import { pendingDeliveries, recordDeliveries } from './delivery.service.js';
 
 const sendMessageSchema = z.object({
   content: z.string().max(CONVERSATION_MESSAGE_LIMIT, 'Mensagem muito longa.'),
   replyToMessageId: z.string().min(1).max(64).optional(),
+});
+
+// Delivery receipts: the app sends the ids its device now holds. Bounded so a
+// single request can never carry an unbounded batch (the service enforces the
+// same cap).
+const deliveryAckSchema = z.object({
+  messageIds: z
+    .array(
+      z.object({
+        messageId: z.string().min(1).max(64),
+        at: z.string().max(40).optional(),
+      }),
+    )
+    .max(200, 'Muitas confirmações em uma só requisição.'),
 });
 
 const typingBodySchema = z.object({
@@ -278,6 +293,43 @@ export const chatRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     try {
       await hideConversation(request.user!.id, id);
       return reply.status(204).send();
+    } catch (err) {
+      throw toApiError(err);
+    }
+  });
+
+  // ── Delivery receipts ────────────────────────────────────────
+  // The app confirms here that its DEVICE stored the messages. This is what
+  // lets the server drain its delivery queue: a message is dropped once every
+  // participant has confirmed holding it (or has read it). Idempotent — the
+  // app may retry freely after being offline.
+  app.post('/messages/delivered', { onRequest: [app.authenticate] }, async (request, reply) => {
+    const parsed = deliveryAckSchema.safeParse(request.body);
+    if (!parsed.success) {
+      throw ApiError.validation('Dados inválidos.', parsed.error.issues);
+    }
+    try {
+      const result = await recordDeliveries(request.user!.id, parsed.data.messageIds);
+      return reply.send(result);
+    } catch (err) {
+      throw toApiError(err);
+    }
+  });
+
+  // "Which of these do I still owe a confirmation for?" — lets a client that
+  // was offline for a long time sync receipts without re-sending every id it
+  // has ever seen.
+  app.post('/messages/delivered/pending', { onRequest: [app.authenticate] }, async (request, reply) => {
+    const parsed = deliveryAckSchema.safeParse(request.body);
+    if (!parsed.success) {
+      throw ApiError.validation('Dados inválidos.', parsed.error.issues);
+    }
+    try {
+      const pending = await pendingDeliveries(
+        request.user!.id,
+        parsed.data.messageIds.map((m) => m.messageId),
+      );
+      return reply.send({ pending });
     } catch (err) {
       throw toApiError(err);
     }

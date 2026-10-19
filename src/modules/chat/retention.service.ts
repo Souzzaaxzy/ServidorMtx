@@ -61,60 +61,88 @@ export async function purgeDeliveredMessages(): Promise<PurgeResult> {
   const deliveredBefore = new Date(now - DELIVERED_RETENTION_MS);
   const undeliveredBefore = new Date(now - UNDELIVERED_RETENTION_MS);
 
-  // ── 1. Messages everyone has already read, past the retention window ──
+  // ── 1. Messages everyone has already received, past the retention window ──
   //
-  // A DIRECT message counts as delivered when the recipient read it. A GROUP
-  // message counts as delivered when every ACTIVE member has a read marker
-  // (the app writes one per member on open).
+  // A message counts as DELIVERED when every other participant has either
+  // confirmed the device holds it (a delivery receipt) OR read it. Using
+  // delivery — not just reading — is what lets a chat nobody opens drain:
+  // a read only happens when someone looks at the conversation, while the app
+  // writes a receipt as soon as the message lands on the phone.
   const delivered = await prisma.message.findMany({
     where: {
       createdAt: { lt: deliveredBefore },
       deletedAt: null,
       OR: [
-        // DM: read by the other side.
         { conversationId: { not: null }, readAt: { not: null } },
-        // Group: at least one reader marker (checked more strictly below).
+        { conversationId: { not: null }, deliveredTo: { some: {} } },
         { groupId: { not: null }, readBy: { some: {} } },
+        { groupId: { not: null }, deliveredTo: { some: {} } },
       ],
     },
     select: {
       id: true,
       senderId: true,
+      conversationId: true,
       groupId: true,
+      readAt: true,
       audioUrl: true,
       imageUrl: true,
       videoUrl: true,
       stickerUrl: true,
+      conversation: {
+        select: { userOneId: true, userTwoId: true },
+      },
       group: { select: { members: { where: { bannedAt: null }, select: { userId: true } } } },
       readBy: { select: { userId: true } },
+      deliveredTo: { select: { userId: true } },
     },
     take: BATCH,
   });
 
   const trulyDelivered = delivered.filter((m) => {
-    if (m.groupId === null) return true; // DM: the recipient read it.
-    const members = new Set(m.group!.members.map((x) => x.userId));
-    const readers = new Set(m.readBy.map((x) => x.userId));
-    // Every active member must have read it. The SENDER is excluded: they
-    // wrote it, so they never produce a read marker for their own message —
-    // requiring one would keep every group message alive forever.
-    members.delete(m.senderId);
-    if (members.size === 0) return true; // nobody else to deliver to
-    for (const member of members) {
-      if (!readers.has(member)) return false;
+    // Who still needs this message? The SENDER is always excluded: they wrote
+    // it, so they never produce a read/delivery marker for their own message —
+    // requiring one would keep every message alive forever.
+    const recipients = new Set<string>();
+    if (m.conversationId !== null) {
+      const c = m.conversation!;
+      recipients.add(c.userOneId);
+      recipients.add(c.userTwoId);
+    } else {
+      for (const member of m.group!.members) recipients.add(member.userId);
+    }
+    recipients.delete(m.senderId);
+    if (recipients.size === 0) return true; // nobody else to deliver to
+
+    // A recipient is covered by EITHER a delivery receipt OR a read marker.
+    const covered = new Set<string>([
+      ...m.deliveredTo.map((d) => d.userId),
+      ...m.readBy.map((r) => r.userId),
+    ]);
+    // A DIRECT conversation has exactly one other participant, and the DM read
+    // path records the read as the message's coarse `readAt` (it does not
+    // create a per-user MessageRead row). Without this, a read DM would never
+    // count as delivered.
+    if (m.conversationId !== null && m.readAt !== null && recipients.size === 1) {
+      covered.add([...recipients][0]);
+    }
+    for (const recipient of recipients) {
+      if (!covered.has(recipient)) return false;
     }
     return true;
   });
 
-  // ── 2. Undelivered messages older than the safety window ──
+  // ── 2. Messages nobody confirmed, older than the safety window ──
+  // A message can only be dropped here once it is past the LONGER window, so
+  // a device that was offline for a while still gets its chance to sync.
   const undelivered = await prisma.message.findMany({
     where: {
       createdAt: { lt: undeliveredBefore },
       deletedAt: null,
       id: { notIn: trulyDelivered.map((m) => m.id) },
       OR: [
-        { conversationId: { not: null }, readAt: null },
-        { groupId: { not: null }, readBy: { none: {} } },
+        { conversationId: { not: null }, readAt: null, deliveredTo: { none: {} } },
+        { groupId: { not: null }, readBy: { none: {} }, deliveredTo: { none: {} } },
       ],
     },
     select: {

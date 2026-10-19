@@ -90,6 +90,7 @@ model User {
   hiddenGroups          GroupHidden[]
   messageMentions       MessageMention[]
   messageReads          MessageRead[]
+  messageDeliveries     MessageDelivery[]
   notificationsReceived Notification[] @relation("notificationsReceived")
   notificationsSent     Notification[] @relation("notificationsSent")
 
@@ -474,6 +475,7 @@ model Message {
   hiddenBy     MessageHide[]
   mentions     MessageMention[]
   readBy       MessageRead[]
+  deliveredTo  MessageDelivery[]
 
   conversation Conversation? @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   group        Group?        @relation(fields: [groupId], references: [id], onDelete: Cascade)
@@ -596,6 +598,29 @@ model MessageRead {
   @@unique([messageId, userId])
   @@index([userId])
   @@map("message_reads")
+}
+
+/// Proof that a recipient's DEVICE has the message stored locally.
+///
+/// Distinct from [MessageRead]: reading means the user opened the chat, while
+/// DELIVERY means the phone actually holds the message — it can happen with
+/// the app in the background, before anyone looks at it. The server only needs
+/// the message until every participant has confirmed delivery, so this row is
+/// what lets the retention sweep drop a message that was never opened (the
+/// earlier rule waited for a read, which could never happen for a chat nobody
+/// opens).
+model MessageDelivery {
+  id          String   @id @default(cuid())
+  messageId   String
+  userId      String
+  deliveredAt DateTime @default(now())
+
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([messageId, userId])
+  @@index([userId])
+  @@map("message_deliveries")
 }
 
 
