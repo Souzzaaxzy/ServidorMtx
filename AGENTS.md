@@ -197,6 +197,43 @@ PostgreSQL). Runs on Pterodactyl/Bronxys via `npm start` (self-provisions).
   swallows one FK error with `.catch()`, so `log: ['error']` made noise).
 - Docker/Pterodactyl/VPS use the SAME path (no native engine needed anywhere).
 
+## Música do perfil (YouTube via yt-dlp)
+- `ProfileMusic` (userId é a PK → **uma música por perfil**, garantido no banco).
+  Migração `20260919000000_profile_music` (tabela nova, aditiva). O perfil
+  (`GET /api/users/:nick`) embute `music` (ou `null`).
+- `modules/music/profile-music.ytdlp.ts`: fala com o **YouTube Music** via
+  `yt-dlp`, SEMPRE no servidor (o APK nunca fala com o YouTube, nenhuma
+  credencial externa existe).
+  - **Busca**: usa o filtro "songs" do YouTube Music
+    (`sp=EgWKAQIIAWoKEAoQAxAEEAkQBQ==`), que é o que remove vídeo aleatório
+    (clipe, react, "top 10") — exatamente o pedido. `--dump-json` traz
+    título/uploader/duração/capa (medido: ~6s para 3 itens).
+  - **Limpeza de título**: o YT Music NÃO manda `artist`/`track` (vêm nulos),
+    então `cleanMusicTitle` tira ruído ("(Official Video)", "[HD]", "Lyrics",
+    "Remastered") e `splitMusicTitle` separa música/artista. A ordem é
+    ambígua: YT Music usa **"Artista – Música"**, o YT comum usa
+    "Música - Artista"; o **uploader desempata** (o lado que casa com o canal
+    é o artista). Sem pista, vale o padrão do YT Music.
+  - **Download**: só o TRECHO (`--download-sections`), nunca a música inteira.
+    Exige `ffmpeg` no host. Os bytes baixados são validados (container
+    ISOBMFF/`ftyp`) — HTML de erro do YouTube não vira "áudio".
+  - O binário é resolvido uma vez (`YT_DLP_PATH` → `yt-dlp` → `python3 -m
+    yt_dlp`) e executado com `spawn` sem shell (a busca do usuário nunca vira
+    comando). Tudo com timeout.
+- Rotas (auth): `GET /api/music/profile/search?q=` (até 3 resultados),
+  `GET|PUT|DELETE /api/music/profile`. O trecho é re-validado no servidor:
+  **máx. 1 minuto** (`MAX_PROFILE_MUSIC_MS`), mín. 5s, início ≥ 0.
+- Substituir a música apaga o arquivo ANTIGO só depois de gravar o novo
+  (nunca deixa o perfil apontando para arquivo apagado). `DELETE` é
+  idempotente e remove o arquivo.
+- App: `ProfileMusicBar` (botão ⏯️ DESENHADO em `core/widgets/play_pause_icon.dart`
+  + nome da música) logo abaixo do `#id`; `ProfileMusicPicker` no editar perfil
+  (busca → 3 opções → trecho com passo de 5s até 1:00 → confirmar).
+- **Download real não foi validado neste ambiente**: o YouTube bloqueia (403
+  anti-bot) IPs de datacenter para MÍDIA (a busca passa). A cadeia inteira
+  (spawn → ffmpeg → validação de bytes → storage → `/static` → banco) foi
+  validada com uma fonte substituta gerando m4a real.
+
 ## Conventions / gotchas
 - `npm start` never depends on `.env` or `.env.example` in production — panel
   injects vars via process.env. `.env` is dev-only convenience (loaded with

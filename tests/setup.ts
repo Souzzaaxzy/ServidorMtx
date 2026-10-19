@@ -63,6 +63,7 @@ const TABLES = [
   'game_sessions',
   'games',
   'music_votes',
+  'profile_music',
   'playlist_tracks',
   'playlists',
   'tracks',

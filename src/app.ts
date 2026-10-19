@@ -36,6 +36,7 @@ import { notificationRoutes } from './modules/notifications/notification.routes.
 import { pushRoutes } from './modules/push/push.routes.js';
 import { stickerRoutes } from './modules/stickers/sticker.routes.js';
 import { storyRoutes } from './modules/stories/story.routes.js';
+import { profileMusicRoutes } from './modules/music/profile-music.routes.js';
 import { purgeDeliveredMessages } from './modules/chat/retention.service.js';
 import websocket from '@fastify/websocket';
 
@@ -131,6 +132,9 @@ export async function buildServer() {
   await app.register(gamificationRoutes, { prefix: '/api' });
   await app.register(customizationRoutes, { prefix: '/api' });
   await app.register(musicRoutes, { prefix: '/api' });
+  // Profile music (YouTube search + excerpt download). Registered AFTER
+  // musicRoutes so `/music/profile/*` is matched by its own handler.
+  await app.register(profileMusicRoutes, { prefix: '/api' });
   await app.register(gameRoutes, { prefix: '/api' });
   await app.register(callRoutes, { prefix: '/api' });
   await app.register(akameRoutes, { prefix: '/api' });

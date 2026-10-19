@@ -58,8 +58,13 @@ log "Instalando pacotes do Termux (git, openssl, python, build)"
 pkg update -y >/dev/null 2>&1 || warn "pkg update falhou (seguindo)"
 # openssl é exigido pelo Prisma CLI; python/make/clang permitem compilar
 # módulos nativos opcionais (argon2) quando existir fonte compatível.
+# yt-dlp/ffmpeg habilitam a MÚSICA DO PERFIL (busca no YouTube Music +
+# corte do trecho). Sem eles a API sobe normalmente e só esse recurso
+# responde com uma mensagem amigável.
 pkg install -y git openssl ca-certificates python make clang >/dev/null 2>&1 \
   || warn "Alguns pacotes podem não ter sido instalados (seguindo)"
+pkg install -y yt-dlp ffmpeg >/dev/null 2>&1 \
+  || warn "yt-dlp/ffmpeg não instalados — a música do perfil ficará indisponível (pkg install yt-dlp ffmpeg)"
 ok "Pacotes verificados"
 
 command -v node >/dev/null 2>&1 || {

@@ -105,6 +105,7 @@ model User {
   playlists         Playlist[]
   gameSessions      GameSession[]
   musicVotes        MusicVote[]
+  profileMusic      ProfileMusic?
 
   // ── Stickers ─────────────────────────────────────────────
   installedStickerPackages UserStickerPackage[] @relation("userInstalledPackages")
@@ -953,6 +954,38 @@ model MusicVote {
   @@unique([userId, trackId])
   @@index([trackId])
   @@map("music_votes")
+}
+
+// ── Profile music ─────────────────────────────────────────────
+// The song a user pins to their profile (Instagram-style). ONE row per user
+// (userId is the primary key), so "set" is a single upsert and there is no
+// way to accumulate rows.
+//
+// The audio file is a SHORT excerpt (<= MAX_PROFILE_MUSIC_MS) downloaded
+// from YouTube and stored under uploads/music/, served by /static/music/.
+// Only the excerpt is kept — never the full track — and the source is
+// recorded so the profile can credit the author.
+model ProfileMusic {
+  // The owner. Using the userId as the primary key enforces "one song per
+  // profile" at the database level, not just in the service.
+  userId        String   @id
+  title         String
+  artist        String
+  coverUrl      String?
+  audioUrl      String
+  // Excerpt length actually stored (milliseconds), capped server-side.
+  durationMs    Int
+  // Start offset of the excerpt within the source track (milliseconds) —
+  // lets the UI show "1:12 - 2:12" and lets a re-cut reuse the same source.
+  startMs       Int      @default(0)
+  sourceId      String
+  sourceUrl     String
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("profile_music")
 }
 
 // ── Games ─────────────────────────────────────────────────────

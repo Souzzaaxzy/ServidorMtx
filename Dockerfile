@@ -37,7 +37,12 @@ WORKDIR /app
 
 ENV NODE_ENV=production
 
-RUN apt-get update && apt-get install -y --no-install-recommends openssl ca-certificates tini \
+# openssl/ca-certificates: Prisma + HTTPS. yt-dlp/ffmpeg: the profile-music
+# feature (YouTube search + excerpt cutting) — without them that feature is
+# unavailable, the rest of the API runs normally.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        openssl ca-certificates tini ffmpeg python3 python3-pip \
+    && pip3 install --no-cache-dir --break-system-packages yt-dlp \
     && rm -rf /var/lib/apt/lists/*
 
 # Production dependencies (tsx included as a runtime dep for `db:seed`).

@@ -186,13 +186,58 @@ export interface ProfileUser extends PublicUser {
   friendsCount: number;
   postsCount: number;
   customization: CustomizationMap;
+  /** A música fixada no perfil (trecho), ou null quando não há. */
+  music: ProfileMusicPayload | null;
 }
 
+// The pinned profile song, embedded in the profile payload so the screen can
+// render the play button + name without an extra request. The audio URL is
+// served by this API (a short excerpt, never the full track).
+export interface ProfileMusicPayload {
+  title: string;
+  artist: string;
+  coverUrl: string | null;
+  audioUrl: string;
+  durationMs: number;
+  startMs: number;
+  sourceUrl: string;
+  sourceId: string;
+}
+
+type WithProfileMusic = {
+  profileMusic?: {
+    title: string;
+    artist: string;
+    coverUrl: string | null;
+    audioUrl: string;
+    durationMs: number;
+    startMs: number;
+    sourceUrl: string;
+    sourceId: string;
+  } | null;
+};
+
 export function toProfileUser(
-  user: User & WithEquippedItems,
+  user: User & WithEquippedItems & WithProfileMusic,
   counts: { friendsCount: number; postsCount: number },
 ): ProfileUser {
-  return { ...toPublicUser(user), ...counts, customization: customizationMap(user) };
+  return {
+    ...toPublicUser(user),
+    ...counts,
+    customization: customizationMap(user),
+    music: user.profileMusic
+      ? {
+          title: user.profileMusic.title,
+          artist: user.profileMusic.artist,
+          coverUrl: user.profileMusic.coverUrl,
+          audioUrl: user.profileMusic.audioUrl,
+          durationMs: user.profileMusic.durationMs,
+          startMs: user.profileMusic.startMs,
+          sourceUrl: user.profileMusic.sourceUrl,
+          sourceId: user.profileMusic.sourceId,
+        }
+      : null,
+  };
 }
 
 export interface AuthUser extends PublicUser {

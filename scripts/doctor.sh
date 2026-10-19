@@ -62,6 +62,28 @@ else
   fail "Nenhuma implementação de Argon2 — login/cadastro não funcionará."
 fi
 
+hdr "Música do perfil (yt-dlp + ffmpeg)"
+# Opcional: sem isto a API roda normalmente e só a música do perfil fica
+# indisponível (o endpoint responde com mensagem amigável).
+YTDLP_FOUND=""
+if [ -n "${YT_DLP_PATH:-}" ] && [ -x "${YT_DLP_PATH:-}" ]; then
+  YTDLP_FOUND="$YT_DLP_PATH"
+elif command -v yt-dlp >/dev/null 2>&1; then
+  YTDLP_FOUND="$(command -v yt-dlp)"
+elif python3 -m yt_dlp --version >/dev/null 2>&1; then
+  YTDLP_FOUND="python3 -m yt_dlp"
+fi
+if [ -n "$YTDLP_FOUND" ]; then
+  ok "yt-dlp: $YTDLP_FOUND"
+else
+  warn "yt-dlp ausente — música do perfil indisponível (pip install yt-dlp)"
+fi
+if command -v ffmpeg >/dev/null 2>&1; then
+  ok "ffmpeg presente (necessário para cortar o trecho)"
+else
+  warn "ffmpeg ausente — o download do trecho falha (apt install ffmpeg)"
+fi
+
 hdr "Dependências e build"
 [ -d node_modules ] && ok "node_modules presente" || warn "node_modules ausente (npm install)"
 [ -x node_modules/.bin/prisma ] && ok "Prisma CLI instalado" || warn "Prisma CLI ausente (npm install)"
