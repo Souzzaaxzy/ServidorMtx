@@ -120,26 +120,36 @@ needs_install() {
   for bin in node_modules/.bin/prisma node_modules/.bin/tsc; do
     [ -e "$bin" ] || return 0
   done
-  [ -d node_modules/argon2 ] || return 0
   [ -d node_modules/typescript ] || return 0
   return 1
 }
 if needs_install; then
   log "Instalando dependências (npm install --include=dev)"
   # Usa o lockfile quando possível (build reprodutível); cai para install se
-  # o lockfile estiver fora de sincronia.
-  npm ci --include=dev || npm install --include=dev
+  # o lockfile estiver fora de sincronia. O --omit=optional de fallback cobre
+  # hosts (Termux/Android) onde o argon2 nativo opcional não compila.
+  npm ci --include=dev || npm install --include=dev || npm install --include=dev --omit=optional
   ok "Dependências instaladas"
 else
   ok "Dependências já instaladas (npm install ignorado)"
 fi
 
-# argon2 é módulo nativo obrigatório (hash de senha). Falha aqui = imagem
-# incompatível ou scripts de instalação bloqueados.
-if ! node -e "require('argon2')" 2>/dev/null; then
-  die "argon2 não carregou (módulo nativo). Use uma imagem Node 22 compatível ou libere os scripts de instalação do npm."
+# Argon2: o embutido no node:crypto (Node >= 24.7) dispensa módulo nativo; em
+# Node mais antigo usa-se o pacote npm 'argon2'. Ambos geram/validam o mesmo
+# hash PHC, então as senhas existentes continuam válidas.
+if node -e "process.exit(typeof require('node:crypto').argon2Sync === 'function' ? 0 : 1)" 2>/dev/null; then
+  ok "Argon2 embutido disponível (node:crypto)"
+elif node -e "require('argon2')" 2>/dev/null; then
+  ok "Argon2 do pacote npm disponível"
+else
+  die "Nenhuma implementação de Argon2 — use Node >= 24.7 ou libere o build do pacote 'argon2'."
 fi
-ok "argon2 carregado (hashing de senhas OK)"
+
+# O driver do banco é o módulo embutido node:sqlite (Node >= 22.5).
+if ! node -e "require('node:sqlite')" 2>/dev/null; then
+  die "node:sqlite indisponível — é necessário Node >= 22.5."
+fi
+ok "Driver node:sqlite disponível (sem binário nativo)"
 
 # ── 4. Diretórios persistentes ─────────────────────────────────
 mkdir -p "$DATA_DIR" uploads
@@ -203,9 +213,12 @@ $PRISMA migrate deploy
 ok "Migrations aplicadas"
 
 if ! node -e "
-  const { PrismaClient } = require('./src/generated');
-  const p = new PrismaClient();
-  p.\$queryRaw\`SELECT 1 AS ok\`.then(() => { process.stdout.write('[OK] Banco SQLite acessível\n'); return p.\$disconnect(); }).catch((e) => { process.stderr.write('[ERROR] Banco SQLite inacessível: ' + e.message + '\n'); process.exit(1); });
+  const { DatabaseSync } = require('node:sqlite');
+  const url = process.env.DATABASE_URL || 'file:$(pwd)/$DB_FILE';
+  const db = new DatabaseSync(url.replace(/^file:/, ''));
+  const row = db.prepare('SELECT COUNT(*) AS c FROM sqlite_master WHERE type = ?').get('table');
+  db.close();
+  process.stdout.write('[OK] Banco SQLite acessível (' + row.c + ' tabelas)\n');
 " 2>&1; then
   die "Banco SQLite inacessível — verifique permissões em $DATA_DIR/"
 fi

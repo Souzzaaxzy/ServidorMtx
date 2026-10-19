@@ -44,6 +44,24 @@ SEED_ENTRY="dist/prisma/seed.js"
 DATA_DIR="data"
 DB_FILE="$DATA_DIR/matrix.db"
 
+# ── Environment detection (Termux/Android vs regular Linux) ────
+# The API now runs on EITHER without native Prisma binaries: the client uses
+# the Rust-free engine (engineType=client) plus the node:sqlite adapter, so
+# Android/bionic no longer blocks startup. We only report the environment here.
+IS_TERMUX=0
+if [ -n "${TERMUX_VERSION:-}" ] || [ -d /data/data/com.termux/files/usr ]; then
+  IS_TERMUX=1
+fi
+
+# node:sqlite requires Node >= 22.5 (stable from 23.4/22.13); argon2 is built
+# into node:crypto from Node >= 24.7. On older Node the npm `argon2` package is
+# used instead, so the API still works — but on Termux there is no prebuilt
+# bionic binary, hence the hard requirement there.
+NODE_MAJOR="$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)"
+NODE_MINOR="$(node -p 'process.versions.node.split(".")[1]' 2>/dev/null || echo 0)"
+node_has_sqlite() { [ "$NODE_MAJOR" -gt 22 ] || { [ "$NODE_MAJOR" -eq 22 ] && [ "$NODE_MINOR" -ge 5 ]; }; }
+node_has_argon2() { [ "$NODE_MAJOR" -gt 24 ] || { [ "$NODE_MAJOR" -eq 24 ] && [ "$NODE_MINOR" -ge 7 ]; }; }
+
 # ══════════════════════════════════════════════════════════════
 # 1. DIAGNÓSTICO DE AMBIENTE
 # ══════════════════════════════════════════════════════════════
@@ -67,7 +85,29 @@ echo "  Database       : $DB_FILE"
 echo "  Database file  : $([ -f "$DB_FILE" ] && echo 'presente ✓' || echo 'será criado na primeira inicialização')"
 echo "  JWT_SECRET     : $([ -n "${JWT_SECRET:-}" ] && echo 'configurado ✓' || echo 'NÃO CONFIGURADO')"
 echo "  NODE_ENV       : ${NODE_ENV:-<vazio>}"
+if [ "$IS_TERMUX" -eq 1 ]; then
+  echo "  Ambiente       : Termux/Android ($(uname -m))"
+else
+  echo "  Ambiente       : Linux ($(uname -m))"
+fi
+echo "  Prisma engine  : cliente JS/WASM (engineType=client) — sem binário nativo ✓"
+echo "  SQLite driver  : node:sqlite (embutido no Node) $([ "$(node_has_sqlite && echo 1 || echo 0)" = 1 ] && echo '✓' || echo '✗ Node >= 22.5 necessário')"
+if [ "$(node_has_argon2 && echo 1 || echo 0)" = 1 ]; then
+  echo "  Hash de senha  : argon2 embutido (node:crypto) ✓"
+else
+  echo "  Hash de senha  : pacote npm 'argon2' (Node < 24.7)"
+fi
 [ -f package.json ] || die "package.json ausente — não é a raiz do projeto."
+
+# node:sqlite is required: it is the driver adapter's backend. Fail early with
+# an actionable message instead of a confusing module error later.
+if ! node_has_sqlite; then
+  err "Este projeto requer Node >= 22.5 (o driver usa o módulo embutido node:sqlite)."
+  err "Node detectado: $(node --version 2>/dev/null || echo 'ausente')"
+  err "No Termux: pkg install nodejs-lts  (ou atualize o Node para >= 24.7 e"
+  err "ganhe também o argon2 embutido, sem precisar compilar nada)."
+  die "Node incompatível."
+fi
 
 # ── 2. .env (OPTIONAL) ─────────────────────────────────────────
 # .env is a convenience for local development. In production (Pterodactyl/
@@ -127,8 +167,9 @@ needs_install() {
   for bin in node_modules/.bin/prisma node_modules/.bin/tsc; do
     [ -e "$bin" ] || return 0
   done
-  [ -d node_modules/argon2 ] || return 0
   [ -d node_modules/typescript ] || return 0
+  # The npm argon2 package is OPTIONAL now (the built-in node:crypto argon2 is
+  # preferred), so its absence is not treated as an incomplete install.
   return 1
 }
 if needs_install; then
@@ -137,24 +178,34 @@ if needs_install; then
   # are installed even when the panel sets NODE_ENV=production (which would
   # otherwise skip them and break the build step below). This is NOT --force
   # nor --legacy-peer-deps; it only controls dev/prod inclusion.
-  npm install --include=dev
+  # `|| npm install --omit=optional` tolerates hosts (Termux) where the
+  # optional native argon2 cannot build — it is not needed there.
+  npm install --include=dev || npm install --include=dev --omit=optional
   ok "Dependências instaladas (incluindo devDependencies para build)"
 else
   ok "Dependências já instaladas (npm install ignorado)"
 fi
 
-# Verify argon2 (native module). It ships prebuilt binaries for common
-# platforms; if the host blocks native install scripts AND no prebuilt binary
-# matches, requiring it fails here with a clear message.
-if ! node -e "require('argon2')" 2>/dev/null; then
-  err "argon2 não pôde ser carregado (módulo nativo)."
-  err "O argon2 embarca binários pré-compilados; se nenhum casar com a"
-  err "plataforma da host, ele tenta compilar via script de instalação."
-  err "Libere o script de instalação do argon2 (e de 'esbuild'/'@biome')"
-  err "no painel/npm config, ou use uma imagem Node compatível."
-  die "argon2 é obrigatório (hashing de senhas) — não pode ser substituído."
+# Verify that SOME Argon2 implementation is available: the built-in
+# node:crypto.argon2 (Node >= 24.7) or the npm `argon2` package. Both produce
+# and verify the same PHC hashes, so existing passwords keep working.
+argon2_source=""
+if node -e "process.exit(typeof require('node:crypto').argon2Sync === 'function' ? 0 : 1)" 2>/dev/null; then
+  argon2_source="node:crypto (embutido)"
+elif node -e "require('argon2')" 2>/dev/null; then
+  argon2_source="pacote npm 'argon2'"
+else
+  err "Nenhuma implementação de Argon2 disponível — o hash de senhas não funciona."
+  if [ "$IS_TERMUX" -eq 1 ]; then
+    err "No Termux use Node >= 24.7 (o argon2 vem embutido no node:crypto):"
+    err "  pkg install nodejs-lts   # ou 'pkg install nodejs' se já for >= 24.7"
+  else
+    err "Instale o Node >= 24.7 (argon2 embutido) ou libere o build do pacote"
+    err "'argon2' no npm (requer python3/make/g++)."
+  fi
+  die "Argon2 é obrigatório (hashing de senhas) — não pode ser substituído."
 fi
-ok "argon2 carregado (hashing de senhas disponível)"
+ok "Argon2 disponível ($argon2_source)"
 
 # ── 4. Data directory (persistent SQLite storage) ─────────────
 # Create data/ if it does not exist. NEVER delete or reset the DB file —
@@ -275,14 +326,16 @@ log "Aplicando migrations (prisma migrate deploy — não destrutivo)"
 $PRISMA migrate deploy
 ok "Migrations aplicadas"
 
-# SQLite health check: confirm Prisma can actually open the DB. The client
-# reads process.env.DATABASE_URL (same as the server), so we do NOT override
-# the URL — this guarantees the health check opens the exact same file the
-# server will use.
+# SQLite health check: open the EXACT file the server will use and read it.
+# Uses node:sqlite directly (the same driver the adapter uses), so this does
+# not depend on the generated client or any native binary.
 if ! node -e "
-  const { PrismaClient } = require('./src/generated');
-  const p = new PrismaClient();
-  p.\$queryRaw\`SELECT 1 AS ok\`.then(() => { process.stdout.write('[OK] Banco SQLite acessível\n'); return p.\$disconnect(); }).catch((e) => { process.stderr.write('[ERROR] Não foi possível abrir o banco SQLite: ' + e.message + '\n'); process.exit(1); });
+  const { DatabaseSync } = require('node:sqlite');
+  const url = process.env.DATABASE_URL || 'file:$(pwd)/$DB_FILE';
+  const db = new DatabaseSync(url.replace(/^file:/, ''));
+  const row = db.prepare('SELECT COUNT(*) AS c FROM sqlite_master WHERE type = ?').get('table');
+  db.close();
+  process.stdout.write('[OK] Banco SQLite acessível (' + row.c + ' tabelas)\n');
 " 2>&1; then
   die "Banco SQLite inacessível — verifique permissões em $DATA_DIR/"
 fi

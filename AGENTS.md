@@ -150,22 +150,30 @@ PostgreSQL). Runs on Pterodactyl/Bronxys via `npm start` (self-provisions).
   nem o arquivo — mensagens que a referenciam continuam renderizando.
   (`removeStickerRecent` em `sticker.service.ts`.)
 
-## Termux / Android
-- **Native Termux does NOT work** — Android is bionic, not glibc. Prisma ships
-  no Android binary (it computes `debian-openssl-*` and dlopen fails with
-  "is for EM_X86_64 (62) instead of EM_AARCH64 (183)"), and `argon2` prebuilds
-  are glibc. Do NOT try to "fix" this by patching Prisma.
-- **Supported path**: `termux/termux.sh` (Termux side: installs proot-distro +
-  Debian, injects the inner script) → `termux/proot-bootstrap.sh` (inside
-  Debian: apt openssl/ca-certificates/curl/git/xz-utils/python3/build-essential,
-  installs Node 22 official `linux-arm64` tarball into /usr/local, clones repo
-  to /root/ServidorMtx, `exec bash start.sh`). Inside proot `process.platform`
-  is `linux`, so Prisma/argon2 behave normally.
-- `schema.prisma` generator has `binaryTargets = ["native",
-  "linux-arm64-openssl-3.0.x"]` → `prisma generate` also emits the ARM64 glibc
-  engine. Verified: engine ELF e_machine = 183 (AARCH64). Harmless on x64.
-- Node 22 resolved dynamically from https://nodejs.org/dist/index.json (never
-  hardcode a patch version).
+## Termux / Android (native, no proot)
+- **Native Termux is SUPPORTED** — no proot-distro/Ubuntu/root. The DB layer
+  uses no native binary at all:
+  - Prisma `engineType = "client"` (Rust-free JS/WASM query compiler). The old
+    Rust engine is what failed on bionic (`EM_X86_64 instead of EM_AARCH64`).
+  - `node:sqlite` (built into Node >= 22.5) via `src/db/node-sqlite-adapter.ts`.
+  - `node:crypto` argon2 (Node >= 24.7) via `src/utils/password.ts`; the npm
+    `argon2` package is now `optionalDependencies` (no bionic prebuild).
+- Entry points: `termux/termux-native.sh` (installer), `scripts/doctor.sh`
+  (`npm run doctor`), `start.sh` / `npm run termux:start` (boot).
+- **Node >= 22.5 required** (node:sqlite); >= 24.7 recommended (built-in argon2).
+  `package.json` engines reflects 22.5.
+- DateTime compatibility is CRITICAL: Prisma's native SQLite driver stored
+  DateTime as epoch-ms INTEGER. The adapter is created with
+  `{ timestampFormat: 'unixepoch-ms' }` so existing data/matrix.db files keep
+  working byte-for-byte (verified against a DB written by Prisma 5).
+- `src/config/prisma.ts` deliberately does NOT import `src/config/env.ts`:
+  importing it would snapshot `process.env` earlier than before and break
+  tests that set `DATABASE_URL` after import. The URL is resolved at CONNECT
+  time from `process.env.DATABASE_URL`.
+- Seeds use `createPrismaClient({ quiet: true })` to keep the client's log
+  config identical to the original `new PrismaClient()` (the seed intentionally
+  swallows one FK error with `.catch()`, so `log: ['error']` made noise).
+- Docker/Pterodactyl/VPS use the SAME path (no native engine needed anywhere).
 
 ## Conventions / gotchas
 - `npm start` never depends on `.env` or `.env.example` in production — panel

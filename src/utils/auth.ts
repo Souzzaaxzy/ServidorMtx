@@ -1,28 +1,25 @@
-import argon2, { type HashOptions } from 'argon2';
 import jwt from 'jsonwebtoken';
 import ms from 'ms';
 import { env } from '../config/env.js';
 import { prisma } from '../config/prisma.js';
 import type { Session, User } from '../generated/index.js';
-import { createHash, randomBytes, randomInt } from 'node:crypto';
-
-// Argon2id parameters. Tuned for a server-side hash cost that is resistant
-// to GPU brute force while keeping registration/login under ~200ms.
-const ARGON2_OPTIONS: HashOptions = {
-  type: argon2.argon2id,
-  memoryCost: 19_456, // ~19 MiB
-  timeCost: 3,
-  parallelism: 1,
-};
+import { createHash, randomBytes } from 'node:crypto';
+import {
+  generateRecoveryCode as generateRecoveryCodeImpl,
+  hashPassword as hashPasswordImpl,
+  hashRecoveryCode as hashRecoveryCodeImpl,
+  verifyPassword as verifyPasswordImpl,
+  verifyRecoveryCode as verifyRecoveryCodeImpl,
+} from './password.js';
 
 export async function hashPassword(plain: string): Promise<string> {
-  return argon2.hash(plain, ARGON2_OPTIONS);
+  return hashPasswordImpl(plain);
 }
 
 export async function verifyPassword(plain: string, hash: string): Promise<boolean> {
   if (!hash) return false;
   try {
-    return await argon2.verify(hash, plain);
+    return await verifyPasswordImpl(plain, hash);
   } catch {
     return false;
   }
@@ -112,25 +109,19 @@ export async function revokeAllUserSessions(userId: string): Promise<void> {
 // ONCE to the user. Only its hash is persisted — the original plaintext is
 // never stored, satisfying the requirement that the recovery code itself
 // not live in the database.
-
-const RECOVERY_CODE_LENGTH = 12;
+// The implementation lives in ./password.ts so hashing stays in one place.
 
 export function generateRecoveryCode(): string {
-  // Use crypto.randomInt to avoid modulo bias on each digit.
-  let code = '';
-  for (let i = 0; i < RECOVERY_CODE_LENGTH; i++) {
-    code += randomInt(0, 10).toString();
-  }
-  return code;
+  return generateRecoveryCodeImpl();
 }
 
 // Hash recovery codes with a distinct salt via SHA-256. Argon2id would be
 // ideal but these short numeric codes have low entropy, so we rely on rate
 // limiting + lockout rather than the hash function to resist brute force.
 export function hashRecoveryCode(code: string): string {
-  return createHash('sha256').update(code.trim()).digest('hex');
+  return hashRecoveryCodeImpl(code);
 }
 
 export function verifyRecoveryCode(code: string, hash: string): boolean {
-  return hashRecoveryCode(code) === hash;
+  return verifyRecoveryCodeImpl(code, hash);
 }

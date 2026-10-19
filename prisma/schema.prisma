@@ -15,12 +15,13 @@
 generator client {
   provider = "prisma-client-js"
   output   = "../src/generated"
-  // "native" = build/host platform (x64 containers, VPS, Pterodactyl).
-  // linux-arm64-openssl-3.0.x = ARM64 glibc (Termux via proot-distro Debian,
-  // ARM VPS, Raspberry Pi OS 64-bit). Prisma has NO Android/bionic binary, so
-  // native Termux cannot work — it must run inside a glibc userland (see
-  // termux/termux.sh). This extra target is harmless elsewhere.
-  binaryTargets = ["native", "linux-arm64-openssl-3.0.x"]
+  // Rust-free query compiler: Prisma Client runs entirely in JS/WASM and talks
+  // to the database through a driver adapter (see src/db/node-sqlite-adapter.ts).
+  // This is what makes the API run on Android/Termux: Prisma ships no bionic
+  // query-engine binary, so the default Rust engine cannot load there.
+  // On Linux/Docker the same engine is used with the same adapter, keeping one
+  // code path everywhere.
+  engineType = "client"
 }
 
 datasource db {

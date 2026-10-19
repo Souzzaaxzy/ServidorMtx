@@ -148,57 +148,111 @@ Diferença em relação ao `scripts/start.sh` (Pterodactyl/Bronxys): aquele é o
 script do `npm start` e depende de `node_modules` já instalado no volume; o
 `start.sh` da raiz é autossuficiente e é o ponto de entrada para a Hostsquare.
 
-## Termux (Android) — rodar no celular
+## Termux (Android) — suporte nativo, sem proot/Ubuntu
 
-O Termux **nativo não funciona** com este projeto, e não é culpa do código:
-o Android usa **bionic**, não glibc. O Prisma **não publica binário para
-Android** ([prisma#9968](https://github.com/prisma/prisma/issues/9968)) e o
-`argon2` é compilado para glibc — os dois falham no Termux com
-`dlopen ... is for EM_X86_64 (62) instead of EM_AARCH64 (183)`.
+A API roda **direto no Termux**, sem root, sem Ubuntu e sem `proot-distro`.
+Isso é possível porque o acesso ao banco não depende de nenhum binário nativo:
 
-A solução confiável é rodar a API dentro de um **userland glibc** com
-[`proot-distro`](https://github.com/termux/proot-distro). Um comando faz tudo:
+| Componente | O que é usado | Por que funciona no Android |
+|------------|---------------|-----------------------------|
+| ORM | Prisma 6.19 com `engineType = "client"` | O query compiler roda em **JS/WASM** — não existe binário Rust para carregar (era ele que falhava com `is for EM_X86_64 instead of EM_AARCH64`) |
+| Driver | `node:sqlite` (embutido no Node) | Já vem no Node ≥ 22.5, sem compilar nada |
+| Hash de senha | `node:crypto` argon2 (Node ≥ 24.7) | Embutido; o pacote npm `argon2` (nativo, só glibc) virou **opcional** |
 
-```bash
-pkg update && pkg install curl -y
-bash termux/termux.sh
-```
+### Requisitos
 
-Ou, sem baixar o repositório antes:
+- Termux atualizado e **Node ≥ 24.7** (recomendado) ou ≥ 22.5:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Souzzaaxzy/ServidorMtx/main/termux/termux.sh | bash
+pkg update && pkg install nodejs-lts
+node -v   # precisa ser >= 24.7
 ```
 
-O `termux/termux.sh` (roda no Termux) instala o `proot-distro`, instala um
-Debian arm64 e executa o `termux/proot-bootstrap.sh` **dentro** do Debian, que:
-
-1. instala via apt: `openssl`, `ca-certificates`, `curl`, `git`, `xz-utils`,
-   `python3`, `make`, `g++` (o OpenSSL é exigido pelo engine do Prisma);
-2. instala o **Node 22 oficial** (tarball `linux-arm64`) em `/usr/local` —
-   evita o Node antigo do apt e o repositório Nodesource (sem build arm64);
-3. clona/atualiza o repositório em `/root/ServidorMtx`;
-4. roda o `start.sh` (instala deps, gera o Prisma, compila, migra, sobe).
-
-O `schema.prisma` declara `binaryTargets = ["native", "linux-arm64-openssl-3.0.x"]`
-justamente para baixar o engine ARM64 glibc que o proot usa.
-
-Comandos do dia a dia (dentro do Debian):
+### Instalação (um comando)
 
 ```bash
-proot-distro login debian                      # entra no Debian
-cd /root/ServidorMtx && bash start.sh          # sobe a API
-# ou, em um comando só, de dentro do Termux:
-proot-distro login debian --shared-tmp -- bash -lc 'cd /root/ServidorMtx && bash start.sh'
+pkg install git -y
+git clone --depth 1 https://github.com/Souzzaaxzy/ServidorMtx.git
+cd ServidorMtx
+bash termux/termux-native.sh
 ```
 
-Acessar do próprio celular: a API escuta em `0.0.0.0:3000` — abra
-`http://127.0.0.1:3000/health` no navegador do Android. Para o **MatrixApp**
-em outro aparelho, use o **IP do celular na Wi-Fi** (`http://IP-DO-CELULAR:3000`).
+O instalador confere o ambiente, instala os pacotes do Termux
+(`git`, `openssl`, `python`, `make`, `clang`), instala as dependências, gera o
+cliente Prisma, compila e aplica as migrations. Se o repositório já estiver
+clonado, use `bash termux/termux-native.sh --no-clone`.
 
-Limitações do celular (não é problema do projeto): o Android pode matar
-processos em segundo plano (desative a otimização de bateria para o Termux) e
-manter o servidor 24/7 num telefone consome bateria/dados.
+### Iniciar / verificar
+
+```bash
+bash start.sh          # ou: npm run termux:start
+npm run doctor         # diagnóstico do ambiente (não altera nada)
+```
+
+A API responde em `http://127.0.0.1:3000` (ou na `PORT` definida) —
+`curl http://127.0.0.1:3000/health`.
+
+### Atualizar uma instalação existente
+
+```bash
+cd ServidorMtx
+git pull
+bash termux/termux-native.sh --no-clone   # reinstala/atualiza e migra
+bash start.sh
+```
+
+O banco (`data/matrix.db`) **nunca é apagado** e as migrations são
+não destrutivas.
+
+### Backup e restauração do banco
+
+```bash
+# Backup (seguro mesmo com a API rodando — usa o backup consistente do SQLite)
+mkdir -p ~/matrix-backup
+node -e "require('node:sqlite').backup(require('node:sqlite').DatabaseSync ? 'data/matrix.db' : '', '')" 2>/dev/null || cp data/matrix.db ~/matrix-backup/matrix-$(date +%F-%H%M).db
+# Ou, com a API parada:
+cp data/matrix.db ~/matrix-backup/matrix-$(date +%F-%H%M).db
+
+# Restauração (com a API parada)
+cp ~/matrix-backup/matrix-AAAAMMDD-HHMM.db data/matrix.db
+```
+
+### Migrações
+
+```bash
+npx prisma migrate deploy     # aplica pendentes (não destrutivo)
+npm run prisma:generate       # regenera o cliente (JS/WASM)
+```
+
+### Variáveis de ambiente
+
+Igual ao Linux: `JWT_SECRET` (se ausente, o `start.sh` gera um segredo
+persistente em `data/.jwt_secret`), `PORT`/`SERVER_PORT`, `NODE_ENV`,
+`CORS_ORIGIN`, `AI_API_KEY`/`AI_PROVIDER`. O banco é SQLite local —
+`DATABASE_URL` é opcional.
+
+### Diferenças em relação ao Linux convencional
+
+- **Node mínimo 22.5** (por causa do `node:sqlite`); no Termux, ≥ 24.7 também
+  dispensa o `argon2` nativo.
+- O pacote npm `argon2` é **opcional** (`optionalDependencies`). No Termux ele
+  normalmente não compila — e não é necessário, pois o argon2 embutido é usado.
+  O `npm install` foi ajustado para tolerar isso (`--omit=optional` como
+  fallback).
+- Não há `systemd`/daemon: mantenha o processo rodando com `tmux`/`termux-wake-lock`
+  se quiser deixá-lo ativo em segundo plano.
+- O Android pode encerrar processos em segundo plano: desative a otimização de
+  bateria para o Termux (`termux-wake-lock`) para o servidor não cair.
+
+### Solução de problemas
+
+| Sintoma | Causa / solução |
+|---------|-----------------|
+| `Cannot find module 'node:sqlite'` | Node < 22.5 → `pkg install nodejs-lts` |
+| `Nenhuma implementação de Argon2` | Node < 24.7 e o `argon2` npm não compilou → atualize o Node |
+| `dlopen ... EM_X86_64 instead of EM_AARCH64` | Você está num checkout antigo (Prisma 5 com engine Rust) → `git pull` |
+| Banco não abre | `npm run doctor` mostra o problema; confira permissões em `data/` |
+| API cai sozinha | Otimização de bateria do Android → `termux-wake-lock` |
 
 ## Pterodactyl / Bronxys (hospedagem em painel)
 

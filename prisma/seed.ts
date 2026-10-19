@@ -1,8 +1,8 @@
-import { PrismaClient } from '../src/generated/index.js';
 import { hashPassword, generateRecoveryCode, hashRecoveryCode } from '../src/utils/auth.js';
 import { seedStickerPackages } from './seed-stickers.js';
+import { createPrismaClient } from '../src/config/prisma.js';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient({ quiet: true });
 
 // The level hierarchy. The APK renders the level name; the server owns the
 // thresholds so re-balancing never needs an APK release.
