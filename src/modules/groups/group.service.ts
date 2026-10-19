@@ -1516,15 +1516,23 @@ export async function markGroupRead(
   await assertGroupMembership(groupId, userId);
 
   // The group coarse `readAt` badge stays (marks that the reader caught
-  // up), and we ALSO persist a per-user MessageRead row for every
-  // message the reader just caught up on — that row is the source for
-  // "Visto/Enviado". Idempotent: re-reading never duplicates.
+  // up), and we ALSO persist a per-user MessageRead row for every message
+  // this reader has not personally read yet — that row is the source for
+  // "Visto/Enviado".
+  //
+  // NOTE: the filter is "no MessageRead row for THIS user", NOT
+  // `readAt: null`. The coarse `readAt` is set by the FIRST member who reads,
+  // so filtering on it meant every later member was skipped and their
+  // read marker was never created — "quem leu" then showed only the first
+  // reader in a 3+ member group. The per-user rows are what make the read
+  // state correct (and what message retention relies on to know a group
+  // message reached everyone).
   const unread = await prisma.message.findMany({
     where: {
       groupId,
       senderId: { not: userId },
-      readAt: null,
       deletedAt: null,
+      readBy: { none: { userId } },
     },
     select: { id: true },
   });

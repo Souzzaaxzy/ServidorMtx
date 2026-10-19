@@ -36,6 +36,7 @@ import { notificationRoutes } from './modules/notifications/notification.routes.
 import { pushRoutes } from './modules/push/push.routes.js';
 import { stickerRoutes } from './modules/stickers/sticker.routes.js';
 import { storyRoutes } from './modules/stories/story.routes.js';
+import { purgeDeliveredMessages } from './modules/chat/retention.service.js';
 import websocket from '@fastify/websocket';
 
 export async function buildServer() {
@@ -198,6 +199,9 @@ async function start() {
     await app.listen({ port: env.port, host: '0.0.0.0' });
     console.log('[MATRIX] API iniciada com sucesso.');
     await logPublicUrl();
+    // Chat history lives on the phones; the server copy is a delivery queue.
+    // This drains it so the database and the uploads folder stop growing.
+    startMessageRetention();
   } catch (err) {
     logger.error(
       { err: err instanceof Error ? err.message : String(err) },
@@ -205,6 +209,37 @@ async function start() {
     );
     process.exit(1);
   }
+}
+
+// Chat history now lives on each phone; the server keeps only a delivery
+// queue. This sweeps that queue on an interval so the database and the
+// uploads directory stop growing without bound. It is registered here (in the
+// boot path) and NOT in buildServer(), so importing the app in tests never
+// starts a background job.
+function startMessageRetention(): void {
+  const everyMs = Number(process.env.MESSAGE_PURGE_INTERVAL_MS ?? 6 * 60 * 60 * 1000);
+  const run = () => {
+    void purgeDeliveredMessages()
+      .then((r) => {
+        if (r.delivered || r.undelivered || r.filesDeleted) {
+          console.log(
+            `[MATRIX] Retenção: ${r.delivered} entregues + ${r.undelivered} não entregues removidas, ${r.filesDeleted} arquivo(s) apagado(s).`,
+          );
+        }
+      })
+      .catch((err) => {
+        logger.warn(
+          { err: err instanceof Error ? err.message : String(err) },
+          'message retention sweep failed',
+        );
+      });
+  };
+  // A first sweep shortly after boot (catches up after downtime), then on an
+  // interval. `unref()` keeps the timer from holding the process open.
+  const first = setTimeout(run, 30_000);
+  const interval = setInterval(run, everyMs);
+  first.unref?.();
+  interval.unref?.();
 }
 
 // Best-effort public IP detection. The process inside the container does
