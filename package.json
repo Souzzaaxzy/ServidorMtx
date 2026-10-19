@@ -20,6 +20,8 @@
     "db:seed": "tsx prisma/seed.ts",
     "prisma:deploy": "prisma migrate deploy",
     "db:push": "prisma db push",
+    "db:migrate": "node dist/src/db/migrate-cli.js deploy",
+    "db:migrate:status": "node dist/src/db/migrate-cli.js status",
     "termux": "bash termux/termux-native.sh",
     "termux:start": "bash start.sh",
     "doctor": "bash scripts/doctor.sh"

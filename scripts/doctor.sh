@@ -68,6 +68,26 @@ hdr "Dependências e build"
 [ -d src/generated ] && ok "Cliente Prisma gerado" || warn "Cliente Prisma ausente (npm run prisma:generate)"
 if [ -f dist/src/app.js ]; then ok "Build presente (dist/src/app.js)"; else warn "Build ausente (npm run build)"; fi
 
+hdr "Migrations"
+# The Prisma CLI always needs a native schema-engine (no Android build), so on
+# Termux we use the node:sqlite runner instead. Report which path applies.
+if [ -n "${TERMUX_VERSION:-}" ] || [ -d /data/data/com.termux/files/usr ]; then
+  ok "Ambiente Termux → runner node:sqlite (npm run db:migrate)"
+  if [ -f dist/src/db/migrate-cli.js ]; then
+    ok "Runner compilado presente (dist/src/db/migrate-cli.js)"
+  elif [ -x node_modules/.bin/tsx ]; then
+    ok "Runner disponível via tsx (src/db/migrate-cli.ts)"
+  else
+    warn "Runner indisponível — rode 'npm install && npm run build'"
+  fi
+else
+  ok "Ambiente Linux/outro → 'prisma migrate deploy' (fluxo convencional)"
+fi
+if command -v node >/dev/null 2>&1 && [ -f prisma/migrations/migration_lock.toml ]; then
+  COUNT="$(ls -d prisma/migrations/*/ 2>/dev/null | wc -l | tr -d ' ')"
+  ok "Migrations no repositório: $COUNT"
+fi
+
 hdr "Banco de dados (SQLite)"
 DB_FILE="data/matrix.db"
 if [ -f "$DB_FILE" ]; then

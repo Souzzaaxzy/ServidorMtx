@@ -45,6 +45,9 @@ SEED_ENTRY="dist/prisma/seed.js"
 DATA_DIR="data"
 DB_FILE="$DATA_DIR/matrix.db"
 
+# Prisma helpers (Termux-safe generate/migrate) — see scripts/lib-prisma.sh.
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/scripts/lib-prisma.sh"
+
 INSTALL_ONLY=0
 for arg in "$@"; do
   case "$arg" in
@@ -171,7 +174,7 @@ needs_prisma_generate() {
 }
 if needs_prisma_generate; then
   log "Gerando cliente Prisma"
-  $PRISMA generate
+  matrix_prisma_generate "$PRISMA" .
   ok "Cliente Prisma gerado"
 else
   ok "Cliente Prisma atualizado (generate ignorado)"
@@ -208,8 +211,12 @@ if [ "$INSTALL_ONLY" -eq 1 ]; then
 fi
 
 # ── 8. Migrations (cria o SQLite na 1ª vez; nunca destrutivo) ───
-log "Aplicando migrations (prisma migrate deploy)"
-$PRISMA migrate deploy
+if matrix_is_termux; then
+  log "Aplicando migrations (runner node:sqlite — Termux, sem schema engine)"
+else
+  log "Aplicando migrations (prisma migrate deploy)"
+fi
+matrix_migrate "$PRISMA" .
 ok "Migrations aplicadas"
 
 if ! node -e "

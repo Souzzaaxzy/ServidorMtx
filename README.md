@@ -155,9 +155,38 @@ Isso é possível porque o acesso ao banco não depende de nenhum binário nativ
 
 | Componente | O que é usado | Por que funciona no Android |
 |------------|---------------|-----------------------------|
-| ORM | Prisma 6.19 com `engineType = "client"` | O query compiler roda em **JS/WASM** — não existe binário Rust para carregar (era ele que falhava com `is for EM_X86_64 instead of EM_AARCH64`) |
+| ORM (runtime) | Prisma 6.19 com `engineType = "client"` | O query compiler roda em **JS/WASM** — não existe binário Rust para carregar |
 | Driver | `node:sqlite` (embutido no Node) | Já vem no Node ≥ 22.5, sem compilar nada |
-| Hash de senha | `node:crypto` argon2 (Node ≥ 24.7) | Embutido; o pacote npm `argon2` (nativo, só glibc) virou **opcional** |
+| Hash de senha | `node:crypto` argon2 (Node ≥ 24.7) | Embutido; o pacote npm `argon2` virou **opcional** |
+| Migrations | `src/db/migrate.ts` (runner próprio) | O **Prisma CLI não roda no Android** (veja abaixo) |
+
+### Por que as migrations usam um runner próprio
+
+`engineType = "client"` deixa o **Client** livre de binários nativos, mas **não** o
+**Prisma CLI**: `prisma migrate deploy`, `prisma generate` e `prisma validate`
+sempre baixam e executam um binário nativo `schema-engine`, e o Prisma **não
+publica build para Android/bionic**. No Termux isso falha com:
+
+```
+Prisma detected unknown OS "android" … Defaulting to "linux".
+Error: Schema engine error
+… is for EM_X86_64 (62) instead of EM_AARCH64 (183)
+```
+
+A solução tem duas partes, ambas verificadas:
+
+1. **Gerar o client** funciona offline: apontando `PRISMA_SCHEMA_ENGINE_BINARY`
+   para qualquer arquivo existente, o `prisma generate` não executa o engine e
+   ainda emite o client WASM completo. O `start.sh` faz isso automaticamente no
+   Termux.
+2. **Aplicar migrations** usa `src/db/migrate.ts`, que executa os mesmos
+   `prisma/migrations/*/migration.sql` via `node:sqlite` e grava a tabela
+   `_prisma_migrations` **idêntica** à do Prisma. Verificado: 148/148 objetos de
+   schema e todo o histórico de migrations batem com `prisma migrate deploy`, e
+   os dois são intercambiáveis nos dois sentidos.
+
+Em Linux/Windows/Docker nada muda: o `start.sh` detecta o ambiente e usa o
+`prisma migrate deploy` convencional.
 
 ### Requisitos
 
@@ -220,8 +249,13 @@ cp ~/matrix-backup/matrix-AAAAMMDD-HHMM.db data/matrix.db
 ### Migrações
 
 ```bash
-npx prisma migrate deploy     # aplica pendentes (não destrutivo)
-npm run prisma:generate       # regenera o cliente (JS/WASM)
+# Termux (sem Prisma CLI):
+npm run db:migrate            # aplica pendentes (não destrutivo)
+npm run db:migrate:status     # mostra aplicadas/pendentes
+
+# Linux/Docker (fluxo convencional):
+npx prisma migrate deploy
+npm run prisma:generate
 ```
 
 ### Variáveis de ambiente
@@ -250,7 +284,9 @@ persistente em `data/.jwt_secret`), `PORT`/`SERVER_PORT`, `NODE_ENV`,
 |---------|-----------------|
 | `Cannot find module 'node:sqlite'` | Node < 22.5 → `pkg install nodejs-lts` |
 | `Nenhuma implementação de Argon2` | Node < 24.7 e o `argon2` npm não compilou → atualize o Node |
-| `dlopen ... EM_X86_64 instead of EM_AARCH64` | Você está num checkout antigo (Prisma 5 com engine Rust) → `git pull` |
+| `Schema engine error` no Termux | Você rodou `prisma migrate` direto. Use `npm run db:migrate` |
+| `dlopen ... EM_X86_64 instead of EM_AARCH64` | Checkout antigo (Prisma 5 com engine Rust) → `git pull` |
+| `A migration "X" já foi aplicada, mas o arquivo mudou` | Um `migration.sql` já aplicado foi editado. Restaure o original ou crie uma NOVA migration |
 | Banco não abre | `npm run doctor` mostra o problema; confira permissões em `data/` |
 | API cai sozinha | Otimização de bateria do Android → `termux-wake-lock` |
 

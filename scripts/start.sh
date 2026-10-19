@@ -44,6 +44,13 @@ SEED_ENTRY="dist/prisma/seed.js"
 DATA_DIR="data"
 DB_FILE="$DATA_DIR/matrix.db"
 
+# ── Prisma helpers (Termux-safe generate/migrate) ──────────────
+# Sourced unconditionally: it defines matrix_is_termux / matrix_prisma_generate
+# / matrix_migrate, used by the generate and migration steps below.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=./lib-prisma.sh
+. "$SCRIPT_DIR/lib-prisma.sh"
+
 # ── Environment detection (Termux/Android vs regular Linux) ────
 # The API now runs on EITHER without native Prisma binaries: the client uses
 # the Rust-free engine (engineType=client) plus the node:sqlite adapter, so
@@ -241,7 +248,7 @@ needs_prisma_generate() {
 }
 if needs_prisma_generate; then
   log "Gerando cliente Prisma"
-  $PRISMA generate
+  matrix_prisma_generate "$PRISMA" .
   ok "Cliente Prisma gerado"
 else
   ok "Cliente Prisma já gerado e atualizado (generate ignorado)"
@@ -318,12 +325,17 @@ fi
 ok "Todas as variáveis obrigatórias estão configuradas"
 
 # ── 8. Migrations (creates the SQLite DB on first boot) ───────
-# `prisma migrate deploy` is non-destructive: it only applies pending
-# migrations and NEVER resets/deletes data. On a fresh host it creates
-# data/matrix.db with the full schema; on subsequent boots it is a fast
-# no-op. The DB file is never deleted or reset by this step.
-log "Aplicando migrations (prisma migrate deploy — não destrutivo)"
-$PRISMA migrate deploy
+# Non-destructive: only pending migrations are applied, and the DB is NEVER
+# reset/deleted. On a fresh host it creates data/matrix.db with the full
+# schema; on later boots it is a fast no-op.
+# Termux/Android → offline node:sqlite runner (the Prisma CLI cannot run its
+# native schema engine there). Other systems → `prisma migrate deploy`.
+if matrix_is_termux; then
+  log "Aplicando migrations (runner node:sqlite — Termux, sem schema engine)"
+else
+  log "Aplicando migrations (prisma migrate deploy — não destrutivo)"
+fi
+matrix_migrate "$PRISMA" .
 ok "Migrations aplicadas"
 
 # SQLite health check: open the EXACT file the server will use and read it.

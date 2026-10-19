@@ -115,8 +115,13 @@ ok "Dependências instaladas"
 mkdir -p data
 export DATABASE_URL="${DATABASE_URL:-file:$(pwd)/data/matrix.db}"
 
+# Prisma helpers: on Termux, generate runs offline (the CLI would otherwise
+# download an unusable native schema-engine) and migrations use the node:sqlite
+# runner instead of the Prisma CLI.
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/scripts/lib-prisma.sh"
+
 log "Gerando o cliente Prisma (engine JS/WASM — sem binário nativo)"
-./node_modules/.bin/prisma generate
+matrix_prisma_generate ./node_modules/.bin/prisma .
 ok "Cliente Prisma gerado"
 
 log "Compilando TypeScript"
@@ -124,8 +129,8 @@ npm run build
 ok "Build concluído"
 
 # ── 5. Banco de dados ──────────────────────────────────────────
-log "Aplicando migrations no SQLite (não destrutivo)"
-./node_modules/.bin/prisma migrate deploy
+log "Aplicando migrations no SQLite (runner node:sqlite — não destrutivo)"
+matrix_migrate ./node_modules/.bin/prisma .
 ok "Banco pronto: $DATABASE_URL"
 
 echo "═══════════════════════════════════════════════════════════════"

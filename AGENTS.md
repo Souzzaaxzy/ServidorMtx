@@ -158,8 +158,30 @@ PostgreSQL). Runs on Pterodactyl/Bronxys via `npm start` (self-provisions).
   - `node:sqlite` (built into Node >= 22.5) via `src/db/node-sqlite-adapter.ts`.
   - `node:crypto` argon2 (Node >= 24.7) via `src/utils/password.ts`; the npm
     `argon2` package is now `optionalDependencies` (no bionic prebuild).
+- **Migrations on Termux**: the Prisma CLI ALWAYS downloads+executes a native
+  `schema-engine` (no Android build) → `prisma migrate deploy|generate|validate`
+  cannot run there ("Schema engine error" / `EM_X86_64 instead of EM_AARCH64`).
+  `engineType = "client"` frees the CLIENT only, not the CLI.
+  - `src/db/migrate.ts` (+ `migrate-cli.ts`) applies the same
+    `prisma/migrations/*/migration.sql` via node:sqlite and writes a
+    byte-identical `_prisma_migrations` (checksum = sha256 of migration.sql,
+    epoch-ms timestamps, applied_steps_count=1). Verified: 148/148 schema
+    objects + bookkeeping identical to real Prisma; interchangeable both ways.
+  - **CRITICAL**: the runner opens SQLite with
+    `enableDoubleQuotedStringLiterals: true`. Prisma's engine has DQS ON;
+    node:sqlite has it OFF. Migration `20260827135123_deletion_system` relies on
+    it (stores the literal string "replyToMessageId"), so without this the
+    migration aborts. Do not remove that option.
+  - `prisma generate` works OFFLINE if `PRISMA_SCHEMA_ENGINE_BINARY` points at
+    any existing file (the engine is not executed for generate) — that is what
+    `scripts/lib-prisma.sh::matrix_prisma_generate` does on Termux.
+  - `PRISMA_GENERATE_NO_ENGINE=1` is NOT an option: it produces a client that
+    refuses driver adapters (P2038).
+  - Never use `prisma migrate reset` / `db push` here (destructive / drifts from
+    the migration history).
 - Entry points: `termux/termux-native.sh` (installer), `scripts/doctor.sh`
-  (`npm run doctor`), `start.sh` / `npm run termux:start` (boot).
+  (`npm run doctor`), `start.sh` / `npm run termux:start` (boot),
+  `npm run db:migrate` / `db:migrate:status` (Termux migrations).
 - **Node >= 22.5 required** (node:sqlite); >= 24.7 recommended (built-in argon2).
   `package.json` engines reflects 22.5.
 - DateTime compatibility is CRITICAL: Prisma's native SQLite driver stored
