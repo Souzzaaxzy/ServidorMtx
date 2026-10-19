@@ -1,6 +1,7 @@
 import { prisma } from '../../config/prisma.js';
 import { ApiError } from '../../utils/errors.js';
 import { nicknameKey, normalizeNickname } from '../../utils/normalize.js';
+import { allocatePublicId, formatPublicId, parsePublicId } from '../../utils/public-id.js';
 import {
   createSession,
   generateRecoveryCode,
@@ -29,8 +30,10 @@ export interface RegisterResult extends AuthResult {
 
 function serializeUser(user: {
   id: string;
+  publicId: number;
   nickname: string;
   avatarUrl: string | null;
+  bannerUrl: string | null;
   bio: string;
   role: string;
   createdAt: Date;
@@ -38,8 +41,11 @@ function serializeUser(user: {
 }) {
   return {
     id: user.id,
+    publicId: user.publicId,
+    publicIdLabel: formatPublicId(user.publicId),
     nickname: user.nickname,
     avatarUrl: user.avatarUrl,
+    bannerUrl: user.bannerUrl,
     bio: user.bio,
     role: user.role,
     createdAt: user.createdAt.toISOString(),
@@ -66,14 +72,21 @@ export async function register(input: RegisterInput): Promise<RegisterResult> {
   const recoveryCode = generateRecoveryCode();
   const recoveryCodeHash = hashRecoveryCode(recoveryCode);
 
-  const user = await prisma.user.create({
-    data: {
-      nickname,
-      nicknameKey: key,
-      passwordHash,
-      recoveryCodeHash,
-      bio: '',
-    },
+  // The public id is allocated and the account created in ONE transaction, so
+  // a failure never leaves a burned number behind (and two simultaneous
+  // registrations can never receive the same id).
+  const user = await prisma.$transaction(async (tx) => {
+    const publicId = await allocatePublicId(tx);
+    return tx.user.create({
+      data: {
+        publicId,
+        nickname,
+        nicknameKey: key,
+        passwordHash,
+        recoveryCodeHash,
+        bio: '',
+      },
+    });
   });
 
   const { refreshToken } = await createSession(user.id);
@@ -88,9 +101,13 @@ export async function register(input: RegisterInput): Promise<RegisterResult> {
 }
 
 export async function login(input: LoginInput): Promise<AuthResult> {
-  // Case-insensitive: the user can type their nickname in any case.
-  const user = await prisma.user.findUnique({
-    where: { nicknameKey: nicknameKey(input.nickname) },
+  // The identifier may be the nickname (case-insensitive) OR the public
+  // `#id` (e.g. `#00000001`) — both reach the same account.
+  const publicId = parsePublicId(input.nickname);
+  const user = await prisma.user.findFirst({
+    where: publicId !== null
+      ? { publicId }
+      : { nicknameKey: nicknameKey(input.nickname) },
   });
 
   // Always perform a hash compare to keep timing roughly constant even when
@@ -164,9 +181,14 @@ export async function recoverAccount(
     throw ApiError.tooManyRecoveryAttempts();
   }
 
-  // Normalize the identifier to a case-insensitive nickname key for lookup.
-  const user = await prisma.user.findUnique({
-    where: { nicknameKey: nicknameKey(input.identifier) },
+  // The identifier is the nickname (case-insensitive) OR the public `#id`
+  // (the recover form already promised "usuário ou MATRIX ID").
+  const publicId = parsePublicId(input.identifier);
+  const user = await prisma.user.findFirst({
+    where:
+      publicId !== null
+        ? { publicId }
+        : { nicknameKey: nicknameKey(input.identifier) },
   });
 
   // Always run a verification against a dummy hash so timing does not leak

@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { buildServer } from '../src/app.js';
 import { prisma } from '../src/config/prisma.js';
 import { hashPassword, generateRecoveryCode, hashRecoveryCode } from '../src/utils/auth.js';
+import { allocatePublicId } from '../src/utils/public-id.js';
 
 export let app: FastifyInstance;
 
@@ -35,15 +36,19 @@ export async function createUser(overrides: Partial<{
   const passwordHash = await hashPassword(password);
   const recoveryCode = generateRecoveryCode();
   const recoveryCodeHash = hashRecoveryCode(recoveryCode);
-  const user = await prisma.user.create({
-    data: {
-      nickname,
-      nicknameKey: nickname.toLowerCase(),
-      passwordHash,
-      recoveryCodeHash,
-      role: overrides.role ?? 'USER',
-      bio: overrides.bio ?? '',
-    },
+  const user = await prisma.$transaction(async (tx) => {
+    const publicId = await allocatePublicId(tx);
+    return tx.user.create({
+      data: {
+        publicId,
+        nickname,
+        nicknameKey: nickname.toLowerCase(),
+        passwordHash,
+        recoveryCodeHash,
+        role: overrides.role ?? 'USER',
+        bio: overrides.bio ?? '',
+      },
+    });
   });
   return { ...user, recoveryCodeHash, recoveryCode };
 }

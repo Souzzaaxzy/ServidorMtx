@@ -1,6 +1,7 @@
 import { prisma } from '../../config/prisma.js';
 import { ApiError, toApiError } from '../../utils/errors.js';
 import { nicknameKey, normalizeNickname } from '../../utils/normalize.js';
+import { parsePublicId } from '../../utils/public-id.js';
 import { AUTHOR_SELECT, toAuthUser, toFeedPost, toProfileUser, type AuthUser, type FeedPost, type ProfileUser } from '../../utils/dto.js';
 import { getFriendshipState } from '../friends/friend.service.js';
 import type { FriendshipState } from '../../types/enums.js';
@@ -9,9 +10,15 @@ export async function getProfile(
   nickname: string,
   currentUserId?: string,
 ): Promise<{ user: ProfileUser; posts: FeedPost[]; friendship: FriendshipState | null }> {
-  // Profile URLs resolve case-insensitively through the nickname key.
-  const user = await prisma.user.findUnique({
-    where: { nicknameKey: nicknameKey(nickname) },
+  // The profile resolves by nickname (case-insensitively, through the
+  // nickname key) OR by the public `#id` (e.g. `#00000001`) — so a profile
+  // can be opened straight from an id shown anywhere in the app.
+  const publicId = parsePublicId(nickname);
+  const user = await prisma.user.findFirst({
+    where:
+      publicId !== null
+        ? { publicId }
+        : { nicknameKey: nicknameKey(nickname) },
     include: {
       // Equipped cosmetics ride along so any profile (own or someone
       // else's) can render frames/badges without an extra request.

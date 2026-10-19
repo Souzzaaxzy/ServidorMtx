@@ -40,6 +40,10 @@ datasource db {
 
 model User {
   id               String   @id @default(cuid())
+  // Public sequential identifier, shown as `#00000001` and usable to find or
+  // log into an account. Allocated from `user_ids` (never reused, so a
+  // deleted account's number is retired — see src/utils/public-id.ts).
+  publicId         Int      @unique
   // Single visual identity (Phase 5): only `nickname`. Legacy `name`/
   // `username` were merged by the 20260826_unify_identity_nickname migration.
   // The display form is stored EXACTLY as typed (Unicode, emojis, mixed

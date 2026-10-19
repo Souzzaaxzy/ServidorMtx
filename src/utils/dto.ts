@@ -1,4 +1,5 @@
 import type { Comment, FriendRequest, Notification, Post, User } from '../generated/index.js';
+import { formatPublicId } from './public-id.js';
 
 // ── Nickname cosmetics (color) ───────────────────────────────
 // A user's nickname color is the cosmetic equipped in the NAME_COLOR slot
@@ -33,6 +34,9 @@ export const NAME_COLOR_SELECT = NICKNAME_COSMETICS_SELECT;
 
 export const AUTHOR_SELECT = {
   id: true,
+  // The public `#id` travels with every author payload so the app can show it
+  // (profile, search results) without an extra request.
+  publicId: true,
   nickname: true,
   avatarUrl: true,
   // Included so every author/public-user payload can build a complete
@@ -106,6 +110,10 @@ export function nicknameCosmetics(user: WithNameColor): NicknameCosmeticsPayload
 // internals to other users.
 export interface PublicUser extends NicknameCosmeticsPayload {
   id: string;
+  /** Sequential public id (number), e.g. 1. */
+  publicId: number;
+  /** The public id formatted for display: `#00000001`. */
+  publicIdLabel: string;
   nickname: string;
   avatarUrl: string | null;
   /** Wide profile cover image. Null → the app draws its default banner. */
@@ -115,11 +123,16 @@ export interface PublicUser extends NicknameCosmeticsPayload {
 }
 
 export function toPublicUser(
-  user: Pick<User, 'id' | 'nickname' | 'avatarUrl' | 'bannerUrl' | 'bio' | 'createdAt'> &
+  user: Pick<
+    User,
+    'id' | 'publicId' | 'nickname' | 'avatarUrl' | 'bannerUrl' | 'bio' | 'createdAt'
+  > &
     WithNameColor,
 ): PublicUser {
   return {
     id: user.id,
+    publicId: user.publicId,
+    publicIdLabel: formatPublicId(user.publicId),
     nickname: user.nickname,
     avatarUrl: user.avatarUrl,
     bannerUrl: user.bannerUrl,

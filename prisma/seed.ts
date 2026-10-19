@@ -1,6 +1,7 @@
 import { hashPassword, generateRecoveryCode, hashRecoveryCode } from '../src/utils/auth.js';
 import { seedStickerPackages } from './seed-stickers.js';
 import { createPrismaClient } from '../src/config/prisma.js';
+import { allocatePublicId } from '../src/utils/public-id.js';
 
 const prisma = createPrismaClient({ quiet: true });
 
@@ -226,30 +227,29 @@ async function main() {
 
   const password = await hashPassword('Password123');
 
-  const users = await prisma.$transaction([
-    prisma.user.create({
-      data: {
+  // The public `#id` is allocated per user, in creation order, so the demo
+  // accounts get #00000001..#00000003 on a fresh database.
+  const users = await prisma.$transaction(async (tx) => {
+    const created = [];
+    for (const data of [
+      {
         nickname: 'leonardo',
         nicknameKey: 'leonardo',
         passwordHash: password,
         recoveryCodeHash: hashRecoveryCode(generateRecoveryCode()),
         role: 'OWNER',
-        bio: 'Fundador do MATRIX 💤 — construindo o futuro cronológico.',
+        bio: 'Fundador do MATRIX \u{1F4A4} \u2014 construindo o futuro cronol\u00f3gico.',
         avatarUrl: 'https://i.pravatar.cc/300?img=12',
       },
-    }),
-    prisma.user.create({
-      data: {
+      {
         nickname: 'maria',
         nicknameKey: 'maria',
         passwordHash: password,
         recoveryCodeHash: hashRecoveryCode(generateRecoveryCode()),
-        bio: 'Designer | Futurista | 💜 cyberpunk',
+        bio: 'Designer | Futurista | \u{1F49C} cyberpunk',
         avatarUrl: 'https://i.pravatar.cc/300?img=45',
       },
-    }),
-    prisma.user.create({
-      data: {
+      {
         nickname: 'joao',
         nicknameKey: 'joao',
         passwordHash: password,
@@ -257,8 +257,12 @@ async function main() {
         bio: 'Dev backend. Coffee-driven.',
         avatarUrl: 'https://i.pravatar.cc/300?img=33',
       },
-    }),
-  ]);
+    ]) {
+      const publicId = await allocatePublicId(tx);
+      created.push(await tx.user.create({ data: { ...data, publicId } }));
+    }
+    return created;
+  });
 
   const [leonardo, maria, joao] = users;
 
