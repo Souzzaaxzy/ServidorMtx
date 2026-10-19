@@ -250,8 +250,12 @@ export const MIN_PROFILE_MUSIC_MS = 5_000;
 /** Quantos resultados a busca devolve. */
 export const PROFILE_MUSIC_RESULTS = 3;
 
-/** Timeout da busca (a busca é rápida: ~6s medidos). */
-const SEARCH_TIMEOUT_MS = 45_000;
+/**
+ * Timeout da busca. Generoso de propósito: medido em ~6s num host x86, mas no
+ * Termux (celular, com cookies e runtime JS) passa de 45s com facilidade —
+ * o timeout curto derrubava buscas que só estavam lentas.
+ */
+const SEARCH_TIMEOUT_MS = 120_000;
 
 /** Timeout do download — generoso, mas finito. */
 const DOWNLOAD_TIMEOUT_MS = 180_000;
@@ -728,33 +732,8 @@ async function runYtdlp(
   }
 }
 
-/**
- * Busca músicas no YouTube Music. Devolve no máximo [PROFILE_MUSIC_RESULTS]
- * resultados já limpos (título/artista) e SEM duplicatas de id.
- *
- * `--flat-playlist` na primeira tentativa é o caminho barato; como alguns
- * campos (duração/capa) só vêm com a extração completa, pedimos os metadados
- * completos de uma vez com `--dump-json` — medido em ~6s para 3 itens.
- */
-export async function searchProfileMusic(query: string): Promise<MusicSearchResult[]> {
-  const q = query.trim();
-  if (q.length === 0) throw ApiError.validation('Informe o nome da música.');
-  if (q.length > 120) throw ApiError.validation('Busca muito longa.');
-
-  const searchUrl = `https://music.youtube.com/search?q=${encodeURIComponent(q)}&sp=${encodeURIComponent(YTM_SONGS_FILTER)}`;
-  const { code, stdout, stderr } = await runYtdlp(
-    [
-      '--dump-json',
-      '--ignore-errors',
-      '--no-warnings',
-      '--skip-download',
-      '--playlist-end',
-      String(PROFILE_MUSIC_RESULTS),
-      searchUrl,
-    ],
-    SEARCH_TIMEOUT_MS,
-  );
-
+/** Extrai os objetos JSON de uma saída do yt-dlp (uma linha por item). */
+function parseYtdlpJsonLines(stdout: string): YtdlpJson[] {
   const items: YtdlpJson[] = [];
   for (const line of stdout.split('\n')) {
     const trimmed = line.trim();
@@ -765,18 +744,30 @@ export async function searchProfileMusic(query: string): Promise<MusicSearchResu
       // Linha não-JSON (aviso/ruído) — ignorada.
     }
   }
+  return items;
+}
 
-  if (items.length === 0) {
-    // UM ERRO DO yt-dlp NÃO É "NENHUM RESULTADO". Sem esta distinção o app
-    // dizia "nenhuma música encontrada" quando o problema real era o
-    // yt-dlp bloqueado/desatualizado/ausente — o usuário não tinha pista
-    // nenhuma do que consertar.
-    if (code !== 0) {
-      throw ytdlpFailureToApiError(stderr);
-    }
-    return [];
-  }
+/** Argumentos comuns a toda consulta de metadados. */
+function searchArgs(url: string): string[] {
+  return [
+    '--dump-json',
+    '--ignore-errors',
+    '--no-warnings',
+    // A busca só quer METADADOS (título/artista/duração/capa). Alguns
+    // resultados do YouTube Music não expõem formato baixável para o nosso
+    // cliente, e sem esta flag o yt-dlp ABORTA o item com "Requested format
+    // is not available" — o que derrubava a busca inteira mesmo com os
+    // outros resultados disponíveis (bug relatado).
+    '--ignore-no-formats-error',
+    '--skip-download',
+    '--playlist-end',
+    String(PROFILE_MUSIC_RESULTS),
+    url,
+  ];
+}
 
+/** Converte os itens em resultados limpos, sem duplicatas. */
+function toResults(items: YtdlpJson[]): MusicSearchResult[] {
   const seen = new Set<string>();
   const results: MusicSearchResult[] = [];
   for (const item of items) {
@@ -787,6 +778,53 @@ export async function searchProfileMusic(query: string): Promise<MusicSearchResu
     if (results.length >= PROFILE_MUSIC_RESULTS) break;
   }
   return results;
+}
+
+/**
+ * Busca músicas no YouTube Music, com FALLBACK em cadeia.
+ *
+ * O catálogo "songs" é o que remove vídeo aleatório (clipe, react, "top 10"),
+ * então é sempre a PRIMEIRA tentativa. O problema é que ele devolve ZERO
+ * resultados para algumas buscas perfeitamente válidas (ex.: "Queen") — de
+ * forma reproduzível, não é rate-limit. Sem o fallback, uma busca legítima
+ * virava "nenhuma música encontrada" (bug relatado).
+ *
+ * Ordem:
+ *   1. catálogo de MÚSICAS do YouTube Music (melhor qualidade de resultado);
+ *   2. YouTube Music sem o filtro (ainda prioriza faixas, menos curado);
+ *   3. `ytsearch` (busca geral do YouTube) como último recurso.
+ *
+ * Só devolve lista vazia quando TODAS as tentativas voltarem vazias SEM erro
+ * — assim uma falha real continua virando uma mensagem acionável.
+ */
+export async function searchProfileMusic(query: string): Promise<MusicSearchResult[]> {
+  const q = query.trim();
+  if (q.length === 0) throw ApiError.validation('Informe o nome da música.');
+  if (q.length > 120) throw ApiError.validation('Busca muito longa.');
+
+  const encoded = encodeURIComponent(q);
+  const attempts = [
+    `https://music.youtube.com/search?q=${encoded}&sp=${encodeURIComponent(YTM_SONGS_FILTER)}`,
+    `https://music.youtube.com/search?q=${encoded}`,
+    `ytsearch${PROFILE_MUSIC_RESULTS}:${q}`,
+  ];
+
+  let lastError: ApiError | null = null;
+  for (const url of attempts) {
+    const { code, stdout, stderr } = await runYtdlp(searchArgs(url), SEARCH_TIMEOUT_MS);
+    const results = toResults(parseYtdlpJsonLines(stdout));
+    if (results.length > 0) return results;
+    if (code !== 0) {
+      // Guarda o erro para o caso de TODAS falharem; uma tentativa que falha
+      // não impede a próxima de dar certo.
+      lastError = ytdlpFailureToApiError(stderr);
+    }
+  }
+
+  // Nenhuma tentativa trouxe resultado. Se alguma deu erro, ele explica o
+  // motivo; se todas responderam vazio, aí sim é "não achei".
+  if (lastError) throw lastError;
+  return [];
 }
 
 export interface StoredProfileMusicFile {

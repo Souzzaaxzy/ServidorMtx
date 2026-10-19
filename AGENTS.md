@@ -227,6 +227,18 @@ PostgreSQL). Runs on Pterodactyl/Bronxys via `npm start` (self-provisions).
     (que também precisa EXECUTAR, não só existir) e o caminho vai ao yt-dlp
     via `--ffmpeg-location`. Assim o PATH do processo deixa de importar.
     `FFMPEG_PATH` sobrepõe.
+  - **Busca com FALLBACK em cadeia**: o catálogo "songs" é a primeira
+    tentativa (é o que remove vídeo aleatório), mas ele devolve ZERO para
+    buscas válidas como "Queen" — reproduzível, não é rate-limit. A ordem é:
+    (1) YouTube Music catálogo de músicas → (2) YouTube Music sem filtro →
+    (3) `ytsearch`. Sem o fallback, uma busca legítima virava "nenhuma música
+    encontrada".
+  - `--ignore-no-formats-error`: alguns itens do catálogo não expõem formato
+    baixável e o yt-dlp ABORTAVA o item ("Requested format is not available"),
+    derrubando a busca inteira. A busca só quer metadados.
+  - **Timeout da busca = 120s**: medido em ~6s num host x86, mas no Termux
+    (celular, cookies, runtime JS) passa de 45s com facilidade — o limite
+    curto derrubava buscas que só estavam lentas.
   - Os bytes baixados são validados (container ISOBMFF/`ftyp`) — HTML de erro
     do YouTube não vira "áudio".
   - O binário é resolvido uma vez (`YT_DLP_PATH` → `yt-dlp` → `python3 -m

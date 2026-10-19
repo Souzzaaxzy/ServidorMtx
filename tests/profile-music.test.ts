@@ -1133,3 +1133,78 @@ describe('anti-bot diagnosis', () => {
     ).toMatch(/FOI enviado ao YouTube/i);
   });
 });
+
+// ── Fallback da busca ─────────────────────────────────────────
+// O catálogo "songs" do YouTube Music devolve ZERO resultados para buscas
+// válidas (ex.: "Queen"), de forma reproduzível. Sem fallback, uma busca
+// legítima virava "nenhuma música encontrada" (bug relatado).
+describe('search fallback', () => {
+  const binDir = path.resolve(process.cwd(), "tests/fixtures/music-search-fallback");
+  const bin = path.join(binDir, "ytdlp-search.sh");
+  const callLog = path.join(binDir, "calls.log");
+
+  beforeAll(async () => {
+    await fs.mkdir(binDir, { recursive: true });
+    // Falha na URL com filtro "songs" e funciona na busca geral —
+    // exatamente o comportamento observado no YouTube Music.
+    await fs.writeFile(
+      bin,
+      `#!/usr/bin/env bash
+if [ "$1" = "--version" ]; then echo "2026.08.19"; exit 0; fi
+if [ "$1" = "--help" ]; then echo "  --js-runtimes RUNTIME"; exit 0; fi
+url=""
+for a in "$@"; do url="$a"; done
+echo "CALL: $url" >> "${callLog}"
+case "$url" in
+  *sp=EgWKAQIIAWoKEAoQAxAEEAkQBQ*)
+    exit 0;;
+esac
+echo "{\\"id\\":\\"abc123\\",\\"title\\":\\"Found Song - Found Artist\\",\\"uploader\\":\\"Found Artist\\",\\"duration\\":200}"
+exit 0
+`,
+      { mode: 0o755 },
+    );
+  });
+  afterAll(async () => {
+    delete process.env.YT_DLP_PATH;
+    await fs.rm(binDir, { recursive: true, force: true });
+    vi.resetModules();
+  });
+
+  it('falls back to the general search when the songs catalog is empty', async () => {
+    process.env.YT_DLP_PATH = bin;
+    await fs.rm(callLog, { force: true });
+    vi.resetModules();
+    const { searchProfileMusic } = await import(
+      '../src/modules/music/profile-music.ytdlp.js',
+    );
+    const results = await searchProfileMusic("Queen");
+    // Achou pelo fallback em vez de devolver vazio.
+    expect(results.length).toBeGreaterThan(0);
+    expect(results[0].title).toBe("Found Song");
+    // Tentou o catálogo de músicas PRIMEIRO (melhor curadoria).
+    const calls = await fs.readFile(callLog, "utf8");
+    expect(calls.split("\\n")[0]).toContain("music.youtube.com");
+  });
+
+  it('prefers the songs catalog when it DOES return results', async () => {
+    const goodBin = path.join(binDir, "ytdlp-good.sh");
+    await fs.writeFile(
+      goodBin,
+      `#!/usr/bin/env bash
+if [ "$1" = "--version" ]; then echo "2026.08.19"; exit 0; fi
+if [ "$1" = "--help" ]; then echo "  --js-runtimes RUNTIME"; exit 0; fi
+echo "{\\"id\\":\\"first\\",\\"title\\":\\"From Catalog Song\\",\\"uploader\\":\\"Cat Artist\\",\\"duration\\":100}"
+exit 0
+`,
+      { mode: 0o755 },
+    );
+    process.env.YT_DLP_PATH = goodBin;
+    vi.resetModules();
+    const { searchProfileMusic } = await import(
+      '../src/modules/music/profile-music.ytdlp.js',
+    );
+    const results = await searchProfileMusic("qualquer");
+    expect(results[0].title).toBe("From Catalog Song");
+  });
+});
