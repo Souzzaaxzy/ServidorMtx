@@ -256,6 +256,18 @@ PostgreSQL). Runs on Pterodactyl/Bronxys via `npm start` (self-provisions).
   **No Termux o yt-dlp NÃO é pacote do `pkg`** (o comando falha): é
   `pip install -U yt-dlp`. O ffmpeg, esse sim, vem do `pkg`. Sem as duas
   ferramentas a API sobe normal e só a música do perfil fica indisponível.
+- **Classificação de erro por ORDEM**: as checagens por NOME DE FERRAMENTA
+  (ffmpeg, deno) vêm ANTES das genéricas. O texto real do yt-dlp quando falta
+  o ffmpeg é "...but ffmpeg is not installed", que casa com `/not installed/`
+  — com a regra genérica primeiro a mensagem acusava o yt-dlp e mandava o
+  usuário consertar a coisa errada (bug real relatado).
+- **PATH do filho é AMPLIADO** (`augmentedPath()`): o yt-dlp procura o ffmpeg
+  NO PATH, e no Termux o `pkg` instala em `$PREFIX/bin`, que pode faltar no
+  PATH herdado pelo Node (serviço/wrapper) → "ffmpeg is not installed" mesmo
+  com o ffmpeg instalado. O spawn recebe `PATH` + `$PREFIX/bin` +
+  `/data/data/com.termux/files/usr/bin` + `/usr/local/bin` + `/usr/bin` etc.
+  O `start.sh`/`doctor` também checam se o ffmpeg EXECUTA (`ffmpeg -version`),
+  não só se existe: no Termux uma instalação parcial fica no PATH e não roda.
 - **Download real não foi validado neste ambiente**: o YouTube bloqueia (403
   anti-bot) IPs de datacenter para MÍDIA (a busca passa). A cadeia inteira
   (spawn → ffmpeg → validação de bytes → storage → `/static` → banco) foi

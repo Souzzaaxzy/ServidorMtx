@@ -337,6 +337,37 @@ export function toSearchResult(item: YtdlpJson): MusicSearchResult | null {
   };
 }
 
+/**
+ * PATH ampliado com os locais onde o ffmpeg/deno costumam ficar mas que nem
+ * sempre estão no PATH herdado pelo processo do servidor.
+ *
+ * Por que isso importa: o yt-dlp procura o ffmpeg NO PATH. No Termux o
+ * `pkg` instala em `$PREFIX/bin` (= /data/data/com.termux/files/usr/bin) e
+ * esse diretório pode faltar no PATH quando o Node é iniciado por um serviço
+ * ou por um wrapper — e aí o yt-dlp aborta com "ffmpeg is not installed"
+ * mesmo com o ffmpeg instalado. Deduplicamos para não inflar o PATH.
+ */
+function augmentedPath(): string {
+  const current = process.env.PATH ?? '';
+  const extra = [
+    process.env.PREFIX ? `${process.env.PREFIX}/bin` : '',
+    '/data/data/com.termux/files/usr/bin', // Termux
+    '/usr/local/bin',
+    '/usr/bin',
+    '/bin',
+    '/opt/homebrew/bin', // macOS (Apple Silicon)
+    '/usr/local/opt/ffmpeg/bin', // Homebrew (Intel)
+  ].filter((p) => p !== '');
+  const seen = new Set<string>();
+  return [...current.split(':'), ...extra]
+    .filter((p) => {
+      if (p === '' || seen.has(p)) return false;
+      seen.add(p);
+      return true;
+    })
+    .join(':');
+}
+
 /** Executa um processo com timeout e teto de saída; nunca usa shell. */
 function runProcess(
   command: string[],
@@ -346,7 +377,15 @@ function runProcess(
   return new Promise((resolve, reject) => {
     let child;
     try {
-      child = spawn(command[0], [...command.slice(1), ...args], { shell: false });
+      child = spawn(command[0], [...command.slice(1), ...args], {
+        shell: false,
+        // PATH AMPLIADO: o yt-dlp procura o ffmpeg no PATH do processo. No
+        // Termux o ffmpeg instalado pelo `pkg` fica em $PREFIX/bin, que pode
+        // não estar no PATH herdado pelo Node (ex.: iniciado por um serviço).
+        // Sem isso o yt-dlp aborta com "ffmpeg is not installed" mesmo com o
+        // ffmpeg presente — foi exatamente o caso relatado.
+        env: { ...process.env, PATH: augmentedPath() },
+      });
     } catch {
       reject(ApiError.internal('Busca de música indisponível neste servidor.'));
       return;
@@ -402,6 +441,29 @@ export function summarizeYtdlpOutput(stderr: string, maxLines = 8): string {
 export function ytdlpFailureToApiError(stderr: string): ApiError {
   const s = stderr.toLowerCase();
   const details = { ytdlp: summarizeYtdlpOutput(stderr) };
+
+  // ORDEM IMPORTA: estas checagens são por NOME DE FERRAMENTA e precisam vir
+  // antes das genéricas. O texto real do yt-dlp quando falta o ffmpeg é
+  // "...but ffmpeg is not installed", que casa com /not installed/ — se a
+  // regra genérica viesse primeiro, a mensagem acusaria o yt-dlp (que está
+  // instalado) e mandaria o usuário consertar a coisa errada.
+  if (/\bffmpeg\b/.test(s)) {
+    return ApiError.internal(
+      'O servidor precisa do ffmpeg para cortar o trecho (o yt-dlp baixa o '
+        + 'áudio, mas é o ffmpeg que recorta). No Termux: `pkg install ffmpeg`; '
+        + 'em Debian/Ubuntu: `apt install ffmpeg`.',
+      details,
+    );
+  }
+  if (/\bdeno\b|javascript runtime/.test(s)) {
+    return ApiError.internal(
+      'O yt-dlp não achou um runtime de JavaScript (o YouTube exige um). '
+        + 'Normalmente o servidor cai para o próprio Node automaticamente; se '
+        + 'esta mensagem apareceu, defina YT_JS_RUNTIME (ex.: node:/caminho/node). '
+        + 'No Termux, `pkg install deno` exige `pkg update && pkg upgrade` antes.',
+      details,
+    );
+  }
   if (/no module named|module not found|cannot find module/.test(s)) {
     return ApiError.internal(
       'O yt-dlp não está instalado neste servidor (o Python não achou o módulo). '
@@ -409,25 +471,17 @@ export function ytdlpFailureToApiError(stderr: string): ApiError {
       details,
     );
   }
-  if (/not installed|no such file|command not found|eacces|executable file not found/.test(s)) {
+  if (/yt-dlp: (command )?not found|yt-dlp.*no such file|not installed|command not found|eacces|executable file not found/.test(s)) {
     return ApiError.internal(
       'Busca de música indisponível: o yt-dlp não está instalado neste servidor. '
         + 'No Termux: `pip install -U yt-dlp`; em Debian/Ubuntu: `pip install yt-dlp`.',
       details,
     );
   }
-  if (/ffmpeg/.test(s)) {
-    return ApiError.internal(
-      'O servidor precisa do ffmpeg para baixar o trecho (instale com `apt install ffmpeg`).',
-      details,
-    );
-  }
-  if (/no supported javascript runtime|js runtime|ejs|deno/.test(s)) {
+  if (/no supported javascript runtime|js runtime|ejs/.test(s)) {
     return ApiError.internal(
       'O yt-dlp não achou um runtime de JavaScript (o YouTube exige um). '
-        + 'Normalmente o servidor cai para o próprio Node automaticamente; se '
-        + 'esta mensagem apareceu, defina YT_JS_RUNTIME (ex.: node:/caminho/node). '
-        + 'No Termux, `pkg install deno` exige `pkg update && pkg upgrade` antes.',
+        + 'Defina YT_JS_RUNTIME (ex.: node:/caminho/node).',
       details,
     );
   }

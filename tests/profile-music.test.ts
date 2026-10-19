@@ -638,6 +638,33 @@ describe('yt-dlp failure diagnostics', () => {
     expect(ytdlpFailureToApiError('ERROR: unable to extract nsig').message)
       .toMatch(/desatualizado/i);
   });
+
+  it('blames FFMPEG — not yt-dlp — when the real cause is ffmpeg', async () => {
+    // REGRESSÃO REAL: o texto do yt-dlp é "...but ffmpeg is not installed",
+    // que casa com /not installed/. Com a regra genérica primeiro, a mensagem
+    // acusava o yt-dlp (que estava instalado) e mandava consertar a coisa
+    // errada. A checagem por NOME DE FERRAMENTA tem de vir antes.
+    const { ytdlpFailureToApiError } = await import(
+      '../src/modules/music/profile-music.ytdlp.js'
+    );
+    const err = ytdlpFailureToApiError(
+      'ERROR: You have requested downloading the video partially, but ffmpeg is not installed. Aborting',
+    );
+    expect(err.message).toMatch(/ffmpeg/i);
+    expect(err.message).not.toMatch(/yt-dlp não está instalado/i);
+    // O diagnóstico real continua anexado.
+    expect(JSON.stringify(err.details)).toContain('ffmpeg is not installed');
+  });
+
+  it('still blames yt-dlp when yt-dlp really is the missing one', async () => {
+    const { ytdlpFailureToApiError } = await import(
+      '../src/modules/music/profile-music.ytdlp.js'
+    );
+    expect(ytdlpFailureToApiError('yt-dlp: not found').message)
+      .toMatch(/yt-dlp não está instalado/i);
+    expect(ytdlpFailureToApiError('python3: No module named yt_dlp').message)
+      .toMatch(/yt-dlp não está instalado/i);
+  });
 });
 
 // ── HTTP: set / get / clear ───────────────────────────────────

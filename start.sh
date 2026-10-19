@@ -172,7 +172,7 @@ ensure_media_tools() {
   elif python3 -m yt_dlp --version >/dev/null 2>&1; then
     need_ytdlp=0
   fi
-  command -v ffmpeg >/dev/null 2>&1 && need_ffmpeg=0
+  command -v ffmpeg >/dev/null 2>&1 && ffmpeg -version >/dev/null 2>&1 && need_ffmpeg=0
 
   [ "$need_ytdlp" = 0 ] && [ "$need_ffmpeg" = 0 ] && {
     ok "Música do perfil: yt-dlp e ffmpeg disponíveis"
