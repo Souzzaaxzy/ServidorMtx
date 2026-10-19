@@ -35,6 +35,10 @@ export const AUTHOR_SELECT = {
   id: true,
   nickname: true,
   avatarUrl: true,
+  // Included so every author/public-user payload can build a complete
+  // PublicUser (the profile screen renders the banner; feed/search/friends
+  // simply ignore it when not needed).
+  bannerUrl: true,
   ...NICKNAME_COSMETICS_SELECT,
 } as const;
 
@@ -104,18 +108,21 @@ export interface PublicUser extends NicknameCosmeticsPayload {
   id: string;
   nickname: string;
   avatarUrl: string | null;
+  /** Wide profile cover image. Null → the app draws its default banner. */
+  bannerUrl: string | null;
   bio: string;
   createdAt: string;
 }
 
 export function toPublicUser(
-  user: Pick<User, 'id' | 'nickname' | 'avatarUrl' | 'bio' | 'createdAt'> &
+  user: Pick<User, 'id' | 'nickname' | 'avatarUrl' | 'bannerUrl' | 'bio' | 'createdAt'> &
     WithNameColor,
 ): PublicUser {
   return {
     id: user.id,
     nickname: user.nickname,
     avatarUrl: user.avatarUrl,
+    bannerUrl: user.bannerUrl,
     bio: user.bio,
     createdAt: user.createdAt.toISOString(),
     ...nicknameCosmetics(user),

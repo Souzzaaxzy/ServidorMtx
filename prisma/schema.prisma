@@ -52,6 +52,10 @@ model User {
   recoveryCodeHash String
   role             String   @default("USER")
   avatarUrl        String?
+  // Wide profile banner (cover image) shown above the avatar on the profile
+  // screen. Null → no banner (the app draws its default gradient cover).
+  // Stored as a /static/... path or an absolute URL, same rules as avatarUrl.
+  bannerUrl        String?
   bio              String   @default("")
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt

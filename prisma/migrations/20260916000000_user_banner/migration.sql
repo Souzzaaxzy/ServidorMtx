@@ -1,0 +1,11 @@
+-- Profile banner (cover image) shown above the avatar on the profile screen.
+--
+-- A single nullable column: NULL means "no banner" and the app renders its
+-- default gradient cover. Non-null holds either a `/static/...` path served by
+-- this API or an absolute http(s) URL (S3/CDN) — the same rules already
+-- enforced for `avatarUrl` in the update-profile endpoint.
+--
+-- Plain ADD COLUMN (no table rebuild): existing rows keep every value and the
+-- new column simply reads as NULL, so this is safe and non-destructive on
+-- databases that already contain data.
+ALTER TABLE "users" ADD COLUMN "bannerUrl" TEXT;

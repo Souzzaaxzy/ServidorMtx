@@ -53,7 +53,12 @@ export async function getProfile(
 
 export async function updateProfile(
   userId: string,
-  input: Partial<{ nickname: string; bio: string | null; avatarUrl: string | null }>,
+  input: Partial<{
+    nickname: string;
+    bio: string | null;
+    avatarUrl: string | null;
+    bannerUrl: string | null;
+  }>,
 ): Promise<AuthUser> {
   try {
     const data: Record<string, unknown> = {};
@@ -63,6 +68,9 @@ export async function updateProfile(
     }
     if (input.bio !== undefined) data.bio = input.bio ?? '';
     if (input.avatarUrl !== undefined) data.avatarUrl = input.avatarUrl;
+    // `null` clears the banner (back to the default cover); `undefined`
+    // leaves it untouched — same contract as avatarUrl.
+    if (input.bannerUrl !== undefined) data.bannerUrl = input.bannerUrl;
 
     const user = await prisma.user.update({
       where: { id: userId },
