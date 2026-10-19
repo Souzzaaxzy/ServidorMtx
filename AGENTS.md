@@ -150,6 +150,23 @@ PostgreSQL). Runs on Pterodactyl/Bronxys via `npm start` (self-provisions).
   nem o arquivo — mensagens que a referenciam continuam renderizando.
   (`removeStickerRecent` em `sticker.service.ts`.)
 
+## Termux / Android
+- **Native Termux does NOT work** — Android is bionic, not glibc. Prisma ships
+  no Android binary (it computes `debian-openssl-*` and dlopen fails with
+  "is for EM_X86_64 (62) instead of EM_AARCH64 (183)"), and `argon2` prebuilds
+  are glibc. Do NOT try to "fix" this by patching Prisma.
+- **Supported path**: `termux/termux.sh` (Termux side: installs proot-distro +
+  Debian, injects the inner script) → `termux/proot-bootstrap.sh` (inside
+  Debian: apt openssl/ca-certificates/curl/git/xz-utils/python3/build-essential,
+  installs Node 22 official `linux-arm64` tarball into /usr/local, clones repo
+  to /root/ServidorMtx, `exec bash start.sh`). Inside proot `process.platform`
+  is `linux`, so Prisma/argon2 behave normally.
+- `schema.prisma` generator has `binaryTargets = ["native",
+  "linux-arm64-openssl-3.0.x"]` → `prisma generate` also emits the ARM64 glibc
+  engine. Verified: engine ELF e_machine = 183 (AARCH64). Harmless on x64.
+- Node 22 resolved dynamically from https://nodejs.org/dist/index.json (never
+  hardcode a patch version).
+
 ## Conventions / gotchas
 - `npm start` never depends on `.env` or `.env.example` in production — panel
   injects vars via process.env. `.env` is dev-only convenience (loaded with

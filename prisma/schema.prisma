@@ -15,6 +15,12 @@
 generator client {
   provider = "prisma-client-js"
   output   = "../src/generated"
+  // "native" = build/host platform (x64 containers, VPS, Pterodactyl).
+  // linux-arm64-openssl-3.0.x = ARM64 glibc (Termux via proot-distro Debian,
+  // ARM VPS, Raspberry Pi OS 64-bit). Prisma has NO Android/bionic binary, so
+  // native Termux cannot work — it must run inside a glibc userland (see
+  // termux/termux.sh). This extra target is harmless elsewhere.
+  binaryTargets = ["native", "linux-arm64-openssl-3.0.x"]
 }
 
 datasource db {

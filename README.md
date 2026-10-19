@@ -148,6 +148,58 @@ Diferença em relação ao `scripts/start.sh` (Pterodactyl/Bronxys): aquele é o
 script do `npm start` e depende de `node_modules` já instalado no volume; o
 `start.sh` da raiz é autossuficiente e é o ponto de entrada para a Hostsquare.
 
+## Termux (Android) — rodar no celular
+
+O Termux **nativo não funciona** com este projeto, e não é culpa do código:
+o Android usa **bionic**, não glibc. O Prisma **não publica binário para
+Android** ([prisma#9968](https://github.com/prisma/prisma/issues/9968)) e o
+`argon2` é compilado para glibc — os dois falham no Termux com
+`dlopen ... is for EM_X86_64 (62) instead of EM_AARCH64 (183)`.
+
+A solução confiável é rodar a API dentro de um **userland glibc** com
+[`proot-distro`](https://github.com/termux/proot-distro). Um comando faz tudo:
+
+```bash
+pkg update && pkg install curl -y
+bash termux/termux.sh
+```
+
+Ou, sem baixar o repositório antes:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Souzzaaxzy/ServidorMtx/main/termux/termux.sh | bash
+```
+
+O `termux/termux.sh` (roda no Termux) instala o `proot-distro`, instala um
+Debian arm64 e executa o `termux/proot-bootstrap.sh` **dentro** do Debian, que:
+
+1. instala via apt: `openssl`, `ca-certificates`, `curl`, `git`, `xz-utils`,
+   `python3`, `make`, `g++` (o OpenSSL é exigido pelo engine do Prisma);
+2. instala o **Node 22 oficial** (tarball `linux-arm64`) em `/usr/local` —
+   evita o Node antigo do apt e o repositório Nodesource (sem build arm64);
+3. clona/atualiza o repositório em `/root/ServidorMtx`;
+4. roda o `start.sh` (instala deps, gera o Prisma, compila, migra, sobe).
+
+O `schema.prisma` declara `binaryTargets = ["native", "linux-arm64-openssl-3.0.x"]`
+justamente para baixar o engine ARM64 glibc que o proot usa.
+
+Comandos do dia a dia (dentro do Debian):
+
+```bash
+proot-distro login debian                      # entra no Debian
+cd /root/ServidorMtx && bash start.sh          # sobe a API
+# ou, em um comando só, de dentro do Termux:
+proot-distro login debian --shared-tmp -- bash -lc 'cd /root/ServidorMtx && bash start.sh'
+```
+
+Acessar do próprio celular: a API escuta em `0.0.0.0:3000` — abra
+`http://127.0.0.1:3000/health` no navegador do Android. Para o **MatrixApp**
+em outro aparelho, use o **IP do celular na Wi-Fi** (`http://IP-DO-CELULAR:3000`).
+
+Limitações do celular (não é problema do projeto): o Android pode matar
+processos em segundo plano (desative a otimização de bateria para o Termux) e
+manter o servidor 24/7 num telefone consome bateria/dados.
+
 ## Pterodactyl / Bronxys (hospedagem em painel)
 
 O servidor roda em painéis Pterodactyl **sem Docker e sem banco externo** —
