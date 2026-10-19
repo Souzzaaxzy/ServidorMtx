@@ -37,6 +37,10 @@ PostgreSQL). Runs on Pterodactyl/Bronxys via `npm start` (self-provisions).
 - test: `npm test` (213 tests, vitest)
 - lint: `npm run lint`
 - dev: `npm run dev`
+- **start (Hostsquare)**: `bash start.sh` (root, self-contained: installs deps,
+  prisma generate, build, migrate, seed-if-empty, exec server). `--install` =
+  install/build only, no server. Use this as the panel Start Command; it does NOT
+  require a pre-populated node_modules (unlike scripts/start.sh).
 - **start (production)**: `npm start` → `scripts/start.sh` (self-provisions:
   diagnostics → .env optional → deps → data/ dir → SQLite → prisma generate →
   validate → migrate deploy → build → seed (if empty) → `exec node dist/src/app.js`)

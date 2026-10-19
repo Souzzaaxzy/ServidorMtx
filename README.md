@@ -114,6 +114,40 @@ npm run db:seed
 npm run dev
 ```
 
+## Hostsquare (hospedagem em painel — script único)
+
+A Hostsquare é uma hospedagem de painel "chata": ela só deixa você definir um
+**Start Command** e não roda `npm install`/build sozinha. Por isso existe o
+**`start.sh` na raiz do projeto**, que faz TUDO em um único comando
+(instala dependências, gera o Prisma, compila, cria/migra o SQLite, popula se
+vazio e sobe o servidor).
+
+No painel da Hostsquare:
+
+- **Start Command**: `bash start.sh`
+- **Install / Build Command** (se o painel pedir): `bash start.sh --install`
+
+Na primeira vez (ou se o painel tiver apenas o botão de start), o
+`bash start.sh` já resolve tudo sozinho — ele é idempotente e pula o que já
+está pronto nos reinícios.
+
+Variáveis (aba Variables/Environment):
+
+| Variável | Obrigatória | Observação |
+|----------|-------------|------------|
+| `JWT_SECRET` | não* | *Se ausente, o script gera um segredo persistente em `data/.jwt_secret`. Recomendado definir no painel (`openssl rand -hex 32`). |
+| `PORT` | não | Preenchida automaticamente pelo painel. O script também aceita `SERVER_PORT`. |
+| `NODE_ENV` | não | Use `production`. |
+| `CORS_ORIGIN` | não | Default `*`. |
+
+O banco é SQLite local (`data/matrix.db`) — **não** configure `DATABASE_URL`
+nem PostgreSQL. `data/` precisa ser um diretório **persistente** (fora do
+deploy) para os dados sobreviverem a reinícios.
+
+Diferença em relação ao `scripts/start.sh` (Pterodactyl/Bronxys): aquele é o
+script do `npm start` e depende de `node_modules` já instalado no volume; o
+`start.sh` da raiz é autossuficiente e é o ponto de entrada para a Hostsquare.
+
 ## Pterodactyl / Bronxys (hospedagem em painel)
 
 O servidor roda em painéis Pterodactyl **sem Docker e sem banco externo** —
