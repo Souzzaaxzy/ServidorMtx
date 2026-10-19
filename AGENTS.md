@@ -251,6 +251,14 @@ PostgreSQL). Runs on Pterodactyl/Bronxys via `npm start` (self-provisions).
   escreve um jar temporário `chmod 600` em `data/.yt-cookies-*` por execução e
   o APAGA em seguida (um cookie jar é credencial: não pode sobrar no disco).
   É o que libera o bloqueio de IP em VPS/datacenter.
+- **Diagnóstico do anti-bot**: "configurei o secret e mesmo assim bloqueou" é
+  ambíguo, então `cookieStatus()` classifica o valor SEM o revelar (`absent` /
+  `file` / `raw-jar` / `base64-jar` / `malformed`) e a mensagem do 403 diz qual
+  é o caso — cada um tem uma correção diferente. O banner do `start.sh` e o
+  `doctor` também mostram o estado (e o doctor detecta valor MALFORMADO, que é
+  a falha típica de um secret colado truncado). **A variável precisa estar
+  definida nas variáveis DO SERVIDOR (não no repositório) e o processo precisa
+  reiniciar** — um secret criado só no repositório não chega ao runtime.
 - **Runtime de JavaScript (o YouTube EXIGE um)**: o yt-dlp só habilita `deno`
   por padrão, e no Termux `deno` não é pacote padrão — enquanto o **Node está
   sempre presente** (a API roda nele). O código escolhe, nesta ordem:

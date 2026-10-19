@@ -1067,3 +1067,69 @@ head -c 4096 /dev/zero >> "$out"
     vi.resetModules();
   });
 });
+
+// ── Diagnóstico do bloqueio anti-bot ──────────────────────────
+// "Configurei o secret e mesmo assim bloqueou" é AMBÍGUO: pode ser que o
+// servidor não recebeu o valor, que recebeu truncado, ou que o YouTube
+// rejeitou um cookie válido (expirado). Cada caso tem uma correção diferente,
+// então a mensagem precisa dizer QUAL é.
+describe('anti-bot diagnosis', () => {
+  afterEach(() => {
+    delete process.env.YT_COOKIES;
+    delete process.env.YT_COOKIES_FILE;
+    vi.resetModules();
+  });
+
+  it('classifies a valid base64 jar', async () => {
+    process.env.YT_COOKIES = Buffer.from(
+      '# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tTRUE\t9\tSID\tx\n',
+      'utf8',
+    ).toString('base64');
+    vi.resetModules();
+    const { cookieStatus } = await import(
+      '../src/modules/music/profile-music.ytdlp.js',
+    );
+    expect(cookieStatus()).toBe('base64-jar');
+  });
+
+  it('flags a MALFORMED value (the truncated-secret case)', async () => {
+    process.env.YT_COOKIES = 'not-base64-and-not-a-jar!!';
+    vi.resetModules();
+    const { cookieStatus } = await import(
+      '../src/modules/music/profile-music.ytdlp.js',
+    );
+    expect(cookieStatus()).toBe('malformed');
+  });
+
+  it('reports absent when nothing is configured', async () => {
+    vi.resetModules();
+    const { cookieStatus } = await import(
+      '../src/modules/music/profile-music.ytdlp.js',
+    );
+    expect(cookieStatus()).toBe('absent');
+  });
+
+  it('the 403 message tells WHICH cookie case it is', async () => {
+    const { ytdlpFailureToApiError } = await import(
+      '../src/modules/music/profile-music.ytdlp.js',
+    );
+    delete process.env.YT_COOKIES;
+    delete process.env.YT_COOKIES_FILE;
+    expect(
+      ytdlpFailureToApiError('ERROR: HTTP Error 403: Forbidden').message,
+    ).toMatch(/Nenhum cookie chegou/i);
+
+    process.env.YT_COOKIES = 'not-base64-and-not-a-jar!!';
+    expect(
+      ytdlpFailureToApiError('ERROR: HTTP Error 403: Forbidden').message,
+    ).toMatch(/MALFORMADO/i);
+
+    process.env.YT_COOKIES = Buffer.from(
+      '# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tTRUE\t9\tSID\tx\n',
+      'utf8',
+    ).toString('base64');
+    expect(
+      ytdlpFailureToApiError('ERROR: HTTP Error 403: Forbidden').message,
+    ).toMatch(/FOI enviado ao YouTube/i);
+  });
+});

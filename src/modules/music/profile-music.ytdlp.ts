@@ -561,11 +561,24 @@ export function ytdlpFailureToApiError(stderr: string): ApiError {
     );
   }
   if (/sign in|confirm you.{0,3}re not a bot|cookies|bot\b|429|too many requests|403|forbidden/.test(s)) {
+    // A mensagem diz QUAL é o estado do cookie: "configurei o secret e mesmo
+    // assim bloqueou" é ambíguo entre (a) o servidor não recebeu o valor,
+    // (b) recebeu malformado e (c) o YouTube rejeitou um cookie válido (aí o
+    // cookie está expirado ou é de uma conta sem acesso). Sem isso o usuário
+    // fica tentando as três às cegas.
+    const cookie = cookieStatus();
+    const hint = cookie === 'absent'
+      ? 'Nenhum cookie chegou ao servidor — confira se YT_COOKIES está definido '
+        + 'NAS VARIÁVEIS DO SERVIDOR (não só no repositório) e reinicie.'
+      : cookie === 'malformed'
+        ? 'O YT_COOKIES chegou mas está MALFORMADO (não decodifica como base64 '
+          + 'de um cookie jar). Recopie o valor inteiro.'
+        : 'O cookie FOI enviado ao YouTube, então ele foi rejeitado: exporte um '
+          + 'cookies.txt NOVO, logado no youtube.com, e confirme que o arquivo '
+          + 'tem linhas com TAB (formato Netscape).';
     return ApiError.internal(
-      'O YouTube bloqueou o servidor (verificação anti-bot). Configure os cookies '
-        + 'do YouTube para liberar (YT_COOKIES / YT_COOKIES_FILE) ou use uma rede '
-        + 'residencial/VPN.',
-      details,
+      'O YouTube bloqueou o servidor (verificação anti-bot). ' + hint,
+      { ...details, cookie },
     );
   }
   if (/nsig|signature|unable to extract|failed to extract|player response|precondition/.test(s)) {
@@ -605,6 +618,61 @@ async function writeTempCookieFile(): Promise<string | null> {
   }
   await fs.writeFile(file, content, { mode: 0o600 });
   return file;
+}
+
+/**
+ * Classifica o YT_COOKIES SEM revelar o valor (é credencial).
+ *
+ * Existe porque "configurei o secret e mesmo assim bloqueou" não dizia se o
+ * servidor tinha recebido o valor, se ele estava truncado/malformado ou se o
+ * YouTube rejeitou um cookie válido. Cada caso tem uma correção diferente.
+ */
+export type CookieStatus =
+  | 'absent'
+  | 'file'
+  | 'raw-jar'
+  | 'base64-jar'
+  | 'malformed';
+
+export function cookieStatus(): CookieStatus {
+  const raw = (process.env.YT_COOKIES ?? '').trim();
+  if (raw === '') {
+    const file = (process.env.YT_COOKIES_FILE ?? '').trim();
+    return file !== '' ? 'file' : 'absent';
+  }
+  if (/^#\s*(Netscape|HTTP Cookie File)/i.test(raw)) return 'raw-jar';
+  try {
+    const decoded = Buffer.from(raw, 'base64').toString('utf8');
+    if (decoded.includes('\t')) {
+      // Um jar de verdade tem a linha de cabeçalho OU várias linhas com TAB.
+      return /^#\s*(Netscape|HTTP Cookie File)/i.test(decoded) ||
+        decoded.split('\n').filter((l) => l.includes('\t')).length >= 1
+        ? 'base64-jar'
+        : 'malformed';
+    }
+  } catch {
+    // Cai no malformed abaixo.
+  }
+  return 'malformed';
+}
+
+/** Descrição do cookie para o log — nunca o valor. */
+export function cookieSummary(): string {
+  const status = cookieStatus();
+  switch (status) {
+    case 'absent':
+      return 'nenhum cookie configurado';
+    case 'file':
+      return 'YT_COOKIES_FILE configurado';
+    case 'raw-jar':
+      return 'YT_COOKIES recebido (formato Netscape, texto cru)';
+    case 'base64-jar':
+      return 'YT_COOKIES recebido (base64 decodificado com sucesso)';
+    case 'malformed':
+      return 'YT_COOKIES presente mas MALFORMADO (não é base64 de um cookie '
+        + 'jar nem o formato Netscape) — verifique se o valor foi colado '
+        + 'inteiro e sem truncamento';
+  }
 }
 
 /**

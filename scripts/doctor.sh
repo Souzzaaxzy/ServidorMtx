@@ -106,7 +106,21 @@ fi
 # Cookies do YouTube: é o que libera o bloqueio anti-bot em IP de servidor.
 # Nunca imprimir o valor — só se está configurado.
 if [ -n "${YT_COOKIES:-}" ]; then
-  ok "YT_COOKIES configurado (bloqueio anti-bot do YouTube liberado)"
+  # Checa o FORMATO sem revelar o valor: um base64 truncado é a falha mais
+  # comum ao colar um secret, e ele passaria como "configurado" enganando.
+  if node -e "
+const raw = (process.env.YT_COOKIES || '').trim();
+const looksJar = (t) => /^#\s*(Netscape|HTTP Cookie File)/i.test(t) || t.split('\n').some((l) => l.includes('\t'));
+if (looksJar(raw)) process.exit(0);
+try {
+  const d = Buffer.from(raw, 'base64').toString('utf8');
+  process.exit(looksJar(d) ? 0 : 1);
+} catch { process.exit(1); }
+" 2>/dev/null; then
+    ok "YT_COOKIES configurado (bloqueio anti-bot do YouTube liberado)"
+  else
+    warn "YT_COOKIES presente mas MALFORMADO — não decodifica como cookie jar (recopie o valor)"
+  fi
 elif [ -n "${YT_COOKIES_FILE:-}" ]; then
   if [ -f "${YT_COOKIES_FILE}" ]; then
     ok "YT_COOKIES_FILE configurado (${YT_COOKIES_FILE})"

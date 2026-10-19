@@ -80,6 +80,15 @@ echo "  PORT           : ${PORT:-${SERVER_PORT:-<não configurada, usará 3000>}
 echo "  Database       : SQLite ($DB_FILE)"
 echo "  Database file  : $([ -f "$DB_FILE" ] && echo 'presente ✓' || echo 'será criado na 1ª inicialização')"
 echo "  JWT_SECRET     : $([ -n "${JWT_SECRET:-}" ] && echo 'configurado ✓' || echo 'NÃO CONFIGURADO (será gerado)')"
+# YT_COOKIES: mostra só o ESTADO (o valor é credencial). É a primeira coisa a
+# conferir quando o YouTube bloqueia por anti-bot.
+if [ -n "${YT_COOKIES:-}" ]; then
+  echo "  YT_COOKIES     : presente ✓ (valor não é exibido)"
+elif [ -n "${YT_COOKIES_FILE:-}" ]; then
+  echo "  YT_COOKIES     : via arquivo (${YT_COOKIES_FILE})"
+else
+  echo "  YT_COOKIES     : ausente (o YouTube pode bloquear por anti-bot)"
+fi
 echo "  NODE_ENV       : ${NODE_ENV:-<vazio>}"
 echo "═══════════════════════════════════════════════════════════════"
 
