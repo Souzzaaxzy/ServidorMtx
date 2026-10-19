@@ -48,26 +48,51 @@ function ytdlpCandidates(): string[][] {
   if (fromEnv) candidates.push([fromEnv]);
   candidates.push([YTDLP_BIN]);
   candidates.push(['python3', '-m', 'yt_dlp']);
-  return candidates;
+  // Sem duplicatas: quando YT_DLP_PATH está definido, ele apareceria duas
+  // vezes (uma como env, outra como YTDLP_BIN).
+  const seen = new Set<string>();
+  return candidates.filter((c) => {
+    const key = c.join('\u0000');
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
-/** Sonda qual forma do yt-dlp existe neste host (uma vez por configuração). */
+/**
+ * Sonda qual forma do yt-dlp FUNCIONA neste host (uma vez por configuração).
+ *
+ * "Existe" não basta: `python3 -m yt_dlp` existe em qualquer host com Python
+ * e falha com "No module named yt_dlp" quando o pacote não está instalado.
+ * Aceitar esse candidato fazia a busca rodar um comando quebrado e cair no
+ * erro genérico — foi exatamente o caso relatado no Termux. Por isso exigimos
+ * `code === 0` e guardamos a falha real para diagnóstico.
+ */
 async function resolveYtdlpCommand(): Promise<string[]> {
   const candidates = ytdlpCandidates();
   const key = JSON.stringify(candidates);
   if (resolvedCommand && resolvedForCandidates === key) return resolvedCommand;
+
+  let lastFailure = '(sem saída)';
   for (const candidate of candidates) {
     try {
-      await runProcess(candidate, ['--version'], 20_000);
-      resolvedCommand = candidate;
-      resolvedForCandidates = key;
-      return candidate;
-    } catch {
+      const result = await runProcess(candidate, ['--version'], 20_000);
+      if (result.code === 0) {
+        resolvedCommand = candidate;
+        resolvedForCandidates = key;
+        return candidate;
+      }
+      lastFailure = summarizeYtdlpOutput(result.stderr || result.stdout);
+    } catch (err) {
       // Não existe / não executa — tenta a próxima forma.
+      lastFailure = err instanceof Error ? err.message : String(err);
     }
   }
   throw ApiError.internal(
-    'Busca de música indisponível neste servidor (yt-dlp não instalado).',
+    'Busca de música indisponível: o yt-dlp não está instalado neste servidor. '
+      + 'No Termux: `pip install -U yt-dlp`; em Debian/Ubuntu: `pip install yt-dlp`. '
+      + 'Você também pode apontar o binário com YT_DLP_PATH.',
+    { ytdlp: lastFailure },
   );
 }
 
@@ -377,10 +402,17 @@ export function summarizeYtdlpOutput(stderr: string, maxLines = 8): string {
 export function ytdlpFailureToApiError(stderr: string): ApiError {
   const s = stderr.toLowerCase();
   const details = { ytdlp: summarizeYtdlpOutput(stderr) };
+  if (/no module named|module not found|cannot find module/.test(s)) {
+    return ApiError.internal(
+      'O yt-dlp não está instalado neste servidor (o Python não achou o módulo). '
+        + 'No Termux: `pip install -U yt-dlp`; em Debian/Ubuntu: `pip install yt-dlp`.',
+      details,
+    );
+  }
   if (/not installed|no such file|command not found|eacces|executable file not found/.test(s)) {
     return ApiError.internal(
       'Busca de música indisponível: o yt-dlp não está instalado neste servidor. '
-        + 'Instale com `pip install yt-dlp` (ou defina YT_DLP_PATH).',
+        + 'No Termux: `pip install -U yt-dlp`; em Debian/Ubuntu: `pip install yt-dlp`.',
       details,
     );
   }
@@ -393,8 +425,9 @@ export function ytdlpFailureToApiError(stderr: string): ApiError {
   if (/no supported javascript runtime|js runtime|ejs|deno/.test(s)) {
     return ApiError.internal(
       'O yt-dlp não achou um runtime de JavaScript (o YouTube exige um). '
-        + 'No Termux: `pkg install deno` (ou `node`). Sem isso o yt-dlp não '
-        + 'consegue nem buscar nem baixar.',
+        + 'Normalmente o servidor cai para o próprio Node automaticamente; se '
+        + 'esta mensagem apareceu, defina YT_JS_RUNTIME (ex.: node:/caminho/node). '
+        + 'No Termux, `pkg install deno` exige `pkg update && pkg upgrade` antes.',
       details,
     );
   }

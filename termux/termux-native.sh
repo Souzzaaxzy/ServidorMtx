@@ -63,10 +63,16 @@ pkg update -y >/dev/null 2>&1 || warn "pkg update falhou (seguindo)"
 # responde com uma mensagem amigável.
 pkg install -y git openssl ca-certificates python make clang >/dev/null 2>&1 \
   || warn "Alguns pacotes podem não ter sido instalados (seguindo)"
-pkg install -y yt-dlp ffmpeg >/dev/null 2>&1 \
-  || warn "yt-dlp/ffmpeg não instalados — a música do perfil ficará indisponível (pkg install yt-dlp ffmpeg)"
+# ffmpeg vem do pkg; o yt-dlp NÃO é pacote do pkg no Termux — a forma correta
+# é instalar via pip (tentar pelo pkg falha silenciosamente).
+pkg install -y ffmpeg >/dev/null 2>&1 \
+  || warn "ffmpeg não instalado — o download do trecho falhará (pkg install ffmpeg)"
+python3 -m pip install -U --break-system-packages yt-dlp >/dev/null 2>&1 \
+  || warn "yt-dlp não instalado — a música do perfil ficará indisponível (pip install -U yt-dlp)"
 # O YouTube exige um runtime de JavaScript para o yt-dlp. O código já cai para
-# o Node do próprio servidor, então isto é opcional (só melhora a extração).
+# o Node do próprio servidor, então isto é opcional. O deno do Termux depende
+# do libsqlite atualizado — sem `pkg upgrade` antes ele instala e não roda.
+pkg update -y >/dev/null 2>&1 && pkg upgrade -y >/dev/null 2>&1
 pkg install -y deno >/dev/null 2>&1 \
   || warn "deno não instalado (opcional: o servidor usa o próprio Node como runtime JS)"
 ok "Pacotes verificados"

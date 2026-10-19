@@ -76,7 +76,7 @@ fi
 if [ -n "$YTDLP_FOUND" ]; then
   ok "yt-dlp: $YTDLP_FOUND"
 else
-  warn "yt-dlp ausente — música do perfil indisponível (pip install yt-dlp)"
+  warn "yt-dlp ausente — música do perfil indisponível (Termux: pip install -U yt-dlp; Debian: pip install yt-dlp)"
 fi
 if command -v ffmpeg >/dev/null 2>&1; then
   ok "ffmpeg presente (necessário para cortar o trecho)"
@@ -92,7 +92,7 @@ elif command -v deno >/dev/null 2>&1; then
 elif command -v node >/dev/null 2>&1; then
   ok "Runtime JS: node ($(command -v node)) — fallback do servidor"
 else
-  warn "Sem runtime de JavaScript — o YouTube não responde ao yt-dlp (pkg install deno)"
+  warn "Sem runtime de JavaScript — defina YT_JS_RUNTIME (o Node do servidor serve)"
 fi
 # Cookies do YouTube: é o que libera o bloqueio anti-bot em IP de servidor.
 # Nunca imprimir o valor — só se está configurado.

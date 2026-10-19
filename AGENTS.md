@@ -249,6 +249,13 @@ PostgreSQL). Runs on Pterodactyl/Bronxys via `npm start` (self-provisions).
   saída REAL do yt-dlp (últimas linhas), e o handler global loga o `details`.
   Sem isso um erro não classificado virava "tente novamente" e não havia como
   descobrir a causa — foi exatamente o que aconteceu no Termux.
+- **Instalação das ferramentas**: `start.sh` (o boot real) instala yt-dlp +
+  ffmpeg quando faltam e RECONFERE o resultado — antes isso só existia no
+  instalador do Termux, então quem fazia `git pull && start.sh` nunca recebia
+  as ferramentas (foi assim que o recurso ficou indisponível em produção).
+  **No Termux o yt-dlp NÃO é pacote do `pkg`** (o comando falha): é
+  `pip install -U yt-dlp`. O ffmpeg, esse sim, vem do `pkg`. Sem as duas
+  ferramentas a API sobe normal e só a música do perfil fica indisponível.
 - **Download real não foi validado neste ambiente**: o YouTube bloqueia (403
   anti-bot) IPs de datacenter para MÍDIA (a busca passa). A cadeia inteira
   (spawn → ffmpeg → validação de bytes → storage → `/static` → banco) foi

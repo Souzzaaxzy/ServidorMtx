@@ -148,16 +148,36 @@ describe('GET /api/music/profile/search', () => {
     expect(res.statusCode).toBe(400);
   });
 
-  it('returns an empty list (never a crash) when the source finds nothing', async () => {
+  it('returns an empty list when the source genuinely finds nothing', async () => {
+    // Deterministic: a yt-dlp that SUCCEEDS (exit 0) but prints no results.
+    // This is the only case that may legitimately be an empty list — a
+    // FAILURE must raise instead (covered in the regression test below).
     const user = await createAndLoginUser(server, { nickname: 'music_none' });
-    // A query with no matches must be an empty list, never an unhandled 500.
-    const res = await server.inject({
-      method: 'GET',
-      url: '/api/music/profile/search?q=zzqqxxwwvvbbnnaassdd',
-      headers: { authorization: `Bearer ${user.accessToken}` },
-    });
-    expect(res.statusCode).toBe(200);
-    expect(Array.isArray(JSON.parse(res.payload).results)).toBe(true);
+    const binDir = path.resolve(process.cwd(), 'tests/fixtures/music-bin-empty');
+    await fs.mkdir(binDir, { recursive: true });
+    const bin = path.join(binDir, 'ytdlp-empty.sh');
+    await fs.writeFile(
+      bin,
+      `#!/usr/bin/env bash
+if [ "$1" = "--version" ]; then echo "2026.08.19"; exit 0; fi
+if [ "$1" = "--help" ]; then echo "  --js-runtimes RUNTIME[:PATH]"; exit 0; fi
+exit 0
+`,
+      { mode: 0o755 },
+    );
+    process.env.YT_DLP_PATH = bin;
+    try {
+      const res = await server.inject({
+        method: 'GET',
+        url: '/api/music/profile/search?q=zzqqxxwwvvbbnnaassdd',
+        headers: { authorization: `Bearer ${user.accessToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.payload).results).toEqual([]);
+    } finally {
+      delete process.env.YT_DLP_PATH;
+      await fs.rm(binDir, { recursive: true, force: true });
+    }
   });
 
   it('surfaces the REAL reason instead of a misleading "not found"', async () => {
@@ -460,6 +480,126 @@ exit 1
   });
 });
 
+// ── Instalação das ferramentas (start.sh) ─────────────────────
+// O `start.sh` é o que roda de verdade no servidor. Antes, a instalação do
+// yt-dlp só existia no instalador do Termux — quem fazia `git pull &&
+// start.sh` nunca recebia as ferramentas, e foi assim que o recurso ficou
+// indisponível. Além disso o comando estava ERRADO: no Termux o yt-dlp não é
+// pacote do `pkg` (é `pip install -U yt-dlp`).
+describe('start.sh media tools step', () => {
+  const binDir = path.resolve(process.cwd(), 'tests/fixtures/media-tools-bin');
+  const marker = path.join(binDir, 'installed.marker');
+  const pipLog = path.join(binDir, 'pip-calls.log');
+
+  /** Extracts the ensure_media_tools function body from start.sh. */
+  async function loadFn(): Promise<string> {
+    const src = await fs.readFile(
+      path.resolve(process.cwd(), 'start.sh'),
+      'utf8',
+    );
+    const match = /^ensure_media_tools\(\) \{[\s\S]*?^\}/m.exec(src);
+    if (!match) throw new Error('ensure_media_tools não encontrada em start.sh');
+    return match[0];
+  }
+
+  beforeAll(async () => {
+    await fs.mkdir(binDir, { recursive: true });
+  });
+  afterAll(async () => {
+    await fs.rm(binDir, { recursive: true, force: true });
+  });
+
+  it('the Termux installer uses pip for yt-dlp, never `pkg install yt-dlp`', async () => {
+    // `pkg install yt-dlp` does not exist in Termux; using it was the bug.
+    const script = await fs.readFile(
+      path.resolve(process.cwd(), 'termux/termux-native.sh'),
+      'utf8',
+    );
+    expect(script).not.toMatch(/pkg install[^\n]*\byt-dlp\b/);
+    expect(script).toMatch(/pip install -U[^\n]*yt-dlp/);
+  });
+
+  it('start.sh installs yt-dlp when missing and re-checks the result', async () => {
+    // A stub python3: `-m yt_dlp` fails until the "install" creates a marker.
+    await fs.writeFile(
+      path.join(binDir, 'python3'),
+      `#!/usr/bin/env bash
+if [ "$1" = "-m" ] && [ "$2" = "yt_dlp" ]; then
+  if [ -f "${marker}" ]; then echo "2026.08.19"; exit 0; fi
+  echo "No module named yt_dlp" >&2; exit 1
+fi
+if [ "$1" = "-m" ] && [ "$2" = "pip" ]; then
+  echo "PIP: $*" >> "${pipLog}"
+  touch "${marker}"
+  exit 0
+fi
+exit 1
+`,
+      { mode: 0o755 },
+    );
+    await fs.rm(marker, { force: true });
+    await fs.rm(pipLog, { force: true });
+
+    const fn = await loadFn();
+    // Run the function in a real bash, with the stub first on PATH and no
+    // yt-dlp visible.
+    const script = `
+set -u
+export PATH="${binDir}:$(echo "$PATH" | tr ':' '\\n' | grep -v '\\.local/bin' | paste -sd:)"
+ok() { echo "OK:$*"; }
+warn() { echo "WARN:$*"; }
+log() { echo "LOG:$*"; }
+die() { echo "DIE:$*"; exit 1; }
+matrix_is_termux() { return 1; }
+${fn}
+ensure_media_tools
+`;
+    const { execFileSync } = await import('node:child_process');
+    const out = execFileSync('bash', ['-c', script], {
+      cwd: process.cwd(),
+      encoding: 'utf8',
+    });
+
+    // The install was attempted through pip…
+    const calls = await fs.readFile(pipLog, 'utf8');
+    expect(calls).toMatch(/pip install -U --break-system-packages yt-dlp/);
+    // …and the FINAL state is reported from a real re-check, not assumed.
+    expect(out).toContain('OK:Música do perfil: yt-dlp disponível');
+    expect(out).not.toContain('indisponível: yt-dlp ausente');
+  });
+
+  it('reports clearly when the install fails (never silent)', async () => {
+    // python3 that always fails and a pip that does nothing: the step must
+    // SAY the feature is unavailable instead of pretending it worked.
+    await fs.writeFile(
+      path.join(binDir, 'python3'),
+      `#!/usr/bin/env bash
+echo "No module named yt_dlp" >&2
+exit 1
+`,
+      { mode: 0o755 },
+    );
+    const fn = await loadFn();
+    const script = `
+set -u
+export PATH="${binDir}:$(echo "$PATH" | tr ':' '\\n' | grep -v '\\.local/bin' | paste -sd:)"
+ok() { echo "OK:$*"; }
+warn() { echo "WARN:$*"; }
+log() { echo "LOG:$*"; }
+die() { echo "DIE:$*"; exit 1; }
+matrix_is_termux() { return 1; }
+${fn}
+ensure_media_tools
+`;
+    const { execFileSync } = await import('node:child_process');
+    const out = execFileSync('bash', ['-c', script], {
+      cwd: process.cwd(),
+      encoding: 'utf8',
+    });
+    expect(out).toContain('yt-dlp ausente');
+  });
+});
+
 // ── Diagnóstico: o erro real precisa aparecer ─────────────────
 describe('yt-dlp failure diagnostics', () => {
   it('attaches the REAL yt-dlp output to the error', async () => {
@@ -733,6 +873,8 @@ describe('excerpt download (fake yt-dlp binary)', () => {
     await fs.writeFile(
       binPath,
       `#!/usr/bin/env bash
+if [ "$1" = "--version" ]; then echo "2026.08.19"; exit 0; fi
+if [ "$1" = "--help" ]; then echo "  --js-runtimes RUNTIME[:PATH]"; exit 0; fi
 set -e
 out=""
 while [ $# -gt 0 ]; do
@@ -782,6 +924,8 @@ head -c 2048 /dev/zero >> "$out"
     await fs.writeFile(
       badBin,
       `#!/usr/bin/env bash
+if [ "$1" = "--version" ]; then echo "2026.08.19"; exit 0; fi
+if [ "$1" = "--help" ]; then echo "  --js-runtimes RUNTIME[:PATH]"; exit 0; fi
 set -e
 out=""
 while [ $# -gt 0 ]; do

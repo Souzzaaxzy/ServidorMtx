@@ -154,6 +154,82 @@ if ! node -e "require('node:sqlite')" 2>/dev/null; then
 fi
 ok "Driver node:sqlite disponível (sem binário nativo)"
 
+# ── 3b. yt-dlp + ffmpeg (música do perfil) ─────────────────────
+# OPCIONAL: sem eles a API sobe normalmente e só a música do perfil responde
+# com uma mensagem amigável. Instalamos aqui porque é o boot que roda de
+# verdade — deixar isso só no instalador do Termux significa que quem só faz
+# `git pull && start.sh` nunca recebe as ferramentas.
+#
+# IMPORTANTE (Termux): o yt-dlp NÃO é pacote do `pkg`; a forma correta é
+# `pip install -U yt-dlp` (o `pkg install yt-dlp` falha). O ffmpeg, esse sim,
+# vem do `pkg`.
+ensure_media_tools() {
+  local need_ytdlp=1 need_ffmpeg=1
+  if [ -n "${YT_DLP_PATH:-}" ] && [ -x "${YT_DLP_PATH:-}" ]; then
+    need_ytdlp=0
+  elif command -v yt-dlp >/dev/null 2>&1; then
+    need_ytdlp=0
+  elif python3 -m yt_dlp --version >/dev/null 2>&1; then
+    need_ytdlp=0
+  fi
+  command -v ffmpeg >/dev/null 2>&1 && need_ffmpeg=0
+
+  [ "$need_ytdlp" = 0 ] && [ "$need_ffmpeg" = 0 ] && {
+    ok "Música do perfil: yt-dlp e ffmpeg disponíveis"
+    return 0
+  }
+
+  if matrix_is_termux; then
+    if [ "$need_ffmpeg" = 1 ]; then
+      log "Instalando ffmpeg (pkg install ffmpeg) — pode demorar"
+      pkg install -y ffmpeg >/dev/null 2>&1 \
+        || warn "ffmpeg não instalado — o download do trecho vai falhar"
+    fi
+    if [ "$need_ytdlp" = 1 ]; then
+      log "Instalando yt-dlp (pip install -U yt-dlp)"
+      # --break-system-packages: o Python do Termux é gerenciado pelo pkg e o
+      # pip recusa instalar sem essa flag em ambientes "externally managed".
+      # A flag não existe em pip muito antigo, então há um fallback SEM ela.
+      python3 -m pip install -U --break-system-packages yt-dlp >/dev/null 2>&1 \
+        || python3 -m pip install -U yt-dlp >/dev/null 2>&1 \
+        || pip install -U --break-system-packages yt-dlp >/dev/null 2>&1 \
+        || pip install -U yt-dlp >/dev/null 2>&1 \
+        || warn "yt-dlp não instalado — a música do perfil ficará indisponível"
+    fi
+  else
+    if [ "$need_ffmpeg" = 1 ]; then
+      if command -v apt-get >/dev/null 2>&1; then
+        log "Instalando ffmpeg (apt-get)"
+        (apt-get install -y ffmpeg >/dev/null 2>&1 \
+          || sudo apt-get install -y ffmpeg >/dev/null 2>&1) \
+          || warn "ffmpeg não instalado — o download do trecho vai falhar"
+      elif command -v apk >/dev/null 2>&1; then
+        apk add --no-cache ffmpeg >/dev/null 2>&1 \
+          || warn "ffmpeg não instalado (apk add ffmpeg)"
+      else
+        warn "Instale o ffmpeg manualmente — o download do trecho precisa dele"
+      fi
+    fi
+    if [ "$need_ytdlp" = 1 ]; then
+      log "Instalando yt-dlp (pip)"
+      (python3 -m pip install -U --break-system-packages yt-dlp >/dev/null 2>&1 \
+        || python3 -m pip install -U yt-dlp >/dev/null 2>&1 \
+        || pip install -U --break-system-packages yt-dlp >/dev/null 2>&1 \
+        || pip install -U yt-dlp >/dev/null 2>&1 \
+        || pip3 install -U yt-dlp >/dev/null 2>&1) \
+        || warn "yt-dlp não instalado — a música do perfil ficará indisponível"
+    fi
+  fi
+
+  # Confere o resultado REAL (a instalação pode falhar silenciosamente).
+  if command -v yt-dlp >/dev/null 2>&1 || python3 -m yt_dlp --version >/dev/null 2>&1; then
+    ok "Música do perfil: yt-dlp disponível"
+  else
+    warn "Música do perfil indisponível: yt-dlp ausente (rode: npm run doctor)"
+  fi
+}
+ensure_media_tools
+
 # ── 4. Diretórios persistentes ─────────────────────────────────
 mkdir -p "$DATA_DIR" uploads
 ok "Diretórios prontos: $DATA_DIR/ e uploads/"
