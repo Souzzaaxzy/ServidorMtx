@@ -83,6 +83,17 @@ if command -v ffmpeg >/dev/null 2>&1; then
 else
   warn "ffmpeg ausente — o download do trecho falha (apt install ffmpeg)"
 fi
+# Runtime de JavaScript: o YouTube exige um. O yt-dlp só habilita `deno` por
+# padrão; no Termux o Node do próprio servidor serve de fallback.
+if [ -n "${YT_JS_RUNTIME:-}" ]; then
+  ok "YT_JS_RUNTIME configurado (${YT_JS_RUNTIME})"
+elif command -v deno >/dev/null 2>&1; then
+  ok "Runtime JS: deno (preferido pelo yt-dlp)"
+elif command -v node >/dev/null 2>&1; then
+  ok "Runtime JS: node ($(command -v node)) — fallback do servidor"
+else
+  warn "Sem runtime de JavaScript — o YouTube não responde ao yt-dlp (pkg install deno)"
+fi
 # Cookies do YouTube: é o que libera o bloqueio anti-bot em IP de servidor.
 # Nunca imprimir o valor — só se está configurado.
 if [ -n "${YT_COOKIES:-}" ]; then

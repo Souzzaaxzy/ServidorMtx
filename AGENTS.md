@@ -239,6 +239,16 @@ PostgreSQL). Runs on Pterodactyl/Bronxys via `npm start` (self-provisions).
   escreve um jar temporário `chmod 600` em `data/.yt-cookies-*` por execução e
   o APAGA em seguida (um cookie jar é credencial: não pode sobrar no disco).
   É o que libera o bloqueio de IP em VPS/datacenter.
+- **Runtime de JavaScript (o YouTube EXIGE um)**: o yt-dlp só habilita `deno`
+  por padrão, e no Termux `deno` não é pacote padrão — enquanto o **Node está
+  sempre presente** (a API roda nele). O código escolhe, nesta ordem:
+  `YT_JS_RUNTIME` (env) → `deno` se existir → `node:<process.execPath>`.
+  Sondamos `--help` antes: um yt-dlp antigo não conhece a flag e abortaria com
+  "unrecognized arguments", quebrando o recurso inteiro.
+- **Nenhuma falha é muda**: toda mensagem de erro leva `details.ytdlp` com a
+  saída REAL do yt-dlp (últimas linhas), e o handler global loga o `details`.
+  Sem isso um erro não classificado virava "tente novamente" e não havia como
+  descobrir a causa — foi exatamente o que aconteceu no Termux.
 - **Download real não foi validado neste ambiente**: o YouTube bloqueia (403
   anti-bot) IPs de datacenter para MÍDIA (a busca passa). A cadeia inteira
   (spawn → ffmpeg → validação de bytes → storage → `/static` → banco) foi

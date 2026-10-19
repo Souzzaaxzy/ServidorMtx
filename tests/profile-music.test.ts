@@ -332,6 +332,174 @@ exit 1
   });
 });
 
+// ── JavaScript runtime (the YouTube requirement) ──────────────
+// yt-dlp enables ONLY deno by default, but the YouTube now requires a JS
+// runtime. On a Node server (Termux!) deno is often absent while Node is
+// right there — so the code must fall back to the running Node binary.
+describe('yt-dlp JavaScript runtime', () => {
+  const binDir = path.resolve(process.cwd(), 'tests/fixtures/music-bin-js');
+  const argsLog = path.join(binDir, 'args.log');
+
+  /** A spy yt-dlp whose `--help` may or may not advertise --js-runtimes. */
+  async function writeSpy(name: string, supportsJsRuntimes: boolean) {
+    await fs.mkdir(binDir, { recursive: true });
+    const file = path.join(binDir, name);
+    await fs.writeFile(
+      file,
+      `#!/usr/bin/env bash
+if [ "$1" = "--version" ]; then echo "2026.08.19"; exit 0; fi
+if [ "$1" = "--help" ]; then
+  ${supportsJsRuntimes ? 'echo "  --js-runtimes RUNTIME[:PATH]  enable a runtime";' : 'echo "some help without that flag";'}
+  exit 0
+fi
+echo "ARGS: $*" >> "${argsLog}"
+echo "ERROR: Sign in to confirm you're not a bot." >&2
+exit 1
+`,
+      { mode: 0o755 },
+    );
+    return file;
+  }
+
+  afterAll(async () => {
+    await fs.rm(binDir, { recursive: true, force: true });
+  });
+  afterEach(() => {
+    delete process.env.YT_DLP_PATH;
+    delete process.env.YT_JS_RUNTIME;
+    delete process.env.YT_REMOTE_COMPONENTS;
+    vi.resetModules();
+  });
+
+  it('honours YT_JS_RUNTIME when set', async () => {
+    const spy = await writeSpy('spy-explicit.sh', true);
+    process.env.YT_DLP_PATH = spy;
+    process.env.YT_JS_RUNTIME = 'node:/custom/node';
+    await fs.rm(argsLog, { force: true });
+
+    vi.resetModules();
+    const { searchProfileMusic } = await import(
+      '../src/modules/music/profile-music.ytdlp.js'
+    );
+    await expect(searchProfileMusic('queen')).rejects.toThrow();
+
+    const log = await fs.readFile(argsLog, 'utf8');
+    expect(log).toContain('--js-runtimes node:/custom/node');
+  });
+
+  it('falls back to deno or the RUNNING node binary — never nothing', async () => {
+    const spy = await writeSpy('spy-fallback.sh', true);
+    process.env.YT_DLP_PATH = spy;
+    await fs.rm(argsLog, { force: true });
+
+    vi.resetModules();
+    const { searchProfileMusic } = await import(
+      '../src/modules/music/profile-music.ytdlp.js'
+    );
+    await expect(searchProfileMusic('queen')).rejects.toThrow();
+
+    const log = await fs.readFile(argsLog, 'utf8');
+    const match = /--js-runtimes (\S+)/.exec(log);
+    expect(match).not.toBeNull();
+    const runtime = match![1];
+    // deno is preferred when present; otherwise the Node that runs THIS
+    // server (guaranteed to exist). An empty/absent runtime would leave the
+    // YouTube broken on hosts without deno — the Termux case.
+    expect(runtime === 'deno' || runtime === `node:${process.execPath}`).toBe(true);
+  });
+
+  it('does not pass the flag to a yt-dlp that does not support it', async () => {
+    // An older yt-dlp would abort with "unrecognized arguments", which would
+    // break the feature entirely instead of just missing the runtime.
+    const spy = await writeSpy('spy-old.sh', false);
+    process.env.YT_DLP_PATH = spy;
+    await fs.rm(argsLog, { force: true });
+
+    vi.resetModules();
+    const { searchProfileMusic } = await import(
+      '../src/modules/music/profile-music.ytdlp.js'
+    );
+    await expect(searchProfileMusic('queen')).rejects.toThrow();
+
+    const log = await fs.readFile(argsLog, 'utf8');
+    expect(log).not.toContain('--js-runtimes');
+  });
+
+  it('never fetches remote components unless explicitly opted in', async () => {
+    // Remote components mean downloading and EXECUTING third-party JS at
+    // runtime. That is a security decision for the operator, never a default.
+    const spy = await writeSpy('spy-norc.sh', true);
+    process.env.YT_DLP_PATH = spy;
+    await fs.rm(argsLog, { force: true });
+
+    vi.resetModules();
+    const { searchProfileMusic } = await import(
+      '../src/modules/music/profile-music.ytdlp.js'
+    );
+    await expect(searchProfileMusic('queen')).rejects.toThrow();
+
+    const log = await fs.readFile(argsLog, 'utf8');
+    expect(log).not.toContain('--remote-components');
+  });
+
+  it('passes remote components when the operator opts in', async () => {
+    const spy = await writeSpy('spy-rc.sh', true);
+    process.env.YT_DLP_PATH = spy;
+    process.env.YT_REMOTE_COMPONENTS = 'ejs:github';
+    await fs.rm(argsLog, { force: true });
+
+    vi.resetModules();
+    const { searchProfileMusic } = await import(
+      '../src/modules/music/profile-music.ytdlp.js'
+    );
+    await expect(searchProfileMusic('queen')).rejects.toThrow();
+
+    const log = await fs.readFile(argsLog, 'utf8');
+    expect(log).toContain('--remote-components ejs:github');
+    delete process.env.YT_REMOTE_COMPONENTS;
+  });
+});
+
+// ── Diagnóstico: o erro real precisa aparecer ─────────────────
+describe('yt-dlp failure diagnostics', () => {
+  it('attaches the REAL yt-dlp output to the error', async () => {
+    // The Termux report was an unclassified failure: the message was the
+    // generic fallback and there was NO way to see why. Every failure must
+    // now carry the actual output.
+    const { ytdlpFailureToApiError } = await import(
+      '../src/modules/music/profile-music.ytdlp.js'
+    );
+    const err = ytdlpFailureToApiError(
+      "WARNING: [youtube] Some warning\nERROR: bV9xJxYv: 'NoneType' object has no attribute 'get'\n",
+    );
+    expect(err.details).toEqual({
+      ytdlp: "WARNING: [youtube] Some warning | ERROR: bV9xJxYv: 'NoneType' object has no attribute 'get'",
+    });
+  });
+
+  it('names the missing JS runtime as the cause', async () => {
+    const { ytdlpFailureToApiError } = await import(
+      '../src/modules/music/profile-music.ytdlp.js'
+    );
+    const err = ytdlpFailureToApiError(
+      'WARNING: [youtube] No supported JavaScript runtime could be found',
+    );
+    expect(err.message).toMatch(/runtime de JavaScript|deno/i);
+  });
+
+  it('keeps the specific messages for block/missing/outdated', async () => {
+    const { ytdlpFailureToApiError } = await import(
+      '../src/modules/music/profile-music.ytdlp.js'
+    );
+    expect(ytdlpFailureToApiError('ERROR: Sign in to confirm you are not a bot').message)
+      .toMatch(/anti-bot|cookies/i);
+    expect(ytdlpFailureToApiError('yt-dlp: command not found').message)
+      .toMatch(/não está instalado/i);
+    expect(ytdlpFailureToApiError('ERROR: unable to extract nsig').message)
+      .toMatch(/desatualizado/i);
+  });
+});
+
 // ── HTTP: set / get / clear ───────────────────────────────────
 describe('profile music set/get/clear', () => {
   it('starts with no music (explicit null)', async () => {

@@ -109,7 +109,14 @@ export async function buildServer() {
     const apiErr = toApiError(err);
     if (apiErr.statusCode >= 500) {
       logger.error(
-        { err: err instanceof Error ? err.message : String(err), stack: err instanceof Error ? err.stack : undefined },
+        {
+          err: err instanceof Error ? err.message : String(err),
+          stack: err instanceof Error ? err.stack : undefined,
+          // `details` carrega o diagnóstico (ex.: a saída real do yt-dlp).
+          // Sem isto, um 500 só dizia "erro interno" e não havia como
+          // descobrir a causa no log do servidor.
+          details: apiErr.details,
+        },
         'unhandled error',
       );
     }

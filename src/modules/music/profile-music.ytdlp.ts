@@ -75,6 +75,70 @@ async function resolveYtdlpCommand(): Promise<string[]> {
 function invalidateResolvedCommand(): void {
   resolvedCommand = null;
   resolvedForCandidates = null;
+  jsRuntimeArgs = null;
+}
+
+/**
+ * Argumentos `--js-runtimes` para o yt-dlp (cacheado).
+ *
+ * O YouTube passou a EXIGIR um runtime de JavaScript e o yt-dlp só habilita
+ * `deno` por padrão. Num servidor Node isso é um tiro no pé: o `deno` pode
+ * não existir (no Termux não é pacote padrão) enquanto o **Node está ali, já
+ * que a API roda nele**. Então:
+ *   1. `YT_JS_RUNTIME` (env) manda, se definido;
+ *   2. senão, `deno` quando existir (é o runtime que o yt-dlp prefere);
+ *   3. senão, o PRÓPRIO binário do Node que executa este servidor
+ *      (`process.execPath`) — garantidamente presente e válido.
+ *
+ * A sondagem do `--help` evita passar uma flag que yt-dlp antigo não conhece
+ * (isso abortaria com "unrecognized arguments").
+ */
+let jsRuntimeArgs: string[] | null = null;
+
+async function resolveJsRuntimeArgs(): Promise<string[]> {
+  if (jsRuntimeArgs) return jsRuntimeArgs;
+  const command = await resolveYtdlpCommand();
+
+  const help = await runProcess(command, ['--help'], 20_000).catch(() => null);
+  if (!help || !help.stdout.includes('--js-runtimes')) {
+    // Versão antiga: a flag não existe, então não passa nada.
+    jsRuntimeArgs = [];
+    return jsRuntimeArgs;
+  }
+
+  const explicit = (process.env.YT_JS_RUNTIME ?? '').trim();
+  if (explicit !== '') {
+    jsRuntimeArgs = ['--js-runtimes', explicit];
+    return jsRuntimeArgs;
+  }
+
+  // `deno` é o runtime preferido pelo yt-dlp — usa quando existir.
+  const deno = await runProcess(['deno'], ['--version'], 20_000).catch(() => null);
+  if (deno && deno.code === 0) {
+    jsRuntimeArgs = ['--js-runtimes', 'deno'];
+    return jsRuntimeArgs;
+  }
+
+  // Fallback sempre disponível: o Node que está rodando este servidor.
+  jsRuntimeArgs = ['--js-runtimes', `node:${process.execPath}`];
+  return jsRuntimeArgs;
+}
+
+/**
+ * Componentes remotos do yt-dlp (opt-in, DESLIGADO por padrão).
+ *
+ * Alguns desafios do YouTube só são resolvidos com o pacote `yt-dlp-ejs`. Se
+ * ele NÃO estiver instalado, o yt-dlp pode baixar o componente do GitHub —
+ * mas isso é executar JavaScript de terceiros, baixado em runtime, no seu
+ * servidor. Isso é um risco de segurança, então NUNCA ligamos sozinhos:
+ * quem quiser habilita explicitamente com
+ * `YT_REMOTE_COMPONENTS=ejs:github` (ou instala o pacote
+ * `pip install yt-dlp-ejs`, que é o caminho seguro e preferível).
+ */
+async function remoteComponentArgs(): Promise<string[]> {
+  const value = (process.env.YT_REMOTE_COMPONENTS ?? '').trim();
+  if (value === '') return [];
+  return ['--remote-components', value];
 }
 
 /** Limite de duração do trecho no perfil (1 minuto). */
@@ -288,22 +352,50 @@ function runProcess(
 }
 
 /**
+ * Reduz a saída do yt-dlp às últimas linhas úteis. É um log de diagnóstico:
+ * serve para dizer QUAL foi o erro real, sem despejar o dump inteiro.
+ */
+export function summarizeYtdlpOutput(stderr: string, maxLines = 8): string {
+  const lines = stderr
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l !== '');
+  if (lines.length === 0) return '(sem saída)';
+  return lines.slice(-maxLines).join(' | ').slice(0, 1200);
+}
+
+/**
  * Traduz a falha do yt-dlp numa mensagem que diz o que FAZER. O ponto é que o
  * usuário (ou quem dá suporte) saiba a diferença entre "o YouTube bloqueou",
  * "o yt-dlp está velho" e "não tem yt-dlp" — antes tudo isso virava "nenhuma
  * música encontrada".
+ *
+ * Toda mensagem carrega `details` com a saída REAL do yt-dlp: sem isso, um
+ * erro que não casa com nenhum padrão vira "tente novamente" e não há como
+ * descobrir a causa (foi exatamente o que aconteceu no Termux).
  */
 export function ytdlpFailureToApiError(stderr: string): ApiError {
   const s = stderr.toLowerCase();
+  const details = { ytdlp: summarizeYtdlpOutput(stderr) };
   if (/not installed|no such file|command not found|eacces|executable file not found/.test(s)) {
     return ApiError.internal(
       'Busca de música indisponível: o yt-dlp não está instalado neste servidor. '
         + 'Instale com `pip install yt-dlp` (ou defina YT_DLP_PATH).',
+      details,
     );
   }
   if (/ffmpeg/.test(s)) {
     return ApiError.internal(
       'O servidor precisa do ffmpeg para baixar o trecho (instale com `apt install ffmpeg`).',
+      details,
+    );
+  }
+  if (/no supported javascript runtime|js runtime|ejs|deno/.test(s)) {
+    return ApiError.internal(
+      'O yt-dlp não achou um runtime de JavaScript (o YouTube exige um). '
+        + 'No Termux: `pkg install deno` (ou `node`). Sem isso o yt-dlp não '
+        + 'consegue nem buscar nem baixar.',
+      details,
     );
   }
   if (/sign in|confirm you.{0,3}re not a bot|cookies|bot\b|429|too many requests|403|forbidden/.test(s)) {
@@ -311,19 +403,23 @@ export function ytdlpFailureToApiError(stderr: string): ApiError {
       'O YouTube bloqueou o servidor (verificação anti-bot). Configure os cookies '
         + 'do YouTube para liberar (YT_COOKIES / YT_COOKIES_FILE) ou use uma rede '
         + 'residencial/VPN.',
+      details,
     );
   }
   if (/nsig|signature|unable to extract|failed to extract|player response|precondition/.test(s)) {
     return ApiError.internal(
       'O yt-dlp não conseguiu falar com o YouTube — provavelmente está desatualizado. '
         + 'Atualize com `pip install -U yt-dlp`.',
+      details,
     );
   }
   if (/timed out|timeout/.test(s)) {
-    return ApiError.internal('A busca demorou demais. Tente novamente.');
+    return ApiError.internal('A busca demorou demais. Tente novamente.', details);
   }
+  // Fallback: ainda devolve a saída real, senão não há como diagnosticar.
   return ApiError.internal(
     'Não foi possível consultar o YouTube agora. Tente novamente em instantes.',
+    details,
   );
 }
 
@@ -379,8 +475,11 @@ async function runYtdlp(
 ): Promise<{ code: number; stdout: string; stderr: string }> {
   const command = await resolveYtdlpCommand();
   const { args: cArgs, temp } = await cookieArgs();
+  // O runtime de JavaScript vem antes de tudo: sem ele o YouTube nem responde.
+  const jsArgs = await resolveJsRuntimeArgs();
+  const rcArgs = await remoteComponentArgs();
   try {
-    return await runProcess(command, [...cArgs, ...args], timeoutMs);
+    return await runProcess(command, [...cArgs, ...jsArgs, ...rcArgs, ...args], timeoutMs);
   } catch (err) {
     // Se o comando sumiu entre a sondagem e agora, a próxima chamada resolve
     // de novo em vez de ficar preso num caminho inválido.

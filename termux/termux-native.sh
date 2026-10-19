@@ -65,6 +65,10 @@ pkg install -y git openssl ca-certificates python make clang >/dev/null 2>&1 \
   || warn "Alguns pacotes podem não ter sido instalados (seguindo)"
 pkg install -y yt-dlp ffmpeg >/dev/null 2>&1 \
   || warn "yt-dlp/ffmpeg não instalados — a música do perfil ficará indisponível (pkg install yt-dlp ffmpeg)"
+# O YouTube exige um runtime de JavaScript para o yt-dlp. O código já cai para
+# o Node do próprio servidor, então isto é opcional (só melhora a extração).
+pkg install -y deno >/dev/null 2>&1 \
+  || warn "deno não instalado (opcional: o servidor usa o próprio Node como runtime JS)"
 ok "Pacotes verificados"
 
 command -v node >/dev/null 2>&1 || {

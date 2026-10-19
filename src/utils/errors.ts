@@ -60,8 +60,8 @@ export class ApiError extends Error {
   static tooManyRecoveryAttempts(message = 'Muitas tentativas de recuperação. Tente novamente mais tarde.') {
     return new ApiError('RATE_LIMITED', message, 429);
   }
-  static internal(message = 'Erro interno do servidor.') {
-    return new ApiError('INTERNAL_ERROR', message, 500);
+  static internal(message = 'Erro interno do servidor.', details?: unknown) {
+    return new ApiError('INTERNAL_ERROR', message, 500, details);
   }
 }
 
