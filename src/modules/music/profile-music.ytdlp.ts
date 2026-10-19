@@ -33,8 +33,14 @@ const YTDLP_BIN = process.env.YT_DLP_PATH ?? 'yt-dlp';
  * O binário pode não estar no PATH (Termux, containers enxutos): nesse caso
  * caímos para `python3 -m yt_dlp`, que é o mesmo programa instalado como
  * módulo. A sondagem acontece UMA vez e o resultado fica em cache.
+ *
+ * O cache é indexado pela LISTA DE CANDIDATOS: mudar YT_DLP_PATH muda a lista
+ * e força nova sondagem. Sem isso, trocar a config em runtime (um teste, um
+ * ajuste no painel) continuaria usando o caminho antigo — bug real pego por
+ * teste.
  */
 let resolvedCommand: string[] | null = null;
+let resolvedForCandidates: string | null = null;
 
 function ytdlpCandidates(): string[][] {
   const fromEnv = process.env.YT_DLP_PATH;
@@ -45,13 +51,16 @@ function ytdlpCandidates(): string[][] {
   return candidates;
 }
 
-/** Sonda qual forma do yt-dlp existe neste host (uma vez). */
+/** Sonda qual forma do yt-dlp existe neste host (uma vez por configuração). */
 async function resolveYtdlpCommand(): Promise<string[]> {
-  if (resolvedCommand) return resolvedCommand;
-  for (const candidate of ytdlpCandidates()) {
+  const candidates = ytdlpCandidates();
+  const key = JSON.stringify(candidates);
+  if (resolvedCommand && resolvedForCandidates === key) return resolvedCommand;
+  for (const candidate of candidates) {
     try {
       await runProcess(candidate, ['--version'], 20_000);
       resolvedCommand = candidate;
+      resolvedForCandidates = key;
       return candidate;
     } catch {
       // Não existe / não executa — tenta a próxima forma.
@@ -65,6 +74,7 @@ async function resolveYtdlpCommand(): Promise<string[]> {
 /** Marca um comando como inválido para forçar nova sondagem. */
 function invalidateResolvedCommand(): void {
   resolvedCommand = null;
+  resolvedForCandidates = null;
 }
 
 /** Limite de duração do trecho no perfil (1 minuto). */
@@ -277,19 +287,108 @@ function runProcess(
   });
 }
 
+/**
+ * Traduz a falha do yt-dlp numa mensagem que diz o que FAZER. O ponto é que o
+ * usuário (ou quem dá suporte) saiba a diferença entre "o YouTube bloqueou",
+ * "o yt-dlp está velho" e "não tem yt-dlp" — antes tudo isso virava "nenhuma
+ * música encontrada".
+ */
+export function ytdlpFailureToApiError(stderr: string): ApiError {
+  const s = stderr.toLowerCase();
+  if (/not installed|no such file|command not found|eacces|executable file not found/.test(s)) {
+    return ApiError.internal(
+      'Busca de música indisponível: o yt-dlp não está instalado neste servidor. '
+        + 'Instale com `pip install yt-dlp` (ou defina YT_DLP_PATH).',
+    );
+  }
+  if (/ffmpeg/.test(s)) {
+    return ApiError.internal(
+      'O servidor precisa do ffmpeg para baixar o trecho (instale com `apt install ffmpeg`).',
+    );
+  }
+  if (/sign in|confirm you.{0,3}re not a bot|cookies|bot\b|429|too many requests|403|forbidden/.test(s)) {
+    return ApiError.internal(
+      'O YouTube bloqueou o servidor (verificação anti-bot). Configure os cookies '
+        + 'do YouTube para liberar (YT_COOKIES / YT_COOKIES_FILE) ou use uma rede '
+        + 'residencial/VPN.',
+    );
+  }
+  if (/nsig|signature|unable to extract|failed to extract|player response|precondition/.test(s)) {
+    return ApiError.internal(
+      'O yt-dlp não conseguiu falar com o YouTube — provavelmente está desatualizado. '
+        + 'Atualize com `pip install -U yt-dlp`.',
+    );
+  }
+  if (/timed out|timeout/.test(s)) {
+    return ApiError.internal('A busca demorou demais. Tente novamente.');
+  }
+  return ApiError.internal(
+    'Não foi possível consultar o YouTube agora. Tente novamente em instantes.',
+  );
+}
+
+/** Um cookie jar temporário criado a partir de YT_COOKIES (base64). */
+async function writeTempCookieFile(): Promise<string | null> {
+  const raw = process.env.YT_COOKIES;
+  if (!raw || raw.trim() === '') return null;
+  const dir = path.resolve(process.cwd(), 'data');
+  await fs.mkdir(dir, { recursive: true });
+  const file = path.join(dir, `.yt-cookies-${randomBytes(8).toString('hex')}.txt`);
+  let content = raw.trim();
+  // Aceita base64 (recomendado: o painel lida bem com uma linha só) ou o
+  // texto do cookie jar colado direto.
+  if (!/^#\s*(Netscape|HTTP Cookie File)/i.test(content)) {
+    try {
+      const decoded = Buffer.from(content, 'base64').toString('utf8');
+      if (decoded.includes('\t')) content = decoded;
+    } catch {
+      // Não era base64 — segue com o texto como veio.
+    }
+  }
+  await fs.writeFile(file, content, { mode: 0o600 });
+  return file;
+}
+
+/**
+ * Os argumentos de cookie para o yt-dlp, ou [] quando não há cookie nenhum.
+ *
+ * YT_COOKIES (conteúdo, base64 ou texto) tem prioridade sobre
+ * YT_COOKIES_FILE (caminho). É assim que se tira o bloqueio anti-bot do
+ * YouTube num servidor: o jar do navegador prova que a sessão é humana.
+ */
+async function cookieArgs(): Promise<{ args: string[]; temp: string | null }> {
+  const temp = await writeTempCookieFile();
+  if (temp) return { args: ['--cookies', temp], temp };
+  const file = process.env.YT_COOKIES_FILE;
+  if (file && file.trim() !== '') {
+    try {
+      await fs.access(file);
+      return { args: ['--cookies', file], temp: null };
+    } catch {
+      // Caminho configurado mas inexistente: melhor seguir sem cookies do que
+      // falhar a busca inteira por causa disso.
+    }
+  }
+  return { args: [], temp: null };
+}
+
 /** Executa o yt-dlp já resolvido (binário ou `python3 -m yt_dlp`). */
 async function runYtdlp(
   args: string[],
   timeoutMs: number,
 ): Promise<{ code: number; stdout: string; stderr: string }> {
   const command = await resolveYtdlpCommand();
+  const { args: cArgs, temp } = await cookieArgs();
   try {
-    return await runProcess(command, args, timeoutMs);
+    return await runProcess(command, [...cArgs, ...args], timeoutMs);
   } catch (err) {
     // Se o comando sumiu entre a sondagem e agora, a próxima chamada resolve
     // de novo em vez de ficar preso num caminho inválido.
     invalidateResolvedCommand();
     throw err;
+  } finally {
+    // O jar temporário vive só enquanto o processo roda — nunca fica no disco.
+    if (temp) await fs.rm(temp, { force: true }).catch(() => void 0);
   }
 }
 
@@ -332,8 +431,12 @@ export async function searchProfileMusic(query: string): Promise<MusicSearchResu
   }
 
   if (items.length === 0) {
-    if (code !== 0 && /not found|unavailable|timed out/i.test(stderr)) {
-      throw ApiError.internal('Não foi possível consultar o YouTube agora. Tente novamente.');
+    // UM ERRO DO yt-dlp NÃO É "NENHUM RESULTADO". Sem esta distinção o app
+    // dizia "nenhuma música encontrada" quando o problema real era o
+    // yt-dlp bloqueado/desatualizado/ausente — o usuário não tinha pista
+    // nenhuma do que consertar.
+    if (code !== 0) {
+      throw ytdlpFailureToApiError(stderr);
     }
     return [];
   }
@@ -414,12 +517,9 @@ export async function downloadMusicExcerpt(
 
   if (code !== 0) {
     await fs.rm(dest, { force: true }).catch(() => void 0);
-    if (/sign in|bot|cookies/i.test(stderr)) {
-      throw ApiError.internal(
-        'O YouTube recusou o download agora. Tente novamente em instantes.',
-      );
-    }
-    throw ApiError.internal('Não foi possível baixar a música. Tente novamente.');
+    // Mesma tradução da busca: o usuário precisa saber se foi bloqueio,
+    // ffmpeg ausente ou yt-dlp velho — não um "tente novamente" genérico.
+    throw ytdlpFailureToApiError(stderr);
   }
 
   let stat;

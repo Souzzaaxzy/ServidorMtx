@@ -19,6 +19,12 @@ data/*.db-wal
 # It is a SECRET — never commit it.
 data/.jwt_secret
 
+# YouTube cookies for the profile-music feature (anti-bot). A cookie jar is a
+# CREDENTIAL (it authenticates a logged-in session) — never commit it, and
+# never commit the temporary jars the server writes per run.
+data/cookies.txt
+data/.yt-cookies-*
+
 # Local upload storage (dev). Note: anchored to repo root so it does NOT
 # ignore the source module at src/modules/uploads/.
 /uploads/

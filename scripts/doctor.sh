@@ -83,6 +83,19 @@ if command -v ffmpeg >/dev/null 2>&1; then
 else
   warn "ffmpeg ausente — o download do trecho falha (apt install ffmpeg)"
 fi
+# Cookies do YouTube: é o que libera o bloqueio anti-bot em IP de servidor.
+# Nunca imprimir o valor — só se está configurado.
+if [ -n "${YT_COOKIES:-}" ]; then
+  ok "YT_COOKIES configurado (bloqueio anti-bot do YouTube liberado)"
+elif [ -n "${YT_COOKIES_FILE:-}" ]; then
+  if [ -f "${YT_COOKIES_FILE}" ]; then
+    ok "YT_COOKIES_FILE configurado (${YT_COOKIES_FILE})"
+  else
+    warn "YT_COOKIES_FILE aponta para arquivo inexistente (${YT_COOKIES_FILE})"
+  fi
+else
+  warn "Sem cookies do YouTube — se o servidor estiver bloqueado (anti-bot), a busca falha (YT_COOKIES)"
+fi
 
 hdr "Dependências e build"
 [ -d node_modules ] && ok "node_modules presente" || warn "node_modules ausente (npm install)"

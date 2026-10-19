@@ -159,6 +159,177 @@ describe('GET /api/music/profile/search', () => {
     expect(res.statusCode).toBe(200);
     expect(Array.isArray(JSON.parse(res.payload).results)).toBe(true);
   });
+
+  it('surfaces the REAL reason instead of a misleading "not found"', async () => {
+    // Regression: a yt-dlp FAILURE used to return an empty list, so the app
+    // said "nenhuma música encontrada" and the user had no clue what to fix.
+    const user = await createAndLoginUser(server, { nickname: 'music_realerr' });
+    const binDir = path.resolve(process.cwd(), 'tests/fixtures/music-bin-err');
+    await fs.mkdir(binDir, { recursive: true });
+    const bin = path.join(binDir, 'ytdlp-err.sh');
+    await fs.writeFile(
+      bin,
+      `#!/usr/bin/env bash
+if [ "$1" = "--version" ]; then echo "2026.08.19"; exit 0; fi
+echo "ERROR: Sign in to confirm you're not a bot." >&2
+exit 1
+`,
+      { mode: 0o755 },
+    );
+    process.env.YT_DLP_PATH = bin;
+    try {
+      // Through the real route: the user must see the actual reason.
+      const res = await server.inject({
+        method: 'GET',
+        url: '/api/music/profile/search?q=queen',
+        headers: { authorization: `Bearer ${user.accessToken}` },
+      });
+      expect(res.statusCode).toBe(500);
+      expect(JSON.parse(res.payload).error.message).toMatch(/bloqueou|anti-bot/i);
+    } finally {
+      delete process.env.YT_DLP_PATH;
+      await fs.rm(binDir, { recursive: true, force: true });
+    }
+  });
+});
+
+// ── Cookie support (anti-bot) ─────────────────────────────────
+// The server can authenticate to YouTube with a browser cookie jar, which is
+// what lifts the "confirm you're not a bot" block on datacenter IPs.
+describe('YouTube cookies', () => {
+  const binDir = path.resolve(process.cwd(), 'tests/fixtures/music-bin-spy');
+  const bin = path.join(binDir, 'spy-ytdlp.sh');
+  const argsLog = path.resolve(process.cwd(), 'tests/fixtures/music-bin-spy/args.log');
+
+  beforeAll(async () => {
+    await fs.mkdir(binDir, { recursive: true });
+    // Records the args (and the cookie file it was given) then fails, so the
+    // test can assert BOTH that cookies were passed and how the failure reads.
+    await fs.writeFile(
+      bin,
+      `#!/usr/bin/env bash
+if [ "$1" = "--version" ]; then echo "2026.08.19"; exit 0; fi
+echo "ARGS: $*" >> "${argsLog}"
+prev=""
+for a in "$@"; do
+  if [ "$prev" = "--cookies" ]; then
+    echo "COOKIEFILE: $a" >> "${argsLog}"
+    cat "$a" >> "${argsLog}" 2>&1
+  fi
+  prev="$a"
+done
+echo "ERROR: Sign in to confirm you're not a bot." >&2
+exit 1
+`,
+      { mode: 0o755 },
+    );
+  });
+  afterAll(async () => {
+    await fs.rm(binDir, { recursive: true, force: true });
+  });
+  afterEach(() => {
+    delete process.env.YT_DLP_PATH;
+    delete process.env.YT_COOKIES;
+    delete process.env.YT_COOKIES_FILE;
+    vi.resetModules();
+  });
+
+  it('passes a base64 cookie jar to yt-dlp as --cookies', async () => {
+    const jar = [
+      '# Netscape HTTP Cookie File',
+      '.youtube.com\tTRUE\t/\tTRUE\t9999999999\tSID\tabc123',
+    ].join('\n');
+    process.env.YT_DLP_PATH = bin;
+    process.env.YT_COOKIES = Buffer.from(jar, 'utf8').toString('base64');
+    await fs.rm(argsLog, { force: true });
+
+    vi.resetModules();
+    const { searchProfileMusic } = await import(
+      '../src/modules/music/profile-music.ytdlp.js'
+    );
+    await expect(searchProfileMusic('queen')).rejects.toThrow();
+
+    const log = await fs.readFile(argsLog, 'utf8');
+    // The flag was passed…
+    expect(log).toContain('--cookies');
+    // …and the jar reached the file DECODED (base64 was unwrapped).
+    expect(log).toContain('SID\tabc123');
+  });
+
+  it('accepts a raw (non-base64) cookie jar too', async () => {
+    const jar = [
+      '# Netscape HTTP Cookie File',
+      '.youtube.com\tTRUE\t/\tTRUE\t9999999999\tHSID\traw789',
+    ].join('\n');
+    process.env.YT_DLP_PATH = bin;
+    process.env.YT_COOKIES = jar;
+    await fs.rm(argsLog, { force: true });
+
+    vi.resetModules();
+    const { searchProfileMusic } = await import(
+      '../src/modules/music/profile-music.ytdlp.js'
+    );
+    await expect(searchProfileMusic('queen')).rejects.toThrow();
+
+    const log = await fs.readFile(argsLog, 'utf8');
+    expect(log).toContain('HSID\traw789');
+  });
+
+  it('uses YT_COOKIES_FILE when no inline cookies are set', async () => {
+    const jarPath = path.resolve(process.cwd(), 'tests/fixtures/jar-file.txt');
+    await fs.writeFile(
+      jarPath,
+      '# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tTRUE\t9999999999\tLOGIN_INFO\tfile999\n',
+    );
+    process.env.YT_DLP_PATH = bin;
+    process.env.YT_COOKIES_FILE = jarPath;
+    await fs.rm(argsLog, { force: true });
+
+    vi.resetModules();
+    const { searchProfileMusic } = await import(
+      '../src/modules/music/profile-music.ytdlp.js'
+    );
+    await expect(searchProfileMusic('queen')).rejects.toThrow();
+
+    const log = await fs.readFile(argsLog, 'utf8');
+    expect(log).toContain('--cookies');
+    expect(log).toContain('file999');
+    await fs.rm(jarPath, { force: true });
+  });
+
+  it('runs WITHOUT --cookies when no cookie is configured', async () => {
+    process.env.YT_DLP_PATH = bin;
+    await fs.rm(argsLog, { force: true });
+
+    vi.resetModules();
+    const { searchProfileMusic } = await import(
+      '../src/modules/music/profile-music.ytdlp.js'
+    );
+    await expect(searchProfileMusic('queen')).rejects.toThrow();
+
+    const log = await fs.readFile(argsLog, 'utf8');
+    // No cookie config → no --cookies flag (the feature still works without
+    // it when the IP is not blocked).
+    expect(log).not.toContain('--cookies');
+  });
+
+  it('never leaves the temporary cookie jar on disk', async () => {
+    process.env.YT_DLP_PATH = bin;
+    process.env.YT_COOKIES = Buffer.from('# Netscape HTTP Cookie File\n', 'utf8').toString('base64');
+    await fs.rm(argsLog, { force: true });
+
+    vi.resetModules();
+    const { searchProfileMusic } = await import(
+      '../src/modules/music/profile-music.ytdlp.js'
+    );
+    await expect(searchProfileMusic('queen')).rejects.toThrow();
+
+    // A cookie jar is a credential: the per-run temp file must be gone.
+    const leftovers = (await fs.readdir(path.resolve(process.cwd(), 'data'))).filter(
+      (f) => f.startsWith('.yt-cookies-'),
+    );
+    expect(leftovers).toEqual([]);
+  });
 });
 
 // ── HTTP: set / get / clear ───────────────────────────────────

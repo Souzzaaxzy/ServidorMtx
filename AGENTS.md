@@ -229,6 +229,16 @@ PostgreSQL). Runs on Pterodactyl/Bronxys via `npm start` (self-provisions).
 - App: `ProfileMusicBar` (botão ⏯️ DESENHADO em `core/widgets/play_pause_icon.dart`
   + nome da música) logo abaixo do `#id`; `ProfileMusicPicker` no editar perfil
   (busca → 3 opções → trecho com passo de 5s até 1:00 → confirmar).
+- **Falha do yt-dlp NUNCA vira "nenhuma música encontrada"**: `code !== 0` sem
+  resultados lança `ytdlpFailureToApiError(stderr)`, que distingue bloqueio
+  anti-bot / yt-dlp ausente / yt-dlp desatualizado / ffmpeg ausente. Antes
+  tudo isso devolvia `[]` e o app dizia que não achou nada — o usuário ficava
+  sem pista nenhuma.
+- **Cookies do YouTube (bloqueio anti-bot)**: `YT_COOKIES` (conteúdo do
+  cookies.txt, base64 ou texto cru) ou `YT_COOKIES_FILE` (caminho). O servidor
+  escreve um jar temporário `chmod 600` em `data/.yt-cookies-*` por execução e
+  o APAGA em seguida (um cookie jar é credencial: não pode sobrar no disco).
+  É o que libera o bloqueio de IP em VPS/datacenter.
 - **Download real não foi validado neste ambiente**: o YouTube bloqueia (403
   anti-bot) IPs de datacenter para MÍDIA (a busca passa). A cadeia inteira
   (spawn → ffmpeg → validação de bytes → storage → `/static` → banco) foi
