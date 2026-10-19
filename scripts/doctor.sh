@@ -81,14 +81,16 @@ fi
 # Verifica se o ffmpeg FUNCIONA, não só se existe: no Termux um ffmpeg com
 # dependência faltando (instalação parcial) fica no PATH mas não executa, e o
 # yt-dlp então aborta com "ffmpeg is not installed".
-if command -v ffmpeg >/dev/null 2>&1; then
+if [ -n "${YT_NO_FFMPEG:-}" ]; then
+  ok "YT_NO_FFMPEG ativo — a música do perfil funciona SEM ffmpeg (o app toca a janela)"
+elif command -v ffmpeg >/dev/null 2>&1; then
   if ffmpeg -version >/dev/null 2>&1; then
     ok "ffmpeg presente e funcional (necessário para cortar o trecho)"
   else
-    warn "ffmpeg existe mas NÃO executa (instalação incompleta?) — rode: pkg upgrade && pkg install ffmpeg"
+    warn "ffmpeg existe mas NÃO executa — use YT_NO_FFMPEG=1 ou: pkg upgrade && pkg install ffmpeg"
   fi
 else
-  warn "ffmpeg ausente — o download do trecho falha (Termux: pkg install ffmpeg)"
+  warn "ffmpeg ausente — a música do perfil ainda funciona (o app toca a janela), mas o trecho fica maior"
 fi
 # Runtime de JavaScript: o YouTube exige um. O yt-dlp só habilita `deno` por
 # padrão; no Termux o Node do próprio servidor serve de fallback.

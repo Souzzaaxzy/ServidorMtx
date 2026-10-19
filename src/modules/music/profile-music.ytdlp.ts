@@ -96,11 +96,86 @@ async function resolveYtdlpCommand(): Promise<string[]> {
   );
 }
 
+/** Interpreta um valor de env como booleano ligado (1/true/yes/on). */
+function isTruthy(value: string | undefined): boolean {
+  if (!value) return false;
+  return ['1', 'true', 'yes', 'on', 'sim'].includes(value.trim().toLowerCase());
+}
+
 /** Marca um comando como inválido para forçar nova sondagem. */
 function invalidateResolvedCommand(): void {
   resolvedCommand = null;
   resolvedForCandidates = null;
   jsRuntimeArgs = null;
+  ffmpegLocation = null;
+}
+
+/**
+ * Localiza o binário do ffmpeg (cacheado).
+ *
+ * O yt-dlp precisa do ffmpeg para `--download-sections`, mas procura ele no
+ * PATH — e no Termux o `pkg` instala em `$PREFIX/bin`, que pode faltar no PATH
+ * do processo. Aqui descobrimos o caminho ABSOLUTO e passamos via
+ * `--ffmpeg-location`, eliminando a dependência do PATH.
+ *
+ * Retorna o diretório que contém o ffmpeg, ou null quando não há nenhum.
+ */
+let ffmpegLocation: string | null | undefined;
+
+export async function findFfmpegDir(): Promise<string | null> {
+  if (ffmpegLocation !== undefined) return ffmpegLocation;
+
+  // Válvula de escape: com ffmpeg quebrado/parcial (comum no Termux), o
+  // operador pode forçar o caminho SEM ffmpeg em vez de tentar consertá-lo.
+  // Sem isso, um ffmpeg que existe mas falha no meio do download deixaria o
+  // recurso inutilizável sem saída.
+  if (isTruthy(process.env.YT_NO_FFMPEG)) {
+    ffmpegLocation = null;
+    return null;
+  }
+
+  const explicit = (process.env.FFMPEG_PATH ?? '').trim();
+  const candidates: string[] = [];
+  if (explicit !== '') {
+    // Aceita tanto o binário quanto o diretório.
+    candidates.push(
+      explicit.endsWith('ffmpeg') ? path.dirname(explicit) : explicit,
+    );
+  }
+  candidates.push(
+    process.env.PREFIX ? `${process.env.PREFIX}/bin` : '',
+    '/data/data/com.termux/files/usr/bin',
+    '/usr/local/bin',
+    '/usr/bin',
+    '/bin',
+    '/opt/homebrew/bin',
+    '/usr/local/opt/ffmpeg/bin',
+  );
+
+  for (const dir of candidates) {
+    if (dir === '') continue;
+    const bin = path.join(dir, 'ffmpeg');
+    try {
+      await fs.access(bin);
+      // Existe não basta: um ffmpeg parcialmente instalado (comum no Termux)
+      // fica no PATH mas não executa.
+      const probe = await runProcess([bin], ['-version'], 15_000).catch(() => null);
+      if (probe && probe.code === 0) {
+        ffmpegLocation = dir;
+        return dir;
+      }
+    } catch {
+      // Não existe nesse diretório — tenta o próximo.
+    }
+  }
+  ffmpegLocation = null;
+  return null;
+}
+
+/** `--ffmpeg-location <dir>` quando achamos um ffmpeg que executa. */
+async function ffmpegArgs(): Promise<string[]> {
+  const dir = await findFfmpegDir();
+  return dir ? ['--ffmpeg-location', dir] : [];
 }
 
 /**
@@ -565,8 +640,15 @@ async function runYtdlp(
   // O runtime de JavaScript vem antes de tudo: sem ele o YouTube nem responde.
   const jsArgs = await resolveJsRuntimeArgs();
   const rcArgs = await remoteComponentArgs();
+  // Aponta o ffmpeg EXPLICITAMENTE: no Termux ele pode estar instalado e
+  // mesmo assim fora do PATH do processo (foi o caso relatado).
+  const ffArgs = await ffmpegArgs();
   try {
-    return await runProcess(command, [...cArgs, ...jsArgs, ...rcArgs, ...args], timeoutMs);
+    return await runProcess(
+      command,
+      [...cArgs, ...jsArgs, ...rcArgs, ...ffArgs, ...args],
+      timeoutMs,
+    );
   } catch (err) {
     // Se o comando sumiu entre a sondagem e agora, a próxima chamada resolve
     // de novo em vez de ficar preso num caminho inválido.
@@ -642,15 +724,32 @@ export async function searchProfileMusic(query: string): Promise<MusicSearchResu
 export interface StoredProfileMusicFile {
   url: string;
   bytes: number;
+  /**
+   * True quando o arquivo é a FAIXA INTEIRA e o app deve tocar apenas a
+   * janela [startMs, startMs+durationMs). Acontece no caminho SEM ffmpeg:
+   * em vez de recortar no servidor, o player começa no offset e para no fim
+   * do trecho. O usuário ouve exatamente o mesmo trecho.
+   */
+  playWindowOnly?: boolean;
 }
 
 /**
- * Baixa SOMENTE o trecho [startMs, startMs + durationMs) do vídeo e devolve
- * a URL pública do arquivo. O trecho é re-codificado para m4a (AAC), o
- * container que o app já toca nativamente.
+ * Baixa o áudio do vídeo e devolve a URL do arquivo.
  *
- * A seção é validada ANTES: nunca aceitamos um trecho maior que o limite,
- * mesmo que o cliente peça.
+ * DOIS CAMINHOS, de propósito:
+ *
+ *  A) COM ffmpeg — baixa só o TRECHO (`--download-sections`) e recodifica em
+ *     m4a. Menos banda e menos disco. É o caminho preferido.
+ *
+ *  B) SEM ffmpeg — baixa a faixa inteira em m4a (formato 140, que já é AAC
+ *     num container MP4, sem precisar de conversão) e marca
+ *     `playWindowOnly`. O ffmpeg é o item MAIS FRÁGIL do Termux (~50 pacotes,
+ *     costuma falhar e deixar instalação parcial), então o recurso não pode
+ *     depender dele para existir. Sem este caminho, "não tenho ffmpeg"
+ *     significava "a música do perfil não funciona" — que era o seu caso.
+ *
+ * A validação de tamanho é mais rígida no caminho B (a faixa é maior), e os
+ * bytes continuam sendo validados como container de áudio real.
  */
 export async function downloadMusicExcerpt(
   sourceId: string,
@@ -677,29 +776,44 @@ export async function downloadMusicExcerpt(
   const startSec = (startMs / 1000).toFixed(3);
   const endSec = ((startMs + durationMs) / 1000).toFixed(3);
 
-  const { code, stderr } = await runYtdlp(
-    [
-      '--no-warnings',
-      '--no-playlist',
-      // Só o trecho: o yt-dlp busca os ranges e o ffmpeg corta/re-codifica.
-      '--download-sections',
-      `*${startSec}-${endSec}`,
-      '--force-keyframes-at-cuts',
-      '-f',
-      'bestaudio',
-      '-x',
-      '--audio-format',
-      'm4a',
-      '--audio-quality',
-      '5',
-      '--max-filesize',
-      String(MAX_PROFILE_MUSIC_BYTES),
-      '-o',
-      dest,
-      `https://www.youtube.com/watch?v=${sourceId}`,
-    ],
-    DOWNLOAD_TIMEOUT_MS,
-  );
+  const hasFfmpeg = (await findFfmpegDir()) !== null;
+  const args = hasFfmpeg
+    ? [
+        '--no-warnings',
+        '--no-playlist',
+        // Só o trecho: o yt-dlp busca os ranges e o ffmpeg corta/re-codifica.
+        '--download-sections',
+        `*${startSec}-${endSec}`,
+        '--force-keyframes-at-cuts',
+        '-f',
+        'bestaudio',
+        '-x',
+        '--audio-format',
+        'm4a',
+        '--audio-quality',
+        '5',
+        '--max-filesize',
+        String(MAX_PROFILE_MUSIC_BYTES),
+        '-o',
+        dest,
+        `https://www.youtube.com/watch?v=${sourceId}`,
+      ]
+    : [
+        '--no-warnings',
+        '--no-playlist',
+        // Formato 140 = m4a/AAC servido pronto pelo YouTube: nenhuma
+        // conversão, portanto nenhum ffmpeg. Se o vídeo não tiver 140, o
+        // fallback `ba` ainda evita a etapa de merge (que exigiria ffmpeg).
+        '-f',
+        '140/ba[ext=m4a]/ba',
+        '--max-filesize',
+        String(MAX_PROFILE_MUSIC_BYTES),
+        '-o',
+        dest,
+        `https://www.youtube.com/watch?v=${sourceId}`,
+      ];
+
+  const { code, stderr } = await runYtdlp(args, DOWNLOAD_TIMEOUT_MS);
 
   if (code !== 0) {
     await fs.rm(dest, { force: true }).catch(() => void 0);
@@ -738,7 +852,12 @@ export async function downloadMusicExcerpt(
     throw ApiError.internal('O arquivo baixado não é um áudio válido. Tente outra música.');
   }
 
-  return { url: `${publicBase()}/static/music/${stem}.m4a`, bytes: stat.size };
+  return {
+    url: `${publicBase()}/static/music/${stem}.m4a`,
+    bytes: stat.size,
+    // Sem ffmpeg o arquivo é a faixa inteira: o app toca só a janela.
+    ...(hasFfmpeg ? {} : { playWindowOnly: true }),
+  };
 }
 
 /** Remove um arquivo de música do perfil (best-effort). */

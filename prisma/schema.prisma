@@ -978,6 +978,11 @@ model ProfileMusic {
   // Start offset of the excerpt within the source track (milliseconds) —
   // lets the UI show "1:12 - 2:12" and lets a re-cut reuse the same source.
   startMs       Int      @default(0)
+  // True when the stored FILE is the WHOLE track and the player must play
+  // only the [startMs, startMs+durationMs) window. This is the no-ffmpeg
+  // path: without ffmpeg we cannot cut the audio, so the app seeks instead.
+  // False when the file already IS the excerpt (the ffmpeg path).
+  playWindowOnly Boolean @default(false)
   sourceId      String
   sourceUrl     String
   createdAt     DateTime @default(now())

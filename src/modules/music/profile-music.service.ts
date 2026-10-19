@@ -23,6 +23,11 @@ export interface ProfileMusicDto {
   durationMs: number;
   /** Início do trecho na faixa original (ms). */
   startMs: number;
+  /**
+   * O arquivo é a FAIXA INTEIRA e o app deve tocar só a janela
+   * [startMs, startMs+durationMs). Acontece no caminho SEM ffmpeg.
+   */
+  playWindowOnly: boolean;
   /** Página da faixa no YouTube (crédito ao autor). */
   sourceUrl: string;
   sourceId: string;
@@ -35,6 +40,7 @@ function toDto(row: {
   audioUrl: string;
   durationMs: number;
   startMs: number;
+  playWindowOnly: boolean;
   sourceUrl: string;
   sourceId: string;
 }): ProfileMusicDto {
@@ -45,6 +51,7 @@ function toDto(row: {
     audioUrl: row.audioUrl,
     durationMs: row.durationMs,
     startMs: row.startMs,
+    playWindowOnly: row.playWindowOnly,
     sourceUrl: row.sourceUrl,
     sourceId: row.sourceId,
   };
@@ -106,6 +113,8 @@ export async function setProfileMusic(
       audioUrl: stored.url,
       durationMs,
       startMs,
+      // Sem ffmpeg o arquivo é a faixa inteira e o app toca só a janela.
+      playWindowOnly: stored.playWindowOnly === true,
       sourceId: input.sourceId,
       sourceUrl: `https://www.youtube.com/watch?v=${input.sourceId}`,
     },
@@ -117,6 +126,7 @@ export async function setProfileMusic(
       audioUrl: stored.url,
       durationMs,
       startMs,
+      playWindowOnly: stored.playWindowOnly === true,
       sourceId: input.sourceId,
       sourceUrl: `https://www.youtube.com/watch?v=${input.sourceId}`,
     },

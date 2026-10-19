@@ -1,0 +1,14 @@
+-- playWindowOnly: o arquivo guardado é a FAIXA INTEIRA e o player deve tocar
+-- apenas a janela [startMs, startMs+durationMs).
+--
+-- WHY: cortar o áudio exige ffmpeg, que é o pacote mais frágil do Termux
+-- (~50 dependências, falha com frequência e deixa instalação parcial). Sem
+-- este caminho, "sem ffmpeg" significava "a música do perfil não funciona".
+-- Agora, sem ffmpeg, o servidor guarda a faixa em m4a (formato 140, que o
+-- YouTube entrega pronto, sem conversão) e o APP começa a tocar no offset e
+-- para no fim do trecho — o usuário ouve exatamente o mesmo trecho.
+--
+-- Aditiva: ADD COLUMN com default, sem rebuild e sem tocar em dados
+-- existentes. Linhas antigas ficam `false`, que é o comportamento correto
+-- para arquivos que JÁ são o trecho (caminho com ffmpeg).
+ALTER TABLE "profile_music" ADD COLUMN "playWindowOnly" BOOLEAN NOT NULL DEFAULT false;

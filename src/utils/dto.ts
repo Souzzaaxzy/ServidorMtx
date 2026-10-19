@@ -200,6 +200,8 @@ export interface ProfileMusicPayload {
   audioUrl: string;
   durationMs: number;
   startMs: number;
+  /** O arquivo é a faixa inteira; tocar só [startMs, startMs+durationMs). */
+  playWindowOnly: boolean;
   sourceUrl: string;
   sourceId: string;
 }
@@ -212,6 +214,7 @@ type WithProfileMusic = {
     audioUrl: string;
     durationMs: number;
     startMs: number;
+    playWindowOnly: boolean;
     sourceUrl: string;
     sourceId: string;
   } | null;
@@ -233,6 +236,7 @@ export function toProfileUser(
           audioUrl: user.profileMusic.audioUrl,
           durationMs: user.profileMusic.durationMs,
           startMs: user.profileMusic.startMs,
+          playWindowOnly: user.profileMusic.playWindowOnly,
           sourceUrl: user.profileMusic.sourceUrl,
           sourceId: user.profileMusic.sourceId,
         }

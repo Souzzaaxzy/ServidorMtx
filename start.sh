@@ -222,8 +222,13 @@ ensure_media_tools() {
   fi
 
   # Confere o resultado REAL (a instalação pode falhar silenciosamente).
+  # O yt-dlp é OBRIGATÓRIO; o ffmpeg é OPCIONAL (sem ele o app toca a janela).
   if command -v yt-dlp >/dev/null 2>&1 || python3 -m yt_dlp --version >/dev/null 2>&1; then
-    ok "Música do perfil: yt-dlp disponível"
+    if command -v ffmpeg >/dev/null 2>&1 && ffmpeg -version >/dev/null 2>&1; then
+      ok "Música do perfil: yt-dlp + ffmpeg prontos"
+    else
+      ok "Música do perfil: yt-dlp pronto (sem ffmpeg — o app toca a janela do trecho)"
+    fi
   else
     warn "Música do perfil indisponível: yt-dlp ausente (rode: npm run doctor)"
   fi

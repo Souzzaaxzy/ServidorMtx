@@ -564,7 +564,7 @@ ensure_media_tools
     const calls = await fs.readFile(pipLog, 'utf8');
     expect(calls).toMatch(/pip install -U --break-system-packages yt-dlp/);
     // …and the FINAL state is reported from a real re-check, not assumed.
-    expect(out).toContain('OK:Música do perfil: yt-dlp disponível');
+    expect(out).toMatch(/OK:Música do perfil: yt-dlp/);
     expect(out).not.toContain('indisponível: yt-dlp ausente');
   });
 
@@ -837,6 +837,8 @@ describe('profile music set/get/clear', () => {
       audioUrl: '/static/music/excerpt.m4a',
       durationMs: 45000,
       startMs: 12000,
+      // O default da coluna: o arquivo já É o trecho (caminho com ffmpeg).
+      playWindowOnly: false,
       sourceUrl: 'https://www.youtube.com/watch?v=abc1234567',
       sourceId: 'abc1234567',
     });
@@ -971,5 +973,97 @@ printf '<html>Sign in to confirm you are not a bot</html>' > "$out"
     );
     await expect(downloadMusicExcerpt('abcdef12345', 0, 30000)).rejects.toThrow();
     await fs.rm(badDir, { recursive: true, force: true });
+  });
+
+  // ── Os DOIS caminhos: com e sem ffmpeg ──────────────────────
+  // O ffmpeg é o pacote mais frágil do Termux (~50 dependências, falha e deixa
+  // instalação parcial). O recurso não pode deixar de existir por causa dele:
+  // sem ffmpeg o servidor guarda a faixa inteira e o app toca a janela.
+  it('uses --download-sections when ffmpeg is available', async () => {
+    process.env.YT_DLP_PATH = binPath;
+    delete process.env.YT_NO_FFMPEG;
+    vi.resetModules();
+    const mod = await import(
+      '../src/modules/music/profile-music.ytdlp.js'
+    );
+    // Se o host de teste não tem ffmpeg, o caminho com ffmpeg não existe para
+    // ser exercitado — o teste do caminho SEM ffmpeg cobre o resto.
+    if ((await mod.findFfmpegDir()) === null) return;
+
+    const result = await mod.downloadMusicExcerpt('abcdef12345', 30000, 60000);
+    // Com ffmpeg o arquivo JÁ é o trecho, então não há janela a tocar.
+    expect(result.playWindowOnly).toBeUndefined();
+    const name = result.url.split('/static/music/')[1];
+    await fs.rm(path.resolve(process.cwd(), 'uploads', 'music', name), {
+      force: true,
+    });
+  });
+
+  it('WITHOUT ffmpeg: downloads the whole track and flags playWindowOnly', async () => {
+    // Um yt-dlp que falha se pedirem download-sections (como o real sem
+    // ffmpeg) e grava os args, provando que o caminho alternativo foi usado.
+    const noFfDir = path.resolve(process.cwd(), 'tests/fixtures/music-bin-noff');
+    await fs.mkdir(noFfDir, { recursive: true });
+    const noFfBin = path.join(noFfDir, 'ytdlp-noff.sh');
+    const argsLog = path.join(noFfDir, 'args.log');
+    await fs.writeFile(
+      noFfBin,
+      `#!/usr/bin/env bash
+if [ "$1" = "--version" ]; then echo "2026.08.19"; exit 0; fi
+if [ "$1" = "--help" ]; then echo "  --js-runtimes RUNTIME[:PATH]"; exit 0; fi
+echo "ARGS: $*" >> "${argsLog}"
+case "$*" in
+  *--download-sections*)
+    echo "ERROR: You have requested downloading the video partially, but ffmpeg is not installed. Aborting" >&2
+    exit 1;;
+esac
+out=""
+prev=""
+for a in "$@"; do
+  if [ "$prev" = "-o" ]; then out="$a"; fi
+  prev="$a"
+done
+mkdir -p "$(dirname "$out")"
+printf '\\x00\\x00\\x00\\x20ftypM4A \\x00\\x00\\x00\\x00M4A mp42isom' > "$out"
+head -c 4096 /dev/zero >> "$out"
+`,
+      { mode: 0o755 },
+    );
+    process.env.YT_DLP_PATH = noFfBin;
+    // Força o caminho sem ffmpeg (a válvula de escape existe justamente para
+    // um ffmpeg quebrado/parcial).
+    process.env.YT_NO_FFMPEG = '1';
+    await fs.rm(argsLog, { force: true });
+
+    vi.resetModules();
+    const { downloadMusicExcerpt } = await import(
+      '../src/modules/music/profile-music.ytdlp.js'
+    );
+    const result = await downloadMusicExcerpt('abcdef12345', 30000, 60000);
+    // A flag avisa o app para tocar só a janela.
+    expect(result.playWindowOnly).toBe(true);
+    expect(result.bytes).toBeGreaterThan(0);
+
+    const args = await fs.readFile(argsLog, 'utf8');
+    expect(args).not.toContain('--download-sections');
+    expect(args).toMatch(/-f 140/);
+
+    delete process.env.YT_NO_FFMPEG;
+    const name = result.url.split('/static/music/')[1];
+    await fs.rm(path.resolve(process.cwd(), 'uploads', 'music', name), {
+      force: true,
+    });
+    await fs.rm(noFfDir, { recursive: true, force: true });
+  });
+
+  it('YT_NO_FFMPEG makes findFfmpegDir report no ffmpeg', async () => {
+    process.env.YT_NO_FFMPEG = 'true';
+    vi.resetModules();
+    const { findFfmpegDir } = await import(
+      '../src/modules/music/profile-music.ytdlp.js'
+    );
+    expect(await findFfmpegDir()).toBeNull();
+    delete process.env.YT_NO_FFMPEG;
+    vi.resetModules();
   });
 });

@@ -214,9 +214,21 @@ PostgreSQL). Runs on Pterodactyl/Bronxys via `npm start` (self-provisions).
     ambígua: YT Music usa **"Artista – Música"**, o YT comum usa
     "Música - Artista"; o **uploader desempata** (o lado que casa com o canal
     é o artista). Sem pista, vale o padrão do YT Music.
-  - **Download**: só o TRECHO (`--download-sections`), nunca a música inteira.
-    Exige `ffmpeg` no host. Os bytes baixados são validados (container
-    ISOBMFF/`ftyp`) — HTML de erro do YouTube não vira "áudio".
+  - **Download**: dois caminhos, de propósito.
+    * COM ffmpeg → `--download-sections` baixa só o trecho e recodifica em m4a
+      (menos banda/disco). É o preferido.
+    * SEM ffmpeg → baixa a faixa inteira no formato `140` (m4a/AAC que o
+      YouTube entrega pronto, sem conversão) e marca `playWindowOnly`. O
+      **app** então começa no offset e para no fim do trecho — o ouvinte ouve
+      o mesmo. O ffmpeg é o pacote MAIS FRÁGIL do Termux (~50 dependências,
+      falha e deixa instalação parcial), então o recurso não pode depender
+      dele para existir. `YT_NO_FFMPEG=1` força este caminho.
+  - **ffmpeg descoberto explicitamente**: `findFfmpegDir()` procura o binário
+    (que também precisa EXECUTAR, não só existir) e o caminho vai ao yt-dlp
+    via `--ffmpeg-location`. Assim o PATH do processo deixa de importar.
+    `FFMPEG_PATH` sobrepõe.
+  - Os bytes baixados são validados (container ISOBMFF/`ftyp`) — HTML de erro
+    do YouTube não vira "áudio".
   - O binário é resolvido uma vez (`YT_DLP_PATH` → `yt-dlp` → `python3 -m
     yt_dlp`) e executado com `spawn` sem shell (a busca do usuário nunca vira
     comando). Tudo com timeout.
