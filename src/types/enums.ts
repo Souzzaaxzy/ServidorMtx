@@ -43,28 +43,6 @@ export const NotificationType = {
 export type NotificationType =
   (typeof NotificationType)[keyof typeof NotificationType];
 
-export const ItemType = {
-  AVATAR_FRAME: 'AVATAR_FRAME',
-  PROFILE_BANNER: 'PROFILE_BANNER',
-  BADGE: 'BADGE',
-  PROFILE_EFFECT: 'PROFILE_EFFECT',
-  THEME_ACCCENT: 'THEME_ACCCENT',
-  // A solid nickname color. The item's assetUrl carries the hex value
-  // (e.g. "#0066FF"); colors are free catalog entries — the server only
-  // validates id/active/type on equip, never a client-supplied hex.
-  NAME_COLOR: 'NAME_COLOR',
-} as const;
-export type ItemType = (typeof ItemType)[keyof typeof ItemType];
-
-export const ItemRarity = {
-  COMMON: 'COMMON',
-  UNCOMMON: 'UNCOMMON',
-  RARE: 'RARE',
-  EPIC: 'EPIC',
-  LEGENDARY: 'LEGENDARY',
-} as const;
-export type ItemRarity = (typeof ItemRarity)[keyof typeof ItemRarity];
-
 export const XpReason = {
   POST_CREATED: 'POST_CREATED',
   COMMENT_CREATED: 'COMMENT_CREATED',

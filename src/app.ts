@@ -22,7 +22,6 @@ import { userRoutes } from './modules/users/user.routes.js';
 import { searchRoutes } from './modules/search/search.routes.js';
 import { uploadRoutes } from './modules/uploads/upload.routes.js';
 import { gamificationRoutes } from './modules/gamification/gamification.routes.js';
-import { customizationRoutes } from './modules/customization/customization.routes.js';
 import { musicRoutes } from './modules/music/music.routes.js';
 import { gameRoutes } from './modules/games/game.routes.js';
 import { callRoutes } from './modules/calls/call.routes.js';
@@ -137,7 +136,6 @@ export async function buildServer() {
   await app.register(authRoutes, { prefix: '/api/auth' });
   await app.register(configRoutes, { prefix: '/api' });
   await app.register(gamificationRoutes, { prefix: '/api' });
-  await app.register(customizationRoutes, { prefix: '/api' });
   await app.register(musicRoutes, { prefix: '/api' });
   // Profile music (YouTube search + excerpt download). Registered AFTER
   // musicRoutes so `/music/profile/*` is matched by its own handler.

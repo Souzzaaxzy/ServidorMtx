@@ -120,6 +120,9 @@ const MAGIC_BYTES: Record<string, RegExp> = {
   jpg: /^ffd8ff/,
   png: /^89504e470d0a1a0a/i,
   webp: /^52494646.{8}57454250/i, // RIFF....WEBP
+  // GIF87a/GIF89a — avatar e banner aceitam GIF ANIMADO. Só a assinatura
+  // basta: as versões diferem apenas no sufixo ("87a"/"89a").
+  gif: /^47494638(37|39)61/i,
 };
 
 export function detectImageExtension(buffer: Buffer): string {

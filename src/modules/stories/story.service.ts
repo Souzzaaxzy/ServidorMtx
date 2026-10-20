@@ -5,8 +5,6 @@ import { validateVideoDurationMs } from '../../utils/storage.js';
 import { getOrCreateConversation, sendMessage } from '../chat/chat.service.js';
 import {
   AUTHOR_SELECT,
-  nicknameCosmetics,
-  type NicknameCosmeticsPayload,
 } from '../../utils/dto.js';
 
 // ── Stories ──────────────────────────────────────────────────
@@ -30,7 +28,7 @@ export type StoryAuthor = {
   id: string;
   nickname: string;
   avatarUrl: string | null;
-} & NicknameCosmeticsPayload;
+};
 
 type StoryRow = {
   id: string;
@@ -43,9 +41,7 @@ type StoryRow = {
   caption: string;
   expiresAt: Date;
   createdAt: Date;
-  user: { id: string; nickname: string; avatarUrl: string | null } & Parameters<
-    typeof nicknameCosmetics
-  >[0];
+  user: { id: string; nickname: string; avatarUrl: string | null };
 };
 
 export interface StoryItem {
@@ -91,7 +87,6 @@ function toStoryItem(
       id: story.user.id,
       nickname: story.user.nickname,
       avatarUrl: story.user.avatarUrl,
-      ...nicknameCosmetics(story.user),
     },
     type: kind,
     // An empty mediaUrl means "text story" — the app receives null and

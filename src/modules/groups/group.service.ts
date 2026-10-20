@@ -1,6 +1,6 @@
 import { prisma } from '../../config/prisma.js';
 import { ApiError } from '../../utils/errors.js';
-import { AUTHOR_SELECT, nicknameCosmetics } from '../../utils/dto.js';
+import { AUTHOR_SELECT } from '../../utils/dto.js';
 import { areFriends } from '../friends/friend.service.js';
 import { deleteLocalFileByUrl, saveAudioFile } from '../uploads/upload.service.js';
 import {
@@ -40,10 +40,6 @@ export interface ChatUser {
   id: string;
   nickname: string;
   avatarUrl: string | null;
-  nameColor: string | null;
-  nameColorId: string | null;
-  frameId: string | null;
-   frameAsset: string | null;
   /** Group-scoped ban state: true when this user is CURRENTLY banned from the
    * group the payload belongs to (set only in group-message senders). Private
    * chat peers never carry it — the flag is meaningless outside a group. */
@@ -122,14 +118,9 @@ export interface MentionInfo {
 }
 
 export interface ChatPeerPayload {
-  
   id: string;
-   nickname: string;
-   avatarUrl: string | null;
-   nameColor: string | null;
-   nameColorId: string | null;
-   frameId: string | null;
-   frameAsset: string | null;
+  nickname: string;
+  avatarUrl: string | null;
 }
 
 export interface ReplyInfo {
@@ -149,23 +140,13 @@ export interface GroupMessagePage {
 
 export const CHAT_USER_SELECT = AUTHOR_SELECT;
 function toChatUser(
-
-  user: { id: string; nickname: string; avatarUrl: string | null } & {
-    equippedItems?: {
-
-      slot: string;
-      item: { id: string; name: string; assetUrl: string; config: string };
-    }[];
-  },
+  user: { id: string; nickname: string; avatarUrl: string | null },
   banned = false,
 ): ChatUser {
-  const cosmetics = nicknameCosmetics(user);
   return {
-
     id: user.id,
     nickname: user.nickname,
     avatarUrl: user.avatarUrl,
-    ...cosmetics,
     banned,
   };
 }
@@ -204,10 +185,6 @@ async function chatPeerPayload(userId: string): Promise<ChatPeerPayload> {
      id: userId,
      nickname: 'desconhecido',
      avatarUrl: null,
-     nameColor: null,
-     nameColorId: null,
-     frameId: null,
-     frameAsset: null,
    };
   }
   return toChatUser(user);

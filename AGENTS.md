@@ -347,22 +347,19 @@ PostgreSQL). Runs on Pterodactyl/Bronxys via `npm start` (self-provisions).
 ## Git identity
 openhands / openhands@all-hands.dev
 
-## Nickname cosmetics (color only)
-- ONE slot: `NAME_COLOR` (hex in `assetUrl`). `NAME_EFFECT` was REMOVED
-  entirely (lag): legacy catalog rows are deactivated (never deleted) and
-  legacy equipped rows are cleared on boot by seed.ts; the free-equip list
-  (FREE_EQUIP_TYPES in customization.service.ts) no longer includes it.
-- Nickname itself is full Unicode (emoji/accents/case preserved) with
-  case-insensitive uniqueness via `nicknameKey` (lowercased display form,
-  migration 20260826193000). Validation in src/utils/normalize.ts blocks
-  only '@', HTML brackets/quotes and control/format chars (ZWSP, bidi).
-- Consolidated save: `PUT /api/customization/cosmetics` accepts
-  `{ nameColorId? }` (string=equip, null=unequip, absent=untouched) in ONE
-  transaction; strict allow-list rejects unknown fields.
-  `GET /api/customization/cosmetics` returns the saved slot.
-- Every nickname payload (feed, comments, profile, search, friends,
-  notifications) embeds the OWNER's `nameColor/nameColorId` via
-  `NICKNAME_COSMETICS_SELECT` + `nicknameCosmetics()` in src/utils/dto.ts.
+## Personalização (REMOVIDA) + GIF no avatar/banner
+- O sistema de PERSONALIZAÇÃO foi REMOVIDO por completo: catálogo (`items`),
+  posse (`user_items`) e equipados (`equipped_items`) saíram do schema, e o
+  módulo `src/modules/customization/` foi apagado. Migração
+  `20260921000000_remove_customization` faz `DROP TABLE` (filhas primeiro).
+  Os campos `customization`/`nameColor`/`frameId`/`frameAsset` NÃO existem mais
+  em nenhum payload — `AUTHOR_SELECT` e `ChatUser`/`ChatPeerPayload` ficaram só
+  com id/nickname/avatarUrl.
+- **GIF aceito no avatar e no banner** (`.gif`, magic bytes `GIF87a`/`GIF89a`).
+  Só IMAGEM: vídeo (`.mp4`, ISOBMFF) continua rejeitado pela allow-list de
+  MIME/extensão E pelos magic bytes. `saveLocalFile` grava com a extensão
+  detectada dos BYTES, então o arquivo servido é um GIF real e o cliente
+  anima.
 
 ## Group permissions (comment + group-message deletion)
 - **Comments**: `deleteComment` allows ONLY the comment's author OR the post's

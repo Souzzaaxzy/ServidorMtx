@@ -20,11 +20,8 @@ export async function getProfile(
         ? { publicId }
         : { nicknameKey: nicknameKey(nickname) },
     include: {
-      // Equipped cosmetics ride along so any profile (own or someone
-      // else's) can render frames/badges without an extra request.
-      equippedItems: { include: { item: true } },
-      // The pinned profile song (one row, or none) rides along for the same
-      // reason: the screen renders the play button without a second request.
+      // The pinned profile song (one row, or none) rides along so the screen
+      // renders the play button without a second request.
       profileMusic: true,
       posts: {
         orderBy: { createdAt: 'desc' },

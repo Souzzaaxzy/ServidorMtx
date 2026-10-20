@@ -1,6 +1,6 @@
 import { prisma } from '../../config/prisma.js';
 import { ApiError } from '../../utils/errors.js';
-import { AUTHOR_SELECT, nicknameCosmetics } from '../../utils/dto.js';
+import { AUTHOR_SELECT } from '../../utils/dto.js';
 import { areFriends } from '../friends/friend.service.js';
 import { saveAudioFile } from '../uploads/upload.service.js';
 import {
@@ -30,10 +30,6 @@ export interface ChatUser {
   id: string;
   nickname: string;
   avatarUrl: string | null;
-  nameColor: string | null;
-  nameColorId: string | null;
-  frameId: string | null;
-  frameAsset: string | null;
 }
 
 export interface ConversationItem {
@@ -109,10 +105,6 @@ export interface ChatPeerPayload {
   id: string;
   nickname: string;
   avatarUrl: string | null;
-  nameColor: string | null;
-  nameColorId: string | null;
-  frameId: string | null;
-  frameAsset: string | null;
 }
 
 /** Preview of the original message a reply points at. Compact — the app
@@ -132,23 +124,15 @@ export interface MessagePage {
 }
 
 // Reuses the shared author select (id + nickname + avatar + equipped
-// nickname cosmetics) so chat nicknames render each user's own color/frame.
 export const CHAT_USER_SELECT = AUTHOR_SELECT;
 
 function toChatUser(
-  user: { id: string; nickname: string; avatarUrl: string | null } & {
-    equippedItems?: {
-      slot: string;
-      item: { id: string; name: string; assetUrl: string; config: string };
-    }[];
-  },
+  user: { id: string; nickname: string; avatarUrl: string | null },
 ): ChatUser {
-  const cosmetics = nicknameCosmetics(user);
   return {
     id: user.id,
     nickname: user.nickname,
     avatarUrl: user.avatarUrl,
-    ...cosmetics,
   };
 }
 
@@ -868,10 +852,6 @@ async function chatPeerPayload(userId: string): Promise<ChatPeerPayload> {
       id: userId,
       nickname: 'desconhecido',
       avatarUrl: null,
-      nameColor: null,
-      nameColorId: null,
-      frameId: null,
-      frameAsset: null,
     };
   }
   return toChatUser(user);

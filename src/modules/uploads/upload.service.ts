@@ -16,20 +16,26 @@ const UPLOAD_DIR = path.resolve(process.cwd(), 'uploads');
 
 // Only formats whose magic bytes we actually verify are accepted — the
 // client-supplied MIME/extension is NEVER trusted on its own.
+// GIF incluído: avatar e banner aceitam GIF ANIMADO. Continua sendo IMAGEM —
+// vídeo (.mp4 e afins) é rejeitado, tanto pela allow-list quanto pelos magic
+// bytes (um MP4 não tem assinatura de imagem).
 const ALLOWED_MIME = new Set([
   'image/png',
   'image/jpeg',
   'image/webp',
+  'image/gif',
 ]);
 
-const ALLOWED_EXT = new Set(['.png', '.jpg', '.jpeg', '.webp']);
+const ALLOWED_EXT = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif']);
 
 /** Strips any path components from a filename to prevent traversal. */
 function sanitizeFilename(name: string): string {
   const base = path.basename(name).toLowerCase();
   const ext = path.extname(base);
   if (!ALLOWED_EXT.has(ext)) {
-    throw ApiError.validation('Tipo de arquivo não permitido. Use PNG, JPG ou WebP.');
+    throw ApiError.validation(
+      'Tipo de arquivo não permitido. Use PNG, JPG, WebP ou GIF.',
+    );
   }
   const stem = base.slice(0, base.length - ext.length).replace(/[^a-z0-9_-]+/g, '_');
   return `${stem || 'file'}-${randomBytes(6).toString('hex')}${ext}`;
@@ -63,7 +69,9 @@ export async function saveLocalFile(
   stream: Readable,
 ): Promise<StoredFile> {
   if (!ALLOWED_MIME.has(mimetype)) {
-    throw ApiError.validation('Tipo de arquivo não permitido. Use PNG, JPG ou WebP.');
+    throw ApiError.validation(
+      'Tipo de arquivo não permitido. Use PNG, JPG, WebP ou GIF.',
+    );
   }
   const safe = sanitizeFilename(filename);
 

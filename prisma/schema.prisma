@@ -99,8 +99,6 @@ model User {
   userCoins         MatrixCoin?
   userAchievements  UserAchievement[]
   userBadges        UserBadge[]
-  userItems         UserItem[]
-  equippedItems     EquippedItem[]
   eventParticipants EventParticipant[]
   playlists         Playlist[]
   gameSessions      GameSession[]
@@ -774,71 +772,6 @@ model UserBadge {
   @@unique([userId, badgeId])
   @@index([userId])
   @@map("user_badges")
-}
-
-// ── Customization (Personalization Engine) ────────────────────
-// The server owns the catalog. The APK only knows how to render a given
-// ItemType; adding items is a data operation, not an APK release.
-
-model Item {
-  id        String   @id
-  type      String
-  name      String
-  // For NAME_COLOR items this holds the hex color (e.g. "#0066FF") instead
-  // of an asset path — the "asset" of a color IS the color value.
-  assetUrl  String
-  rarity    String   @default("COMMON")
-  price     Int      @default(0)
-  // Optional grouping key for the catalog UI (e.g. "reds", "special").
-  // Owned by the server so the app never hardcodes which colors exist.
-  category  String?
-  // Explicit ordering inside a category (catalogs are curated, not
-  // alphabetical).
-  sortOrder Int      @default(0)
-  // JSON-serialized render configuration (SQLite has no Json type). Kept
-  // generic for future cosmetic types that need extra render data.
-  config    String   @default("{}")
-  active    Boolean  @default(true)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  userItems     UserItem[]
-  equippedItems EquippedItem[]
-
-  @@index([type])
-  @@map("items")
-}
-
-model UserItem {
-  id         String    @id @default(cuid())
-  userId     String
-  itemId     String
-  quantity   Int       @default(1)
-  acquiredAt DateTime  @default(now())
-  expiresAt  DateTime?
-  source     String    @default("GRANT")
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-  item Item @relation(fields: [itemId], references: [id], onDelete: Cascade)
-
-  @@unique([userId, itemId])
-  @@index([userId])
-  @@map("user_items")
-}
-
-model EquippedItem {
-  id         String   @id @default(cuid())
-  userId     String
-  itemId     String
-  slot       String
-  equippedAt DateTime @default(now())
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-  item Item @relation(fields: [itemId], references: [id], onDelete: Cascade)
-
-  @@unique([userId, slot])
-  @@index([userId])
-  @@map("equipped_items")
 }
 
 // ── Events ─────────────────────────────────────────────────────
