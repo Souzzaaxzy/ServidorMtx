@@ -86,13 +86,22 @@ echo "  Database       : SQLite ($DB_FILE)"
 echo "  Database file  : $([ -f "$DB_FILE" ] && echo 'presente ✓' || echo 'será criado na 1ª inicialização')"
 echo "  JWT_SECRET     : $([ -n "${JWT_SECRET:-}" ] && echo 'configurado ✓' || echo 'NÃO CONFIGURADO (será gerado)')"
 # YT_COOKIES: mostra só o ESTADO (o valor é credencial). É a primeira coisa a
-# conferir quando o YouTube bloqueia por anti-bot.
+# conferir quando o YouTube bloqueia por anti-bot. O arquivo drop-in
+# data/cookies.txt é o caminho mais simples: basta copiar o cookies.txt
+# exportado do navegador para a pasta data/ (sem variável nenhuma).
 if [ -n "${YT_COOKIES:-}" ]; then
   echo "  YT_COOKIES     : presente ✓ (valor não é exibido)"
 elif [ -n "${YT_COOKIES_FILE:-}" ]; then
   echo "  YT_COOKIES     : via arquivo (${YT_COOKIES_FILE})"
+elif [ -f "$DATA_DIR/cookies.txt" ]; then
+  if head -c 200 "$DATA_DIR/cookies.txt" 2>/dev/null | grep -qE '^# *(Netscape|HTTP Cookie File)'; then
+    echo "  YT_COOKIES     : $DATA_DIR/cookies.txt encontrado ✓"
+  else
+    echo "  YT_COOKIES     : $DATA_DIR/cookies.txt existe mas NÃO é um cookies.txt do Netscape ✗"
+  fi
 else
   echo "  YT_COOKIES     : ausente (o YouTube pode bloquear por anti-bot)"
+  echo "                   dica: copie o cookies.txt exportado do navegador para $DATA_DIR/"
 fi
 echo "  NODE_ENV       : ${NODE_ENV:-<vazio>}"
 echo "═══════════════════════════════════════════════════════════════"
@@ -295,6 +304,25 @@ ensure_media_tools
 mkdir -p "$DATA_DIR" uploads
 ok "Diretórios prontos: $DATA_DIR/ e uploads/"
 [ -f "$DB_FILE" ] && ok "Banco existente detectado: $DB_FILE (dados preservados)"
+
+# ── 4b. Cookies do YouTube (drop-in, opcional) ─────────────────
+# Um cookie jar é CREDENCIAL: ele autentica uma sessão logada. Se o operador
+# copiou data/cookies.txt, restringimos a permissão (chmod 600) para que o
+# arquivo não fique legível por outros usuários do host. Nunca apagamos o
+# arquivo — ele é a configuração do operador.
+if [ -f "$DATA_DIR/cookies.txt" ]; then
+  chmod 600 "$DATA_DIR/cookies.txt" 2>/dev/null || true
+  # Salvaguarda: se o chmod deixou o arquivo ilegível para ESTE processo (dono
+  # diferente — ex.: copiado como root num host onde o servidor roda como
+  # outro usuário), devolvemos a leitura. Melhor um cookie legível do que a
+  # busca de música quebrada por causa da permissão.
+  if ! head -c 1 "$DATA_DIR/cookies.txt" >/dev/null 2>&1; then
+    chmod 644 "$DATA_DIR/cookies.txt" 2>/dev/null || true
+    warn "Não foi possível restringir $DATA_DIR/cookies.txt (dono diferente) — permissão mantida"
+  else
+    ok "Cookies do YouTube: $DATA_DIR/cookies.txt (permissão restrita a 600)"
+  fi
+fi
 
 # ── 5. DATABASE_URL (SQLite, caminho absoluto) ─────────────────
 # Caminho absoluto remove a ambiguidade de resolução do `file:` entre o CLI

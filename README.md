@@ -46,10 +46,37 @@ curl http://localhost:3000/api/config
 | `AI_PROVIDER` | `mock` | `mock` \| `openai` \| `anthropic` |
 | `API_PORT` | `3000` | Porta exposta no host (apenas docker-compose) |
 | `STORAGE_ENDPOINT` | vazio | S3/R2/MinIO. Vazio = filesystem local |
+| `YT_COOKIES` | vazio | Cookie do YouTube em base64 (anti-bot). Opcional — veja abaixo |
 
 > O banco é **SQLite local** (`data/matrix.db`) — **não existe** `DATABASE_URL`
 > obrigatória nem qualquer banco externo. A pasta `data/` e o arquivo são
 > criados automaticamente na primeira inicialização.
+
+### Cookies do YouTube (música do perfil)
+
+A busca de música usa o yt-dlp. Em IP de VPS/datacenter o YouTube costuma
+bloquear com "Sign in to confirm you're not a bot". A solução é dar ao servidor
+um `cookies.txt` exportado de um navegador **logado no YouTube** (extensão que
+gere o formato Netscape, ex.: "Get cookies.txt LOCALLY").
+
+**Caminho mais simples — sem configurar nada:** copie o arquivo para
+`data/cookies.txt`:
+
+```bash
+cp cookies.txt /caminho/do/projeto/data/cookies.txt
+```
+
+O servidor encontra o arquivo sozinho, restringe a permissão para `600` no
+boot e o repassa ao yt-dlp (numa cópia temporária — o yt-dlp reescreve o
+arquivo de cookies ao sair, então o seu arquivo nunca é modificado). `data/` é
+o mesmo diretório persistente do `matrix.db`, então o arquivo sobrevive a
+reinícios e redeploys.
+
+Alternativas (usadas só se o drop-in não existir): `YT_COOKIES` (conteúdo em
+base64 ou texto cru) e `YT_COOKIES_FILE` (caminho). O `doctor` e o banner de
+boot mostram qual fonte está ativa — **sem nunca imprimir o valor**, que é
+credencial. Trate esse arquivo como senha: use uma conta descartável e troque
+o cookie se ele vazar.
 
 ## Endpoints principais
 

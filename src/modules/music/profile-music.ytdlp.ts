@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
-import { promises as fs } from 'node:fs';
+import { existsSync, promises as fs, readFileSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { ApiError } from '../../utils/errors.js';
 import { publicBase } from '../../utils/storage.js';
@@ -579,13 +579,18 @@ export function ytdlpFailureToApiError(stderr: string): ApiError {
     const cookie = cookieStatus();
     const hint = cookie === 'absent'
       ? 'Nenhum cookie chegou ao servidor — confira se YT_COOKIES está definido '
-        + 'NAS VARIÁVEIS DO SERVIDOR (não só no repositório) e reinicie.'
-      : cookie === 'malformed'
-        ? 'O YT_COOKIES chegou mas está MALFORMADO (não decodifica como base64 '
-          + 'de um cookie jar). Recopie o valor inteiro.'
-        : 'O cookie FOI enviado ao YouTube, então ele foi rejeitado: exporte um '
-          + 'cookies.txt NOVO, logado no youtube.com, e confirme que o arquivo '
-          + 'tem linhas com TAB (formato Netscape).';
+        + 'NAS VARIÁVEIS DO SERVIDOR (não só no repositório) e reinicie. Você '
+        + `também pode simplesmente copiar o cookies.txt para ${dropInCookieFile()}.`
+      : cookie === 'malformed-dropin'
+        ? `O arquivo ${dropInCookieFile()} existe mas NÃO é um cookies.txt do `
+          + 'Netscape (falta o cabeçalho "Netscape HTTP Cookie File"). Exporte '
+          + 'de novo, logado no youtube.com, e substitua o arquivo.'
+        : cookie === 'malformed'
+          ? 'O YT_COOKIES chegou mas está MALFORMADO (não decodifica como base64 '
+            + 'de um cookie jar). Recopie o valor inteiro.'
+          : 'O cookie FOI enviado ao YouTube, então ele foi rejeitado: exporte um '
+            + 'cookies.txt NOVO, logado no youtube.com, e confirme que o arquivo '
+            + 'tem linhas com TAB (formato Netscape).';
     return ApiError.internal(
       'O YouTube bloqueou o servidor (verificação anti-bot). ' + hint,
       { ...details, cookie },
@@ -608,57 +613,133 @@ export function ytdlpFailureToApiError(stderr: string): ApiError {
   );
 }
 
-/** Um cookie jar temporário criado a partir de YT_COOKIES (base64). */
-async function writeTempCookieFile(): Promise<string | null> {
-  const raw = process.env.YT_COOKIES;
-  if (!raw || raw.trim() === '') return null;
+/**
+ * Caminho do cookie jar "drop-in": `<projeto>/data/cookies.txt`.
+ *
+ * Existe para o caso mais simples possível: o operador exporta o cookies.txt
+ * do navegador e COPIA O ARQUIVO para a pasta `data/` do servidor. Sem
+ * variável de ambiente, sem base64, sem mexer no painel. A pasta `data/` é a
+ * mesma (persistente) onde vive o `matrix.db`, então o arquivo sobrevive a
+ * reinícios e a redeploys.
+ */
+export function dropInCookieFile(): string {
+  return path.resolve(process.cwd(), 'data', 'cookies.txt');
+}
+
+/** Um jar de verdade: cabeçalho Netscape ou pelo menos uma linha com TAB. */
+function looksLikeCookieJar(text: string): boolean {
+  return (
+    /^#\s*(Netscape|HTTP Cookie File)/i.test(text.trim()) ||
+    text.split('\n').some((l) => l.includes('\t'))
+  );
+}
+
+/**
+ * Lê o jar drop-in quando ele existe. Nunca lança: arquivo ausente, vazio ou
+ * ilegível significa apenas "sem cookie por aqui".
+ */
+function readDropInCookieFile(): string | null {
+  const file = dropInCookieFile();
+  if (!existsSync(file)) return null;
+  try {
+    // Teto de leitura: um cookies.txt real tem alguns KB. Isso evita carregar
+    // um arquivo errado (um vídeo, um dump) inteiro para a memória.
+    const content = readFileSync(file, 'utf8');
+    if (content.trim() === '' || content.length > 1024 * 1024) return null;
+    return content;
+  } catch {
+    return null;
+  }
+}
+
+/** Escreve um jar TEMPORÁRIO (0600) com o conteúdo dado; o chamador apaga. */
+async function writeTempCookieFile(content: string): Promise<string> {
   const dir = path.resolve(process.cwd(), 'data');
   await fs.mkdir(dir, { recursive: true });
   const file = path.join(dir, `.yt-cookies-${randomBytes(8).toString('hex')}.txt`);
-  let content = raw.trim();
-  // Aceita base64 (recomendado: o painel lida bem com uma linha só) ou o
-  // texto do cookie jar colado direto.
-  if (!/^#\s*(Netscape|HTTP Cookie File)/i.test(content)) {
-    try {
-      const decoded = Buffer.from(content, 'base64').toString('utf8');
-      if (decoded.includes('\t')) content = decoded;
-    } catch {
-      // Não era base64 — segue com o texto como veio.
-    }
-  }
   await fs.writeFile(file, content, { mode: 0o600 });
   return file;
 }
 
+/** Desembrulha o valor de YT_COOKIES: base64 (recomendado no painel) ou cru. */
+function decodeInlineCookies(raw: string): string {
+  const trimmed = raw.trim();
+  if (/^#\s*(Netscape|HTTP Cookie File)/i.test(trimmed)) return trimmed;
+  try {
+    const decoded = Buffer.from(trimmed, 'base64').toString('utf8');
+    if (decoded.includes('\t')) return decoded;
+  } catch {
+    // Não era base64 — segue com o texto como veio.
+  }
+  return trimmed;
+}
+
 /**
- * Classifica o YT_COOKIES SEM revelar o valor (é credencial).
+ * O CONTEÚDO do cookie jar, de qualquer fonte que não seja um caminho
+ * explícito: `YT_COOKIES` (base64/texto) → drop-in `data/cookies.txt`.
+ *
+ * Devolve o texto para quem chama escrever um jar TEMPORÁRIO — e isso é
+ * deliberado. O yt-dlp REESCREVE o arquivo de `--cookies` ao sair
+ * (`YoutubeDL.close()` → `cookiejar.save()`), então passar o arquivo do
+ * operador direto tem dois efeitos ruins:
+ *   1. o arquivo dele é mutado (a credencial do operador não é nossa);
+ *   2. se ele não for GRAVÁVEL pelo processo (o caso comum: copiado como root,
+ *      dono root + 644, servidor rodando como outro usuário), o yt-dlp ABORTA
+ *      com PermissionError e a busca de música para de funcionar por completo.
+ * A cópia custa alguns KB por execução e o jar temporário é apagado no fim.
+ */
+function resolveCookieContent(): string | null {
+  const raw = (process.env.YT_COOKIES ?? '').trim();
+  if (raw !== '') return decodeInlineCookies(raw);
+  // Um caminho explícito EXISTENTE é usado no lugar (ver `cookieArgs`), não
+  // copiado. Um caminho que não existe não é fonte nenhuma — aí o drop-in
+  // ainda vale (mesma ordem que `cookieStatus` reporta).
+  const file = (process.env.YT_COOKIES_FILE ?? '').trim();
+  if (file !== '' && existsSync(file)) return null;
+  const dropIn = readDropInCookieFile();
+  if (dropIn !== null && looksLikeCookieJar(dropIn)) return dropIn;
+  return null;
+}
+
+/**
+ * Classifica a fonte de cookie SEM revelar o valor (é credencial).
  *
  * Existe porque "configurei o secret e mesmo assim bloqueou" não dizia se o
  * servidor tinha recebido o valor, se ele estava truncado/malformado ou se o
  * YouTube rejeitou um cookie válido. Cada caso tem uma correção diferente.
+ *
+ * Ordem de precedência (a mesma de `cookieArgs`): `YT_COOKIES` (conteúdo) →
+ * `YT_COOKIES_FILE` (caminho) → o arquivo drop-in `data/cookies.txt`.
  */
 export type CookieStatus =
   | 'absent'
   | 'file'
+  | 'dropin'
   | 'raw-jar'
   | 'base64-jar'
-  | 'malformed';
+  | 'malformed'
+  | 'malformed-dropin';
 
 export function cookieStatus(): CookieStatus {
   const raw = (process.env.YT_COOKIES ?? '').trim();
   if (raw === '') {
+    // Espelha `cookieArgs`: um YT_COOKIES_FILE que não existe não é fonte
+    // nenhuma — o código cai para o drop-in, então o diagnóstico precisa
+    // dizer a MESMA coisa, senão a mensagem de 403 mentiria.
     const file = (process.env.YT_COOKIES_FILE ?? '').trim();
-    return file !== '' ? 'file' : 'absent';
+    if (file !== '' && existsSync(file)) return 'file';
+    const dropIn = readDropInCookieFile();
+    if (dropIn === null) return 'absent';
+    // O arquivo está lá, mas se não for um jar Netscape o yt-dlp falharia com
+    // um erro obscuro; dizemos o que é.
+    return looksLikeCookieJar(dropIn) ? 'dropin' : 'malformed-dropin';
   }
   if (/^#\s*(Netscape|HTTP Cookie File)/i.test(raw)) return 'raw-jar';
   try {
     const decoded = Buffer.from(raw, 'base64').toString('utf8');
     if (decoded.includes('\t')) {
       // Um jar de verdade tem a linha de cabeçalho OU várias linhas com TAB.
-      return /^#\s*(Netscape|HTTP Cookie File)/i.test(decoded) ||
-        decoded.split('\n').filter((l) => l.includes('\t')).length >= 1
-        ? 'base64-jar'
-        : 'malformed';
+      return looksLikeCookieJar(decoded) ? 'base64-jar' : 'malformed';
     }
   } catch {
     // Cai no malformed abaixo.
@@ -674,10 +755,16 @@ export function cookieSummary(): string {
       return 'nenhum cookie configurado';
     case 'file':
       return 'YT_COOKIES_FILE configurado';
+    case 'dropin':
+      return `arquivo ${dropInCookieFile()} encontrado`;
     case 'raw-jar':
       return 'YT_COOKIES recebido (formato Netscape, texto cru)';
     case 'base64-jar':
       return 'YT_COOKIES recebido (base64 decodificado com sucesso)';
+    case 'malformed-dropin':
+      return `${dropInCookieFile()} existe mas NÃO é um cookie jar do YouTube `
+        + '(falta o cabeçalho Netscape) — exporte de novo, logado no '
+        + 'youtube.com';
     case 'malformed':
       return 'YT_COOKIES presente mas MALFORMADO (não é base64 de um cookie '
         + 'jar nem o formato Netscape) — verifique se o valor foi colado '
@@ -688,13 +775,22 @@ export function cookieSummary(): string {
 /**
  * Os argumentos de cookie para o yt-dlp, ou [] quando não há cookie nenhum.
  *
- * YT_COOKIES (conteúdo, base64 ou texto) tem prioridade sobre
- * YT_COOKIES_FILE (caminho). É assim que se tira o bloqueio anti-bot do
- * YouTube num servidor: o jar do navegador prova que a sessão é humana.
+ * Precedência: `YT_COOKIES` (conteúdo, base64 ou texto) → `YT_COOKIES_FILE`
+ * (caminho) → o arquivo drop-in `data/cookies.txt`. É assim que se tira o
+ * bloqueio anti-bot do YouTube num servidor: o jar do navegador prova que a
+ * sessão é humana.
+ *
+ * O drop-in existe para o caminho sem configuração nenhuma: basta copiar o
+ * cookies.txt exportado do navegador para `data/`. Mesmo assim ele é COPIADO
+ * para um jar temporário (ver `resolveCookieContent`) em vez de entregue
+ * direto ao yt-dlp, que reescreve o arquivo ao sair.
  */
 async function cookieArgs(): Promise<{ args: string[]; temp: string | null }> {
-  const temp = await writeTempCookieFile();
-  if (temp) return { args: ['--cookies', temp], temp };
+  const content = resolveCookieContent();
+  if (content !== null) {
+    const temp = await writeTempCookieFile(content);
+    return { args: ['--cookies', temp], temp };
+  }
   const file = process.env.YT_COOKIES_FILE;
   if (file && file.trim() !== '') {
     try {

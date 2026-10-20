@@ -36,6 +36,7 @@ import { pushRoutes } from './modules/push/push.routes.js';
 import { stickerRoutes } from './modules/stickers/sticker.routes.js';
 import { storyRoutes } from './modules/stories/story.routes.js';
 import { profileMusicRoutes } from './modules/music/profile-music.routes.js';
+import { cookieSummary } from './modules/music/profile-music.ytdlp.js';
 import { purgeDeliveredMessages } from './modules/chat/retention.service.js';
 import websocket from '@fastify/websocket';
 
@@ -187,6 +188,9 @@ async function start() {
   console.log(`[MATRIX] Banco: ${env.databaseUrl.replace(/^file:/, '')}`);
   console.log(`[MATRIX] Porta obtida do ambiente: ${env.port}`);
   console.log('[MATRIX] Host: 0.0.0.0');
+  // Estado do cookie do YouTube, sem revelar o valor (é credencial). É a
+  // primeira coisa a conferir quando a busca de música falha por anti-bot.
+  console.log(`[MATRIX] Cookies YouTube: ${cookieSummary()}`);
 
   // Verify the SQLite database is reachable before accepting traffic.
   try {

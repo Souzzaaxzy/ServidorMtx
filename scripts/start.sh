@@ -97,6 +97,22 @@ echo "  SQLite         : configurado ✓"
 echo "  Database       : $DB_FILE"
 echo "  Database file  : $([ -f "$DB_FILE" ] && echo 'presente ✓' || echo 'será criado na primeira inicialização')"
 echo "  JWT_SECRET     : $([ -n "${JWT_SECRET:-}" ] && echo 'configurado ✓' || echo 'NÃO CONFIGURADO')"
+# Cookies do YouTube: só o ESTADO (o valor é credencial). O drop-in
+# data/cookies.txt é o caminho mais simples — copie o cookies.txt exportado
+# do navegador para a pasta data/, sem variável nenhuma.
+if [ -n "${YT_COOKIES:-}" ]; then
+  echo "  YT_COOKIES     : presente ✓ (valor não é exibido)"
+elif [ -n "${YT_COOKIES_FILE:-}" ]; then
+  echo "  YT_COOKIES     : via arquivo (${YT_COOKIES_FILE})"
+elif [ -f "$DATA_DIR/cookies.txt" ]; then
+  if head -c 200 "$DATA_DIR/cookies.txt" 2>/dev/null | grep -qE '^# *(Netscape|HTTP Cookie File)'; then
+    echo "  YT_COOKIES     : $DATA_DIR/cookies.txt encontrado ✓"
+  else
+    echo "  YT_COOKIES     : $DATA_DIR/cookies.txt existe mas NÃO é um cookies.txt do Netscape ✗"
+  fi
+else
+  echo "  YT_COOKIES     : ausente (o YouTube pode bloquear por anti-bot)"
+fi
 echo "  NODE_ENV       : ${NODE_ENV:-<vazio>}"
 if [ "$IS_TERMUX" -eq 1 ]; then
   echo "  Ambiente       : Termux/Android ($(uname -m))"
@@ -231,6 +247,23 @@ if [ -f "$DB_FILE" ]; then
   ok "Banco SQLite existente detectado: $DB_FILE (dados preservados)"
 else
   info "Banco SQLite ausente — será criado na etapa de migrations"
+fi
+
+# ── 4a. YouTube cookies (drop-in, optional) ────────────────────
+# A cookie jar is a CREDENTIAL (it authenticates a logged-in session). When
+# the operator copies data/cookies.txt, restrict it so other users on the
+# host cannot read it. The file is NEVER deleted — it is operator config.
+if [ -f "$DATA_DIR/cookies.txt" ]; then
+  chmod 600 "$DATA_DIR/cookies.txt" 2>/dev/null || true
+  # Safety net: if the chmod left the file unreadable for THIS process (a
+  # different owner — e.g. copied as root while the server runs as another
+  # user), restore readability. A readable cookie beats a broken music search.
+  if ! head -c 1 "$DATA_DIR/cookies.txt" >/dev/null 2>&1; then
+    chmod 644 "$DATA_DIR/cookies.txt" 2>/dev/null || true
+    warn "Não foi possível restringir $DATA_DIR/cookies.txt (dono diferente) — permissão mantida"
+  else
+    ok "Cookies do YouTube: $DATA_DIR/cookies.txt (permissão restrita a 600)"
+  fi
 fi
 
 # ── 4b. yt-dlp + ffmpeg (música do perfil) ─────────────────────

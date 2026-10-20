@@ -266,19 +266,37 @@ PostgreSQL). Runs on Pterodactyl/Bronxys via `npm start` (self-provisions).
   anti-bot / yt-dlp ausente / yt-dlp desatualizado / ffmpeg ausente. Antes
   tudo isso devolvia `[]` e o app dizia que não achou nada — o usuário ficava
   sem pista nenhuma.
-- **Cookies do YouTube (bloqueio anti-bot)**: `YT_COOKIES` (conteúdo do
-  cookies.txt, base64 ou texto cru) ou `YT_COOKIES_FILE` (caminho). O servidor
-  escreve um jar temporário `chmod 600` em `data/.yt-cookies-*` por execução e
-  o APAGA em seguida (um cookie jar é credencial: não pode sobrar no disco).
-  É o que libera o bloqueio de IP em VPS/datacenter.
+- **Cookies do YouTube (bloqueio anti-bot)**: a fonte mais simples é o
+  **drop-in `data/cookies.txt`** — o operador copia o arquivo exportado do
+  navegador para `data/` e nada mais precisa ser configurado. `YT_COOKIES`
+  (conteúdo do cookies.txt, base64 ou texto cru) e `YT_COOKIES_FILE` (caminho)
+  continuam valendo e têm PRIORIDADE sobre o drop-in. Com `YT_COOKIES` **e com o
+  drop-in** o servidor escreve um jar temporário `chmod 600` em
+  `data/.yt-cookies-*` por execução e o APAGA em seguida (um cookie jar é
+  credencial: não pode sobrar no disco).
+- **O yt-dlp REESCREVE o arquivo de `--cookies`** (`YoutubeDL.close()` →
+  `cookiejar.save()`). Por isso o drop-in é COPIADO para um jar temporário em
+  vez de entregue direto: entregar o arquivo do operador (a) mutaria a
+  credencial dele e (b) **quebraria o recurso** quando o arquivo não é gravável
+  pelo processo — o caso comum de um `cookies.txt` copiado como root (dono root
+  + 644). Verificado com o yt-dlp real: sem a cópia, `PermissionError`; com ela,
+  funciona. Só `YT_COOKIES_FILE` (um caminho explícito do operador) é passado
+  como está.
 - **Diagnóstico do anti-bot**: "configurei o secret e mesmo assim bloqueou" é
-  ambíguo, então `cookieStatus()` classifica o valor SEM o revelar (`absent` /
-  `file` / `raw-jar` / `base64-jar` / `malformed`) e a mensagem do 403 diz qual
-  é o caso — cada um tem uma correção diferente. O banner do `start.sh` e o
-  `doctor` também mostram o estado (e o doctor detecta valor MALFORMADO, que é
-  a falha típica de um secret colado truncado). **A variável precisa estar
-  definida nas variáveis DO SERVIDOR (não no repositório) e o processo precisa
-  reiniciar** — um secret criado só no repositório não chega ao runtime.
+  ambíguo, então `cookieStatus()` classifica a fonte SEM revelar o valor
+  (`absent` / `file` / `dropin` / `raw-jar` / `base64-jar` / `malformed` /
+  `malformed-dropin`) e a mensagem do 403 diz qual é o caso — cada um tem uma
+  correção diferente. O banner do `start.sh`/`scripts/start.sh`, o banner de
+  boot do `app.ts` e o `doctor` também mostram o estado (o doctor e o start
+  detectam um `data/cookies.txt` MALFORMADO, que é a falha típica de um arquivo
+  que não é um jar Netscape). **A variável precisa estar definida nas variáveis
+  DO SERVIDOR (não no repositório) e o processo precisa reiniciar** — um secret
+  criado só no repositório não chega ao runtime; o drop-in não tem esse
+  problema, porque é um arquivo.
+- **`data/cookies.txt` é credencial**: o `start.sh` faz `chmod 600` nele no
+  boot (nunca apaga). O arquivo é gitignored (`data/cookies.txt`) e só é
+  repassado ao yt-dlp quando PARECE um jar Netscape (`looksLikeCookieJar`) —
+  um arquivo qualquer em `data/` não vira `--cookies`.
 - **Runtime de JavaScript (o YouTube EXIGE um)**: o yt-dlp só habilita `deno`
   por padrão, e no Termux `deno` não é pacote padrão — enquanto o **Node está
   sempre presente** (a API roda nele). O código escolhe, nesta ordem:

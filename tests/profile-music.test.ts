@@ -14,11 +14,25 @@ import {
 
 let server: FastifyInstance;
 
+// O drop-in data/cookies.txt é lido do disco a cada chamada. Se o host de
+// teste tiver um arquivo real (um operador rodando os testes no servidor), ele
+// mudaria o resultado dos testes de cookie. Guardamos o arquivo de lado
+// durante a suíte e restauramos no final.
+const realDropIn = path.resolve(process.cwd(), 'data/cookies.txt');
+let realDropInBackup: string | null = null;
+
 beforeAll(async () => {
+  try {
+    realDropInBackup = await fs.readFile(realDropIn, 'utf8');
+  } catch {
+    realDropInBackup = null;
+  }
+  if (realDropInBackup !== null) await fs.rm(realDropIn, { force: true });
   server = await buildTestServer();
 });
 afterAll(async () => {
   await closeTestServer();
+  if (realDropInBackup !== null) await fs.writeFile(realDropIn, realDropInBackup);
 });
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -349,6 +363,293 @@ exit 1
       (f) => f.startsWith('.yt-cookies-'),
     );
     expect(leftovers).toEqual([]);
+  });
+});
+
+// ── Drop-in cookie jar (data/cookies.txt) ─────────────────────
+// O caminho mais simples para o operador: copiar o cookies.txt exportado do
+// navegador para a pasta data/ do servidor, sem configurar variável nenhuma.
+// O arquivo é credencial: o servidor o usa direto (sem copiar), restringe a
+// permissão no boot e nunca o apaga.
+describe('drop-in cookie jar (data/cookies.txt)', () => {
+  const binDir = path.resolve(process.cwd(), 'tests/fixtures/music-bin-dropin');
+  const bin = path.join(binDir, 'spy-ytdlp.sh');
+  const argsLog = path.join(binDir, 'args.log');
+  const dropIn = path.resolve(process.cwd(), 'data/cookies.txt');
+  let dropInBackup: string | null = null;
+
+  beforeAll(async () => {
+    await fs.mkdir(binDir, { recursive: true });
+    await fs.mkdir(path.dirname(dropIn), { recursive: true });
+    // Nunca destruir um arquivo real que por acaso exista no host de teste.
+    try {
+      dropInBackup = await fs.readFile(dropIn, 'utf8');
+    } catch {
+      dropInBackup = null;
+    }
+    await fs.writeFile(
+      bin,
+      `#!/usr/bin/env bash
+if [ "$1" = "--version" ]; then echo "2026.08.19"; exit 0; fi
+echo "ARGS: $*" >> "${argsLog}"
+prev=""
+for a in "$@"; do
+  if [ "$prev" = "--cookies" ]; then
+    echo "COOKIEFILE: $a" >> "${argsLog}"
+    cat "$a" >> "${argsLog}" 2>&1
+  fi
+  prev="$a"
+done
+echo "ERROR: Sign in to confirm you're not a bot." >&2
+exit 1
+`,
+      { mode: 0o755 },
+    );
+  });
+
+  afterEach(async () => {
+    delete process.env.YT_DLP_PATH;
+    delete process.env.YT_COOKIES;
+    delete process.env.YT_COOKIES_FILE;
+    await fs.rm(dropIn, { force: true });
+    vi.resetModules();
+  });
+
+  afterAll(async () => {
+    await fs.rm(binDir, { recursive: true, force: true });
+    if (dropInBackup !== null) await fs.writeFile(dropIn, dropInBackup);
+  });
+
+  it('uses data/cookies.txt with NO configuration at all', async () => {
+    const jar = [
+      '# Netscape HTTP Cookie File',
+      '.youtube.com\tTRUE\t/\tTRUE\t9999999999\tSID\tdropin123',
+    ].join('\n');
+    await fs.writeFile(dropIn, jar);
+    process.env.YT_DLP_PATH = bin;
+    await fs.rm(argsLog, { force: true });
+
+    vi.resetModules();
+    const { searchProfileMusic } = await import(
+      '../src/modules/music/profile-music.ytdlp.js'
+    );
+    await expect(searchProfileMusic('queen')).rejects.toThrow();
+
+    const log = await fs.readFile(argsLog, 'utf8');
+    expect(log).toContain('--cookies');
+    // O jar chegou ao yt-dlp intacto.
+    expect(log).toContain('SID\tdropin123');
+  });
+
+  it('hands yt-dlp a COPY — it REWRITES the cookie file it is given', async () => {
+    // Descoberta real: `YoutubeDL.close()` → `cookiejar.save()` reescreve o
+    // arquivo de --cookies. Entregar o arquivo do operador direto (a) mutaria a
+    // credencial dele e (b) quebraria o recurso quando o arquivo não é
+    // gravável pelo processo (copiado como root: dono root + 644).
+    const jar = [
+      '# Netscape HTTP Cookie File',
+      '.youtube.com\tTRUE\t/\tTRUE\t9999999999\tSID\toriginal-value',
+    ].join('\n');
+    await fs.writeFile(dropIn, jar);
+    process.env.YT_DLP_PATH = bin;
+    await fs.rm(argsLog, { force: true });
+
+    vi.resetModules();
+    const { searchProfileMusic } = await import(
+      '../src/modules/music/profile-music.ytdlp.js'
+    );
+    await expect(searchProfileMusic('queen')).rejects.toThrow();
+
+    const log = await fs.readFile(argsLog, 'utf8');
+    const given = /COOKIEFILE: (.*)/.exec(log)?.[1]?.trim() ?? '';
+    // O arquivo entregue é um jar TEMPORÁRIO, nunca o do operador…
+    expect(given).not.toBe(dropIn);
+    expect(given).toContain('.yt-cookies-');
+    // …e o arquivo do operador fica exatamente como estava.
+    expect(await fs.readFile(dropIn, 'utf8')).toBe(jar);
+  });
+
+  it('works with a READ-ONLY data/cookies.txt (root-owned 644 copy)', async () => {
+    // O caso real que motivou a cópia: o operador copia o arquivo como root e
+    // o servidor roda como outro usuário. O yt-dlp não pode reescrevê-lo.
+    await fs.writeFile(
+      dropIn,
+      '# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tTRUE\t9\tSID\tro123\n',
+    );
+    await fs.chmod(dropIn, 0o400);
+    process.env.YT_DLP_PATH = bin;
+    await fs.rm(argsLog, { force: true });
+
+    vi.resetModules();
+    const { searchProfileMusic } = await import(
+      '../src/modules/music/profile-music.ytdlp.js'
+    );
+    await expect(searchProfileMusic('queen')).rejects.toThrow();
+
+    const log = await fs.readFile(argsLog, 'utf8');
+    expect(log).toContain('--cookies');
+    expect(log).toContain('SID\tro123');
+    await fs.chmod(dropIn, 0o600).catch(() => void 0);
+  });
+
+  it('reports the drop-in as the active source (without revealing it)', async () => {
+    await fs.writeFile(
+      dropIn,
+      '# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tTRUE\t9\tSID\tx\n',
+    );
+    vi.resetModules();
+    const { cookieStatus, cookieSummary } = await import(
+      '../src/modules/music/profile-music.ytdlp.js'
+    );
+    expect(cookieStatus()).toBe('dropin');
+    // O resumo mostra o CAMINHO, nunca o conteúdo (é credencial).
+    expect(cookieSummary()).toContain('data/cookies.txt');
+    expect(cookieSummary()).not.toContain('SID');
+  });
+
+  it('flags a data/cookies.txt that is NOT a Netscape jar', async () => {
+    await fs.writeFile(dropIn, 'isto não é um cookies.txt\nnem tem TAB\n');
+    vi.resetModules();
+    const { cookieStatus, cookieSummary } = await import(
+      '../src/modules/music/profile-music.ytdlp.js'
+    );
+    expect(cookieStatus()).toBe('malformed-dropin');
+    expect(cookieSummary()).toMatch(/NÃO é um cookie jar/i);
+  });
+
+  it('does NOT pass a malformed data/cookies.txt to yt-dlp', async () => {
+    await fs.writeFile(dropIn, 'isto não é um cookies.txt\n');
+    process.env.YT_DLP_PATH = bin;
+    await fs.rm(argsLog, { force: true });
+
+    vi.resetModules();
+    const { searchProfileMusic } = await import(
+      '../src/modules/music/profile-music.ytdlp.js'
+    );
+    await expect(searchProfileMusic('queen')).rejects.toThrow();
+
+    const log = await fs.readFile(argsLog, 'utf8');
+    // Um arquivo qualquer em data/ nunca vira --cookies.
+    expect(log).not.toContain('--cookies');
+  });
+
+  it('YT_COOKIES wins over the drop-in file', async () => {
+    await fs.writeFile(
+      dropIn,
+      '# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tTRUE\t9\tSID\tdropin999\n',
+    );
+    process.env.YT_DLP_PATH = bin;
+    process.env.YT_COOKIES = [
+      '# Netscape HTTP Cookie File',
+      '.youtube.com\tTRUE\t/\tTRUE\t9\tSID\tenv999',
+    ].join('\n');
+    await fs.rm(argsLog, { force: true });
+
+    vi.resetModules();
+    const { searchProfileMusic } = await import(
+      '../src/modules/music/profile-music.ytdlp.js'
+    );
+    await expect(searchProfileMusic('queen')).rejects.toThrow();
+
+    const log = await fs.readFile(argsLog, 'utf8');
+    expect(log).toContain('env999');
+    expect(log).not.toContain('dropin999');
+  });
+
+  it('the 403 message points at data/cookies.txt when nothing is set', async () => {
+    vi.resetModules();
+    const { ytdlpFailureToApiError } = await import(
+      '../src/modules/music/profile-music.ytdlp.js'
+    );
+    delete process.env.YT_COOKIES;
+    delete process.env.YT_COOKIES_FILE;
+    const message = ytdlpFailureToApiError('ERROR: HTTP Error 403: Forbidden').message;
+    expect(message).toMatch(/data[/\\]cookies\.txt/);
+  });
+
+  it('a YT_COOKIES_FILE that does not exist falls back to the drop-in (and says so)', async () => {
+    // O diagnóstico precisa espelhar o que o código realmente faz: um caminho
+    // inexistente não é fonte nenhuma, então o jar drop-in é o que vale.
+    await fs.writeFile(
+      dropIn,
+      '# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tTRUE\t9\tSID\tx\n',
+    );
+    process.env.YT_COOKIES_FILE = '/caminho/que/nao/existe/cookies.txt';
+    process.env.YT_DLP_PATH = bin;
+    await fs.rm(argsLog, { force: true });
+
+    vi.resetModules();
+    const { cookieStatus, searchProfileMusic } = await import(
+      '../src/modules/music/profile-music.ytdlp.js'
+    );
+    expect(cookieStatus()).toBe('dropin');
+    await expect(searchProfileMusic('queen')).rejects.toThrow();
+    const log = await fs.readFile(argsLog, 'utf8');
+    expect(log).toContain('--cookies');
+    // Caiu para o jar drop-in (copiado para um jar temporário).
+    expect(log).toContain('.yt-cookies-');
+    expect(log).toContain('SID\tx');
+  });
+
+  it('never leaves the drop-in temporary jar on disk', async () => {
+    await fs.writeFile(
+      dropIn,
+      '# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tTRUE\t9\tSID\tx\n',
+    );
+    process.env.YT_DLP_PATH = bin;
+    await fs.rm(argsLog, { force: true });
+
+    vi.resetModules();
+    const { searchProfileMusic } = await import(
+      '../src/modules/music/profile-music.ytdlp.js'
+    );
+    await expect(searchProfileMusic('queen')).rejects.toThrow();
+
+    const leftovers = (await fs.readdir(path.resolve(process.cwd(), 'data'))).filter(
+      (f) => f.startsWith('.yt-cookies-'),
+    );
+    expect(leftovers).toEqual([]);
+  });
+
+  it('the 403 message names a malformed data/cookies.txt as the cause', async () => {
+    await fs.writeFile(dropIn, 'arquivo errado, sem cabeçalho Netscape\n');
+    vi.resetModules();
+    const { ytdlpFailureToApiError } = await import(
+      '../src/modules/music/profile-music.ytdlp.js'
+    );
+    delete process.env.YT_COOKIES;
+    delete process.env.YT_COOKIES_FILE;
+    const message = ytdlpFailureToApiError('ERROR: HTTP Error 403: Forbidden').message;
+    expect(message).toMatch(/NÃO é um cookies\.txt/i);
+  });
+
+  it('start.sh and doctor.sh know about the drop-in file', async () => {
+    const startSrc = await fs.readFile(path.resolve(process.cwd(), 'start.sh'), 'utf8');
+    const prodSrc = await fs.readFile(
+      path.resolve(process.cwd(), 'scripts/start.sh'),
+      'utf8',
+    );
+    const doctorSrc = await fs.readFile(
+      path.resolve(process.cwd(), 'scripts/doctor.sh'),
+      'utf8',
+    );
+    for (const src of [startSrc, prodSrc, doctorSrc]) {
+      expect(src).toContain('cookies.txt');
+    }
+    // O jar é credencial: o start restringe a permissão (com salvaguarda para
+    // não quebrar a leitura quando o dono é outro) e NUNCA apaga o arquivo.
+    expect(startSrc).toContain('chmod 600 "$DATA_DIR/cookies.txt"');
+    expect(prodSrc).toContain('chmod 600 "$DATA_DIR/cookies.txt"');
+    expect(startSrc).toMatch(/chmod 644 "\$DATA_DIR\/cookies\.txt"/);
+    expect(prodSrc).toMatch(/chmod 644 "\$DATA_DIR\/cookies\.txt"/);
+    for (const src of [startSrc, prodSrc]) {
+      expect(src).not.toMatch(/rm[^\n]*cookies\.txt/);
+    }
+  });
+
+  it('data/cookies.txt is gitignored (a cookie jar is a credential)', async () => {
+    const gi = await fs.readFile(path.resolve(process.cwd(), '.gitignore'), 'utf8');
+    expect(gi).toContain('data/cookies.txt');
   });
 });
 

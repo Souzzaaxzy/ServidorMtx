@@ -135,8 +135,17 @@ elif [ -n "${YT_COOKIES_FILE:-}" ]; then
   else
     warn "YT_COOKIES_FILE aponta para arquivo inexistente (${YT_COOKIES_FILE})"
   fi
+elif [ -f "$PWD/data/cookies.txt" ]; then
+  # Drop-in: o operador só copiou o cookies.txt para data/. Checa o formato
+  # para não deixar passar um arquivo que o yt-dlp rejeitaria.
+  if head -c 200 "$PWD/data/cookies.txt" 2>/dev/null | grep -qE '^# *(Netscape|HTTP Cookie File)'; then
+    ok "data/cookies.txt encontrado (bloqueio anti-bot do YouTube liberado)"
+  else
+    warn "data/cookies.txt existe mas NÃO é um cookie jar Netscape — exporte de novo, logado no youtube.com"
+  fi
 else
-  warn "Sem cookies do YouTube — se o servidor estiver bloqueado (anti-bot), a busca falha (YT_COOKIES)"
+  warn "Sem cookies do YouTube — se o servidor estiver bloqueado (anti-bot), a busca falha"
+  warn "  caminho mais simples: copie o cookies.txt exportado do navegador para data/"
 fi
 
 hdr "Dependências e build"
