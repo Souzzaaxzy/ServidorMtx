@@ -10,6 +10,11 @@ import {
   unregisterDevice,
   unregisterAllDevices,
 } from './push.service.js';
+import {
+  registerConnection,
+  setUserVisible,
+  unregisterConnection,
+} from '../presence/presence.service.js';
 
 const registerSchema = z.object({
   token: z.string().min(1).max(512),
@@ -64,6 +69,11 @@ export const pushRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
   // Realtime push channel (WebSocket). Auth: access token in the query
   // string (WS handshake has no header support on some Android clients).
   // Each frame is a JSON PushMessage; the socket is dropped on close.
+  //
+  // This socket is ALSO the presence signal: a live connection means the app
+  // is running. The client additionally reports foreground/background with
+  // `{kind:'active'}` / `{kind:'away'}`, so "app in the background = offline"
+  // holds without any heartbeat guessing.
   app.get('/push/stream', { websocket: true }, (socket, request) => {
     const { token } = request.query as { token?: string };
     let userId: string;
@@ -74,10 +84,26 @@ export const pushRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       return;
     }
     addSocket(userId, socket);
-    socket.on('close', () => removeSocket(userId, socket));
+    registerConnection(userId);
+    socket.on('message', (raw: unknown) => {
+      // Only the lifecycle frames are accepted here; anything else is noise
+      // from a client we do not understand and is ignored (never an error).
+      try {
+        const parsed = JSON.parse(String(raw)) as { kind?: unknown };
+        if (parsed.kind === 'away') setUserVisible(userId, false);
+        else if (parsed.kind === 'active') setUserVisible(userId, true);
+      } catch {
+        // Not JSON: ignore.
+      }
+    });
+    socket.on('close', () => {
+      removeSocket(userId, socket);
+      unregisterConnection(userId);
+    });
     socket.on('error', (err: unknown) => {
       logger.warn({ err }, 'push socket error');
       removeSocket(userId, socket);
+      unregisterConnection(userId);
     });
   });
 };

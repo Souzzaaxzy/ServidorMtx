@@ -386,3 +386,32 @@ openhands / openhands@all-hands.dev
   deleting another member's message (a member may always delete their own); the
   broadcast `chat_message_deleted` reaches every group member. Covered by
   `tests/groups.test.ts` "group message deletion permissions".
+
+## Presença (online/offline) — do socket REAL, não de um palpite
+- `src/modules/presence/presence.service.ts` é a ÚNICA autoridade: **online =
+  socket WebSocket vivo E app em primeiro plano**. O socket é aberto no boot e
+  o APK manda `{kind:'away'}`/`{kind:'active'}` no ciclo de vida
+  (`push_service.dart` → `setForeground`), então **usuário fora do aplicativo =
+  offline** literalmente — nada de heartbeat otimista nem "visto por último"
+  (que diria "online" para quem fechou o app há horas). O padrão é VISÍVEL: um
+  cliente antigo que ainda não manda o frame continua online enquanto tiver
+  socket.
+- Registro em MEMÓRIA (contagem de conexões por usuário + set de "hidden"), sem
+  tabela nova: consultar a presença de uma lista é O(1) por usuário. Um restart
+  só zera a presença; o próximo socket reconstrói.
+- O **servidor** decide e faz o fan-out: quando A fica online/offline, quem
+  recebe é a audiência derivada do banco (peers de DM + colegas de grupo de A),
+  uma vez por TRANSIÇÃO. O anúncio é **coalescido** (150 ms) e idempotente —
+  abrir/fechar o app gera um par away→active em milissegundos e sem isso cada
+  oscilação viraria uma rajada de frames.
+- O transporte é injetado (`setPresenceDispatcher`) pelo `push.service`, que é
+  quem tem o hub de sockets — assim `presence` não importa `push` (sem ciclo).
+  O frame é `{kind:'presence', data:{userId, online, groups:[{groupId,
+  onlineCount}]}}`: a contagem de grupo vem **recalculada pelo servidor** (só
+  ele conhece a lista de membros).
+- Payloads: `ChatUser.online` (DM/peer) e `GroupHeader.onlineCount` (grupo).
+  `listGroups` usa `members.select.userId` — antes usava o id da LINHA de
+  membership, o que zeraria a contagem (bug pego pelo teste de presença).
+- Testes: `tests/presence.test.ts` (estado, payloads, fan-out, coalescência) e
+  `tests/presence-websocket.test.ts` (sobe o servidor numa porta real e abre
+  sockets de verdade — prova o requisito ponta a ponta).

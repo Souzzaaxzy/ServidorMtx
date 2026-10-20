@@ -14,6 +14,7 @@ import {
   dispatchChatTyping,
 } from '../push/push.service.js';
 import { addStickerRecent } from '../stickers/sticker.service.js';
+import { isUserOnline, onlineCount } from '../presence/presence.service.js';
 import type { Message } from '../../generated/index.js';
 import type { Readable } from 'node:stream';
 
@@ -44,6 +45,8 @@ export interface ChatUser {
    * group the payload belongs to (set only in group-message senders). Private
    * chat peers never carry it — the flag is meaningless outside a group. */
   banned: boolean;
+  /** True when this user has the app open right now (live socket). */
+  online: boolean;
 }
 
 export interface GroupHeader {
@@ -53,6 +56,10 @@ export interface GroupHeader {
    description: string;
    createdById: string;
    memberCount: number;
+   /** How many members have the app open RIGHT NOW. The header shows
+    * "N usuários online" — a live number, recomputed server-side on every
+    * presence change and on every read. */
+   onlineCount: number;
 }
 
 export interface GroupConversationItem {
@@ -121,6 +128,10 @@ export interface ChatPeerPayload {
   id: string;
   nickname: string;
   avatarUrl: string | null;
+  /** Group-scoped ban state (false for a peer payload built outside a group). */
+  banned: boolean;
+  /** True when the peer has the app open right now (live socket). */
+  online: boolean;
 }
 
 export interface ReplyInfo {
@@ -148,6 +159,7 @@ function toChatUser(
     nickname: user.nickname,
     avatarUrl: user.avatarUrl,
     banned,
+    online: isUserOnline(user.id),
   };
 }
 
@@ -185,6 +197,8 @@ async function chatPeerPayload(userId: string): Promise<ChatPeerPayload> {
      id: userId,
      nickname: 'desconhecido',
      avatarUrl: null,
+     banned: false,
+     online: false,
    };
   }
   return toChatUser(user);
@@ -286,6 +300,7 @@ async function loadGroupConversationItem(
       description: group.description,
       createdById: group.createdById,
       memberCount: memberIds.length,
+      onlineCount: onlineCount(memberIds),
     },
     lastMessage: last
       ? {
@@ -398,6 +413,7 @@ export async function getGroupInfo(
       description: group.description,
       createdById: group.createdById,
       memberCount: memberIds.length,
+      onlineCount: onlineCount(memberIds),
     },
     members: group.members.map((m) => ({
       id: m.user.id,
@@ -652,7 +668,7 @@ async function broadcastGroupUpdate(groupId: string, actingUserId: string): Prom
 
   const memberRows = await prisma.groupMember.findMany({
     where: { groupId, bannedAt: null },
-    select: { id: true },
+    select: { id: true, userId: true },
   });
 
   // Banned sender ids (full list) for the realtime payload — open
@@ -687,6 +703,7 @@ async function broadcastGroupUpdate(groupId: string, actingUserId: string): Prom
       description: group.description,
       createdById: group.createdById,
       memberCount: memberRows.length,
+      onlineCount: onlineCount(memberRows.map((r) => r.userId)),
     },
   };
   dispatchChatGroupUpdated(
@@ -706,6 +723,7 @@ function toGroupHeader(group: GroupRow, memberIds: string[] | null): GroupHeader
     description: group.description,
     createdById: group.createdById,
     memberCount: memberIds ? memberIds.length : 0,
+    onlineCount: memberIds ? onlineCount(memberIds) : 0,
   };
 }
 
@@ -721,7 +739,10 @@ export async function listGroups(
     include: {
       group: {
         include: {
-          members: { select: { id: true } },
+          // userId (NOT the membership row id): this list feeds both
+          // memberCount and the live onlineCount, and only a real user id
+          // can be looked up in the presence registry.
+          members: { select: { userId: true } },
         },
       },
     },
@@ -733,7 +754,7 @@ export async function listGroups(
   const ids = memberships.map((m) => m.groupId);
   const memberIdsByGroup = new Map<string, string[]>();
   for (const m of memberships) {
-    memberIdsByGroup.set(m.groupId, m.group.members.map((mm) => mm.id));
+    memberIdsByGroup.set(m.groupId, m.group.members.map((mm) => mm.userId));
   }
  
  
@@ -812,6 +833,7 @@ export async function listGroups(
         description: group.description,
         createdById: group.createdById,
         memberCount: memberIds.length,
+        onlineCount: onlineCount(memberIds),
       },
       lastMessage: last
         ? {

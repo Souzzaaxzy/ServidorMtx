@@ -11,6 +11,7 @@ import {
   dispatchChatTyping,
 } from '../push/push.service.js';
 import { addStickerRecent } from '../stickers/sticker.service.js';
+import { isUserOnline } from '../presence/presence.service.js';
 import type { Message } from '../../generated/index.js';
 import type { Readable } from 'node:stream';
 
@@ -30,6 +31,9 @@ export interface ChatUser {
   id: string;
   nickname: string;
   avatarUrl: string | null;
+  /** True when this user has the app open right now (live socket). The
+   * client renders the online/offline dot from this — never inferred. */
+  online: boolean;
 }
 
 export interface ConversationItem {
@@ -105,6 +109,10 @@ export interface ChatPeerPayload {
   id: string;
   nickname: string;
   avatarUrl: string | null;
+  /** True when the peer has the app open right now (live socket). Lets the
+   * receiving client render the online dot on an inbox row it has not
+   * loaded yet. */
+  online: boolean;
 }
 
 /** Preview of the original message a reply points at. Compact — the app
@@ -133,6 +141,7 @@ function toChatUser(
     id: user.id,
     nickname: user.nickname,
     avatarUrl: user.avatarUrl,
+    online: isUserOnline(user.id),
   };
 }
 
@@ -852,6 +861,7 @@ async function chatPeerPayload(userId: string): Promise<ChatPeerPayload> {
       id: userId,
       nickname: 'desconhecido',
       avatarUrl: null,
+      online: false,
     };
   }
   return toChatUser(user);

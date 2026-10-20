@@ -2,6 +2,7 @@ import { prisma } from '../../config/prisma.js';
 import { logger } from '../../config/logger.js';
 import { ApiError } from '../../utils/errors.js';
 import { NotificationType } from '../../types/enums.js';
+import { setPresenceDispatcher } from '../presence/presence.service.js';
 
 // ── Push dispatch ────────────────────────────────────────────
 // The MATRIX push transport lives entirely inside ServidorMtx (no separate
@@ -204,6 +205,33 @@ export function dispatchChatGroupUpdated(
     }
   }
 }
+
+// ── Presence (realtime frames) ───────────────────────────────
+// "Fulano está online/offline" rides the SAME socket hub. The presence
+// service decides WHO to notify and WHEN (it owns the online state); this is
+// only the transport, wired once at import time so presence never has to
+// know about sockets (no circular import).
+export interface PresenceFrame {
+  userId: string;
+  online: boolean;
+  /** Shared groups with their RECOMPUTED online count (server-computed). */
+  groups: { groupId: string; onlineCount: number }[];
+}
+
+setPresenceDispatcher((userIds, frame) => {
+  const payload = JSON.stringify({ kind: 'presence', data: frame });
+  for (const userId of userIds) {
+    const live = sockets.get(userId);
+    if (!live) continue;
+    for (const socket of live) {
+      try {
+        socket.send(payload);
+      } catch (err) {
+        logger.warn({ err }, 'presence socket send failed');
+      }
+    }
+  }
+});
 
 // ── Chat typing / read (realtime frames) ─────────────────────
 // The typing + read events ride the SAME in-memory socket hub as chat
