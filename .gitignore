@@ -25,6 +25,11 @@ data/.jwt_secret
 data/cookies.txt
 data/.yt-cookies-*
 
+# Binários baixados pelo start.sh (yt-dlp/ffmpeg estáticos). São executáveis
+# de terceiros, grandes (~40MB e ~150MB) — nunca vão para o git; cada host os
+# baixa e confere o SHA-256 no primeiro boot.
+data/bin/
+
 # Local upload storage (dev). Note: anchored to repo root so it does NOT
 # ignore the source module at src/modules/uploads/.
 /uploads/

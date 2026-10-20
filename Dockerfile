@@ -40,8 +40,13 @@ ENV NODE_ENV=production
 # openssl/ca-certificates: Prisma + HTTPS. yt-dlp/ffmpeg: the profile-music
 # feature (YouTube search + excerpt cutting) — without them that feature is
 # unavailable, the rest of the API runs normally.
+#
+# `xz-utils` + `ca-certificates` are needed by the STATIC-binary fallback that
+# start.sh uses when a package manager is not available (Pterodactyl/Bronxys
+# containers): it downloads the official static yt-dlp and extracts the ffmpeg
+# .tar.xz. Installing them here makes the fallback work even without root.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        openssl ca-certificates tini ffmpeg python3 python3-pip \
+        openssl ca-certificates tini ffmpeg python3 python3-pip xz-utils \
     && pip3 install --no-cache-dir --break-system-packages yt-dlp \
     && rm -rf /var/lib/apt/lists/*
 

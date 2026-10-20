@@ -289,25 +289,23 @@ PostgreSQL). Runs on Pterodactyl/Bronxys via `npm start` (self-provisions).
   saída REAL do yt-dlp (últimas linhas), e o handler global loga o `details`.
   Sem isso um erro não classificado virava "tente novamente" e não havia como
   descobrir a causa — foi exatamente o que aconteceu no Termux.
-- **Instalação das ferramentas**: `start.sh` (o boot real) instala yt-dlp +
-  ffmpeg quando faltam e RECONFERE o resultado — antes isso só existia no
-  instalador do Termux, então quem fazia `git pull && start.sh` nunca recebia
-  as ferramentas (foi assim que o recurso ficou indisponível em produção).
-  **No Termux o yt-dlp NÃO é pacote do `pkg`** (o comando falha): é
-  `pip install -U yt-dlp`. O ffmpeg, esse sim, vem do `pkg`. Sem as duas
-  ferramentas a API sobe normal e só a música do perfil fica indisponível.
-- **Classificação de erro por ORDEM**: as checagens por NOME DE FERRAMENTA
-  (ffmpeg, deno) vêm ANTES das genéricas. O texto real do yt-dlp quando falta
-  o ffmpeg é "...but ffmpeg is not installed", que casa com `/not installed/`
-  — com a regra genérica primeiro a mensagem acusava o yt-dlp e mandava o
-  usuário consertar a coisa errada (bug real relatado).
-- **PATH do filho é AMPLIADO** (`augmentedPath()`): o yt-dlp procura o ffmpeg
-  NO PATH, e no Termux o `pkg` instala em `$PREFIX/bin`, que pode faltar no
-  PATH herdado pelo Node (serviço/wrapper) → "ffmpeg is not installed" mesmo
-  com o ffmpeg instalado. O spawn recebe `PATH` + `$PREFIX/bin` +
-  `/data/data/com.termux/files/usr/bin` + `/usr/local/bin` + `/usr/bin` etc.
-  O `start.sh`/`doctor` também checam se o ffmpeg EXECUTA (`ffmpeg -version`),
-  não só se existe: no Termux uma instalação parcial fica no PATH e não roda.
+- **Instalação das ferramentas (3 níveis)**: `start.sh` E `scripts/start.sh`
+  (o `npm start` de produção) garantem yt-dlp + ffmpeg, nesta ordem:
+  1. já instalado (PATH, `YT_DLP_PATH`/`FFMPEG_PATH`, `python3 -m yt_dlp`);
+  2. **gerenciador de pacotes**, quando há root (Termux `pkg`, Debian `apt`,
+     Alpine `apk`) + `pip`;
+  3. **BINÁRIOS ESTÁTICOS** (`scripts/lib-media.sh`) — o caminho que funciona
+     em container (Pterodactyl/Bronxys), onde NÃO há root, `apt` nem `pip`
+     utilizável. Baixa o `yt-dlp_linux`/`yt-dlp_linux_aarch64` oficial e o
+     ffmpeg do BtbN (o build que o próprio yt-dlp recomenda) para `data/bin/`
+     (persistente, gitignored, chmod 700).
+  **O SHA-256 é OBRIGATÓRIO**: sem o arquivo de somas oficial, ou se ele não
+  conferir, o download é DESCARTADO e nunca executado. O binário também é
+  executado uma vez (`--version`) antes de ser aceito.
+  `MATRIX_MEDIA_BIN_DIR` muda o destino; `YT_NO_FFMPEG=1` pula o ffmpeg.
+- **O servidor PRECISA achar `data/bin`**: `augmentedPath()` e
+  `findFfmpegDir()` incluem `data/bin` entre os candidatos — senão o download
+  seria inútil (o Node não veria o que o start.sh baixou).
 - **Download real não foi validado neste ambiente**: o YouTube bloqueia (403
   anti-bot) IPs de datacenter para MÍDIA (a busca passa). A cadeia inteira
   (spawn → ffmpeg → validação de bytes → storage → `/static` → banco) foi

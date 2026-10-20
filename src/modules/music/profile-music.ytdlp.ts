@@ -143,6 +143,9 @@ export async function findFfmpegDir(): Promise<string | null> {
     );
   }
   candidates.push(
+    // Binários que o PRÓPRIO projeto baixa (data/bin) — o caminho que existe
+    // em container sem root.
+    path.resolve(process.cwd(), 'data', 'bin'),
     process.env.PREFIX ? `${process.env.PREFIX}/bin` : '',
     '/data/data/com.termux/files/usr/bin',
     '/usr/local/bin',
@@ -429,6 +432,9 @@ export function toSearchResult(item: YtdlpJson): MusicSearchResult | null {
 function augmentedPath(): string {
   const current = process.env.PATH ?? '';
   const extra = [
+    // Binários que o PRÓPRIO projeto baixa (data/bin). É o único caminho em
+    // container sem root/gerenciador de pacotes.
+    path.resolve(process.cwd(), 'data', 'bin'),
     process.env.PREFIX ? `${process.env.PREFIX}/bin` : '',
     '/data/data/com.termux/files/usr/bin', // Termux
     '/usr/local/bin',

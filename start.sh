@@ -48,6 +48,11 @@ DB_FILE="$DATA_DIR/matrix.db"
 # Prisma helpers (Termux-safe generate/migrate) — see scripts/lib-prisma.sh.
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/scripts/lib-prisma.sh"
 
+# Media helpers: baixam yt-dlp/ffmpeg como binários ESTÁTICOS quando o host
+# não tem gerenciador de pacotes (container Pterodactyl/Bronxys).
+# Veja scripts/lib-media.sh.
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/scripts/lib-media.sh"
+
 INSTALL_ONLY=0
 for arg in "$@"; do
   case "$arg" in
@@ -174,6 +179,18 @@ ok "Driver node:sqlite disponível (sem binário nativo)"
 # vem do `pkg`.
 ensure_media_tools() {
   local need_ytdlp=1 need_ffmpeg=1
+
+  # Binários baixados pelo próprio projeto (data/bin) têm prioridade: em
+  # container não há como instalar por gerenciador de pacotes, e o download
+  # estático é o único caminho.
+  export PATH="$MATRIX_MEDIA_BIN_DIR:$PATH"
+  if [ -z "${YT_DLP_PATH:-}" ] && [ -x "$MATRIX_MEDIA_BIN_DIR/yt-dlp" ]; then
+    export YT_DLP_PATH="$MATRIX_MEDIA_BIN_DIR/yt-dlp"
+  fi
+  if [ -z "${FFMPEG_PATH:-}" ] && [ -x "$MATRIX_MEDIA_BIN_DIR/ffmpeg" ]; then
+    export FFMPEG_PATH="$MATRIX_MEDIA_BIN_DIR/ffmpeg"
+  fi
+
   if [ -n "${YT_DLP_PATH:-}" ] && [ -x "${YT_DLP_PATH:-}" ]; then
     need_ytdlp=0
   elif command -v yt-dlp >/dev/null 2>&1; then
@@ -188,22 +205,25 @@ ensure_media_tools() {
     return 0
   }
 
+  # ── 1) Caminho preferido: gerenciador de pacotes do host ────
+  # Funciona quando há root (Termux/pkg, Debian/apt, Alpine/apk). Em
+  # container Pterodactyl não há root nem esses gerenciadores — cai no
+  # download estático abaixo.
   if matrix_is_termux; then
     if [ "$need_ffmpeg" = 1 ]; then
       log "Instalando ffmpeg (pkg install ffmpeg) — pode demorar"
       pkg install -y ffmpeg >/dev/null 2>&1 \
-        || warn "ffmpeg não instalado — o download do trecho vai falhar"
+        || warn "ffmpeg não instalado pelo pkg — tentando binário estático"
     fi
     if [ "$need_ytdlp" = 1 ]; then
       log "Instalando yt-dlp (pip install -U yt-dlp)"
       # --break-system-packages: o Python do Termux é gerenciado pelo pkg e o
       # pip recusa instalar sem essa flag em ambientes "externally managed".
-      # A flag não existe em pip muito antigo, então há um fallback SEM ela.
       python3 -m pip install -U --break-system-packages yt-dlp >/dev/null 2>&1 \
         || python3 -m pip install -U yt-dlp >/dev/null 2>&1 \
         || pip install -U --break-system-packages yt-dlp >/dev/null 2>&1 \
         || pip install -U yt-dlp >/dev/null 2>&1 \
-        || warn "yt-dlp não instalado — a música do perfil ficará indisponível"
+        || warn "yt-dlp não instalado pelo pip — tentando binário estático"
     fi
   else
     if [ "$need_ffmpeg" = 1 ]; then
@@ -211,12 +231,12 @@ ensure_media_tools() {
         log "Instalando ffmpeg (apt-get)"
         (apt-get install -y ffmpeg >/dev/null 2>&1 \
           || sudo apt-get install -y ffmpeg >/dev/null 2>&1) \
-          || warn "ffmpeg não instalado — o download do trecho vai falhar"
+          || warn "ffmpeg não instalado pelo apt — tentando binário estático"
       elif command -v apk >/dev/null 2>&1; then
         apk add --no-cache ffmpeg >/dev/null 2>&1 \
-          || warn "ffmpeg não instalado (apk add ffmpeg)"
+          || warn "ffmpeg não instalado pelo apk — tentando binário estático"
       else
-        warn "Instale o ffmpeg manualmente — o download do trecho precisa dele"
+        log "Sem gerenciador de pacotes — baixando binários estáticos"
       fi
     fi
     if [ "$need_ytdlp" = 1 ]; then
@@ -226,7 +246,34 @@ ensure_media_tools() {
         || pip install -U --break-system-packages yt-dlp >/dev/null 2>&1 \
         || pip install -U yt-dlp >/dev/null 2>&1 \
         || pip3 install -U yt-dlp >/dev/null 2>&1) \
-        || warn "yt-dlp não instalado — a música do perfil ficará indisponível"
+        || warn "yt-dlp não instalado pelo pip — tentando binário estático"
+    fi
+  fi
+
+  # ── 2) Plano B: BINÁRIOS ESTÁTICOS (sem root, sem Python) ────
+  # Reconfere o estado: os gerenciadores acima podem ter funcionado.
+  need_ytdlp=1; need_ffmpeg=1
+  if [ -n "${YT_DLP_PATH:-}" ] && [ -x "${YT_DLP_PATH:-}" ]; then
+    need_ytdlp=0
+  elif command -v yt-dlp >/dev/null 2>&1; then
+    need_ytdlp=0
+  elif python3 -m yt_dlp --version >/dev/null 2>&1; then
+    need_ytdlp=0
+  fi
+  command -v ffmpeg >/dev/null 2>&1 && ffmpeg -version >/dev/null 2>&1 && need_ffmpeg=0
+
+  if [ "$need_ytdlp" = 1 ]; then
+    # O yt-dlp é OBRIGATÓRIO para o recurso existir.
+    if command -v matrix_fetch_ytdlp >/dev/null 2>&1; then
+      matrix_fetch_ytdlp || true
+      [ -x "$MATRIX_MEDIA_BIN_DIR/yt-dlp" ] && export YT_DLP_PATH="$MATRIX_MEDIA_BIN_DIR/yt-dlp"
+    fi
+  fi
+  if [ "$need_ffmpeg" = 1 ]; then
+    # O ffmpeg é OPCIONAL (sem ele o app toca a janela do trecho).
+    if command -v matrix_fetch_ffmpeg >/dev/null 2>&1; then
+      matrix_fetch_ffmpeg || true
+      [ -x "$MATRIX_MEDIA_BIN_DIR/ffmpeg" ] && export FFMPEG_PATH="$MATRIX_MEDIA_BIN_DIR/ffmpeg"
     fi
   fi
 

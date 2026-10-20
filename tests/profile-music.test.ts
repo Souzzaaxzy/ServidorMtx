@@ -634,6 +634,7 @@ warn() { echo "WARN:$*"; }
 log() { echo "LOG:$*"; }
 die() { echo "DIE:$*"; exit 1; }
 matrix_is_termux() { return 1; }
+MATRIX_MEDIA_BIN_DIR="$PWD/tests/fixtures/no-media-bin"
 ${fn}
 ensure_media_tools
 `;
@@ -671,6 +672,7 @@ warn() { echo "WARN:$*"; }
 log() { echo "LOG:$*"; }
 die() { echo "DIE:$*"; exit 1; }
 matrix_is_termux() { return 1; }
+MATRIX_MEDIA_BIN_DIR="$PWD/tests/fixtures/no-media-bin"
 ${fn}
 ensure_media_tools
 `;
@@ -1289,5 +1291,61 @@ exit 0
     );
     const results = await searchProfileMusic("qualquer");
     expect(results[0].title).toBe("From Catalog Song");
+  });
+});
+
+// ── Binários estáticos (container sem root) ───────────────────
+// Em container (Pterodactyl/Bronxys) NÃO há apt/apk/pkg nem pip utilizável:
+// as tentativas por gerenciador falham e a música do perfil ficava
+// indisponível. O start.sh agora baixa os binários ESTÁTICOS oficiais.
+describe('static media binaries', () => {
+  const lib = path.resolve(process.cwd(), 'scripts/lib-media.sh');
+
+  it('exposes the fetch helpers', async () => {
+    const src = await fs.readFile(lib, 'utf8');
+    expect(src).toContain('matrix_fetch_ytdlp');
+    expect(src).toContain('matrix_fetch_ffmpeg');
+    // O SHA-256 é OBRIGATÓRIO antes de executar qualquer coisa baixada.
+    expect(src).toContain('matrix_verify_sha256');
+    expect(src).toMatch(/SHA-256.*NÃO confere/s);
+  });
+
+  it('start.sh falls back to the static download', async () => {
+    const src = await fs.readFile(path.resolve(process.cwd(), 'start.sh'), 'utf8');
+    expect(src).toContain('matrix_fetch_ytdlp');
+    expect(src).toContain('matrix_fetch_ffmpeg');
+    // Os binários baixados ficam em data/bin e entram no PATH.
+    expect(src).toContain('MATRIX_MEDIA_BIN_DIR');
+  });
+
+  it('the server LOOKS for binaries in data/bin', async () => {
+    // Sem isso o download seria inútil: o Node precisa achar o que o
+    // start.sh baixou, sem depender do PATH do sistema.
+    const { findFfmpegDir } = await import(
+      '../src/modules/music/profile-music.ytdlp.js'
+    );
+    const dir = await findFfmpegDir();
+    if (dir === null) return; // host sem ffmpeg algum
+    // Quando existe, a descoberta inclui data/bin entre os candidatos.
+    const src = await fs.readFile(
+      path.resolve(process.cwd(), 'src/modules/music/profile-music.ytdlp.ts'),
+      'utf8',
+    );
+    expect(src).toContain("path.resolve(process.cwd(), 'data', 'bin')");
+  });
+
+  it('the architecture maps to the official asset names', async () => {
+    const src = await fs.readFile(lib, 'utf8');
+    // x86_64 -> yt-dlp_linux / ffmpeg-...-linux64-...
+    expect(src).toContain('yt-dlp_linux');
+    expect(src).toContain('linux64');
+    // ARM64 também (containers ARM existem).
+    expect(src).toContain('yt-dlp_linux_aarch64');
+    expect(src).toContain('linuxarm64');
+  });
+
+  it('data/bin is gitignored (third-party executables never committed)', async () => {
+    const gi = await fs.readFile(path.resolve(process.cwd(), '.gitignore'), 'utf8');
+    expect(gi).toContain('data/bin/');
   });
 });

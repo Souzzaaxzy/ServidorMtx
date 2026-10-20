@@ -65,9 +65,15 @@ fi
 hdr "Música do perfil (yt-dlp + ffmpeg)"
 # Opcional: sem isto a API roda normalmente e só a música do perfil fica
 # indisponível (o endpoint responde com mensagem amigável).
+#
+# Os binários baixados pelo projeto (data/bin) contam como instalados: em
+# container sem root é o ÚNICO caminho possível.
+MEDIA_BIN_DIR="${MATRIX_MEDIA_BIN_DIR:-$PWD/data/bin}"
 YTDLP_FOUND=""
 if [ -n "${YT_DLP_PATH:-}" ] && [ -x "${YT_DLP_PATH:-}" ]; then
   YTDLP_FOUND="$YT_DLP_PATH"
+elif [ -x "$MEDIA_BIN_DIR/yt-dlp" ]; then
+  YTDLP_FOUND="$MEDIA_BIN_DIR/yt-dlp (baixado pelo projeto)"
 elif command -v yt-dlp >/dev/null 2>&1; then
   YTDLP_FOUND="$(command -v yt-dlp)"
 elif python3 -m yt_dlp --version >/dev/null 2>&1; then
@@ -76,13 +82,15 @@ fi
 if [ -n "$YTDLP_FOUND" ]; then
   ok "yt-dlp: $YTDLP_FOUND"
 else
-  warn "yt-dlp ausente — música do perfil indisponível (Termux: pip install -U yt-dlp; Debian: pip install yt-dlp)"
+  warn "yt-dlp ausente — rode 'bash start.sh' (baixa o binário estático) ou instale: pip install -U yt-dlp"
 fi
 # Verifica se o ffmpeg FUNCIONA, não só se existe: no Termux um ffmpeg com
 # dependência faltando (instalação parcial) fica no PATH mas não executa, e o
 # yt-dlp então aborta com "ffmpeg is not installed".
 if [ -n "${YT_NO_FFMPEG:-}" ]; then
   ok "YT_NO_FFMPEG ativo — a música do perfil funciona SEM ffmpeg (o app toca a janela)"
+elif [ -x "$MEDIA_BIN_DIR/ffmpeg" ] && "$MEDIA_BIN_DIR/ffmpeg" -version >/dev/null 2>&1; then
+  ok "ffmpeg: $MEDIA_BIN_DIR/ffmpeg (baixado pelo projeto)"
 elif command -v ffmpeg >/dev/null 2>&1; then
   if ffmpeg -version >/dev/null 2>&1; then
     ok "ffmpeg presente e funcional (necessário para cortar o trecho)"

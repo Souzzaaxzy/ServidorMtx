@@ -51,6 +51,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=./lib-prisma.sh
 . "$SCRIPT_DIR/lib-prisma.sh"
 
+# Media helpers: baixam yt-dlp/ffmpeg como binários ESTÁTICOS quando o host
+# não tem gerenciador de pacotes (container Pterodactyl/Bronxys). Sem isto a
+# música do perfil fica indisponível em container — não há root nem pip.
+# shellcheck source=./lib-media.sh
+. "$SCRIPT_DIR/lib-media.sh"
+
 # ── Environment detection (Termux/Android vs regular Linux) ────
 # The API now runs on EITHER without native Prisma binaries: the client uses
 # the Rust-free engine (engineType=client) plus the node:sqlite adapter, so
@@ -226,6 +232,77 @@ if [ -f "$DB_FILE" ]; then
 else
   info "Banco SQLite ausente — será criado na etapa de migrations"
 fi
+
+# ── 4b. yt-dlp + ffmpeg (música do perfil) ─────────────────────
+# OPCIONAL: sem eles a API sobe normal e só a música do perfil responde com
+# mensagem amigável. Em container (Pterodactyl/Bronxys) NÃO há root, `apt`
+# nem `pip` utilizável — por isso o plano B é baixar os binários ESTÁTICOS
+# oficiais (SHA-256 conferido) para data/bin. Roda ANTES de subir o servidor
+# para o Node já encontrá-los.
+matrix_ensure_media_tools() {
+  export PATH="$MATRIX_MEDIA_BIN_DIR:$PATH"
+  if [ -z "${YT_DLP_PATH:-}" ] && [ -x "$MATRIX_MEDIA_BIN_DIR/yt-dlp" ]; then
+    export YT_DLP_PATH="$MATRIX_MEDIA_BIN_DIR/yt-dlp"
+  fi
+  if [ -z "${FFMPEG_PATH:-}" ] && [ -x "$MATRIX_MEDIA_BIN_DIR/ffmpeg" ]; then
+    export FFMPEG_PATH="$MATRIX_MEDIA_BIN_DIR/ffmpeg"
+  fi
+
+  local need_ytdlp=1 need_ffmpeg=1
+  [ -n "${YT_DLP_PATH:-}" ] && [ -x "${YT_DLP_PATH:-}" ] && need_ytdlp=0
+  [ "$need_ytdlp" = 1 ] && command -v yt-dlp >/dev/null 2>&1 && need_ytdlp=0
+  [ "$need_ytdlp" = 1 ] && python3 -m yt_dlp --version >/dev/null 2>&1 && need_ytdlp=0
+  command -v ffmpeg >/dev/null 2>&1 && ffmpeg -version >/dev/null 2>&1 && need_ffmpeg=0
+
+  if [ "$need_ytdlp" = 0 ] && [ "$need_ffmpeg" = 0 ]; then
+    ok "Música do perfil: yt-dlp e ffmpeg disponíveis"
+    return 0
+  fi
+
+  # 1) Gerenciador de pacotes, quando houver (root).
+  if [ "$need_ytdlp" = 1 ]; then
+    if command -v apt-get >/dev/null 2>&1; then
+      (apt-get install -y ffmpeg >/dev/null 2>&1 \
+        || sudo apt-get install -y ffmpeg >/dev/null 2>&1) || true
+    elif command -v apk >/dev/null 2>&1; then
+      apk add --no-cache ffmpeg >/dev/null 2>&1 || true
+    fi
+    (python3 -m pip install -U --break-system-packages yt-dlp >/dev/null 2>&1 \
+      || python3 -m pip install -U yt-dlp >/dev/null 2>&1 \
+      || pip install -U --break-system-packages yt-dlp >/dev/null 2>&1) || true
+  fi
+  command -v ffmpeg >/dev/null 2>&1 && ffmpeg -version >/dev/null 2>&1 && need_ffmpeg=0
+  if [ -n "${YT_DLP_PATH:-}" ] && [ -x "${YT_DLP_PATH:-}" ]; then
+    need_ytdlp=0
+  elif command -v yt-dlp >/dev/null 2>&1 || python3 -m yt_dlp --version >/dev/null 2>&1; then
+    need_ytdlp=0
+  fi
+
+  # 2) Plano B: BINÁRIOS ESTÁTICOS (sem root, sem Python).
+  if [ "$need_ytdlp" = 1 ]; then
+    log "Baixando yt-dlp estático (sem gerenciador de pacotes)"
+    matrix_fetch_ytdlp || true
+    [ -x "$MATRIX_MEDIA_BIN_DIR/yt-dlp" ] && export YT_DLP_PATH="$MATRIX_MEDIA_BIN_DIR/yt-dlp"
+  fi
+  if [ "$need_ffmpeg" = 1 ]; then
+    matrix_fetch_ffmpeg || true
+    [ -x "$MATRIX_MEDIA_BIN_DIR/ffmpeg" ] && export FFMPEG_PATH="$MATRIX_MEDIA_BIN_DIR/ffmpeg"
+  fi
+
+  if [ -x "$MATRIX_MEDIA_BIN_DIR/yt-dlp" ] \
+    || command -v yt-dlp >/dev/null 2>&1 \
+    || python3 -m yt_dlp --version >/dev/null 2>&1; then
+    if [ -x "$MATRIX_MEDIA_BIN_DIR/ffmpeg" ] \
+      || { command -v ffmpeg >/dev/null 2>&1 && ffmpeg -version >/dev/null 2>&1; }; then
+      ok "Música do perfil: yt-dlp + ffmpeg prontos"
+    else
+      ok "Música do perfil: yt-dlp pronto (sem ffmpeg — o app toca a janela do trecho)"
+    fi
+  else
+    warn "Música do perfil indisponível: yt-dlp ausente (rode: npm run doctor)"
+  fi
+}
+matrix_ensure_media_tools
 
 # ── 5. Database URL (SQLite, absolute path) ───────────────────
 # The schema uses a local SQLite file. DATABASE_URL is OPTIONAL: if the
