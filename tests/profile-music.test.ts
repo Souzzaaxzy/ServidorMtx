@@ -480,6 +480,89 @@ exit 1
   });
 });
 
+// ── Prévia do trecho (ouvir antes de confirmar) ───────────────
+// Sem isto o usuário escolheria a parte da música NO ESCURO: o download
+// definitivo só acontece na confirmação.
+describe('GET /api/music/profile/preview', () => {
+  const binDir = path.resolve(process.cwd(), "tests/fixtures/music-preview");
+  const bin = path.join(binDir, "ytdlp-preview.sh");
+  const callLog = path.join(binDir, "calls.log");
+
+  beforeAll(async () => {
+    await fs.mkdir(binDir, { recursive: true });
+    // Grava um m4a REAL (cabeçalho ISOBMFF) e registra as chamadas, para
+    // provar que a segunda requisição NÃO baixa de novo (cache).
+    await fs.writeFile(
+      bin,
+      `#!/usr/bin/env bash
+if [ "$1" = "--version" ]; then echo "2026.08.19"; exit 0; fi
+if [ "$1" = "--help" ]; then echo "  --js-runtimes RUNTIME"; exit 0; fi
+echo "CALL: $*" >> "${callLog}"
+out=""
+prev=""
+for a in "$@"; do
+  if [ "$prev" = "-o" ]; then out="$a"; fi
+  prev="$a"
+done
+mkdir -p "$(dirname "$out")"
+printf '\\x00\\x00\\x00\\x20ftypM4A \\x00\\x00\\x00\\x00M4A mp42isom' > "$out"
+head -c 2048 /dev/zero >> "$out"
+exit 0
+`,
+      { mode: 0o755 },
+    );
+  });
+  afterAll(async () => {
+    delete process.env.YT_DLP_PATH;
+    await fs.rm(binDir, { recursive: true, force: true });
+    vi.resetModules();
+  });
+
+  it('requires authentication', async () => {
+    const res = await server.inject({
+      method: "GET",
+      url: "/api/music/profile/preview?sourceId=abcdef12345",
+    });
+    expect(res.statusCode).toBe(401);
+  });
+
+  it('rejects a missing/invalid sourceId', async () => {
+    const user = await createAndLoginUser(server, { nickname: "prev_bad" });
+    const res = await server.inject({
+      method: "GET",
+      url: "/api/music/profile/preview",
+      headers: { authorization: `Bearer ${user.accessToken}` },
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('returns a playable URL and CACHES the track (one download)', async () => {
+    process.env.YT_DLP_PATH = bin;
+    await fs.rm(callLog, { force: true });
+    const user = await createAndLoginUser(server, { nickname: "prev_ok" });
+
+    const first = await server.inject({
+      method: "GET",
+      url: "/api/music/profile/preview?sourceId=prevtest001",
+      headers: { authorization: `Bearer ${user.accessToken}` },
+    });
+    expect(first.statusCode).toBe(200);
+    const body = JSON.parse(first.payload);
+    expect(body.url).toMatch(/\/static\/music\/preview\/prevtest001\.m4a$/);
+    expect(body.durationMs).toBeGreaterThanOrEqual(0);
+
+    // A segunda chamada (o usuário só arrastou as alças) NÃO baixa de novo.
+    const second = await server.inject({
+      method: "GET",
+      url: "/api/music/profile/preview?sourceId=prevtest001",
+      headers: { authorization: `Bearer ${user.accessToken}` },
+    });
+    expect(second.statusCode).toBe(200);
+    const calls = await fs.readFile(callLog, "utf8");
+    expect(calls.trim().split("\\n")).toHaveLength(1);
+  });
+});
+
 // ── Instalação das ferramentas (start.sh) ─────────────────────
 // O `start.sh` é o que roda de verdade no servidor. Antes, a instalação do
 // yt-dlp só existia no instalador do Termux — quem fazia `git pull &&

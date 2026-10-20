@@ -1,5 +1,8 @@
+import path from 'node:path';
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import { ApiError, toApiError } from '../../utils/errors.js';
+import { publicBase } from '../../utils/storage.js';
+import { ensurePreviewFile } from './profile-music.ytdlp.js';
 import {
   clearProfileMusic,
   getProfileMusic,
@@ -9,6 +12,7 @@ import {
 
 // Música do perfil.
 //   GET    /music/profile/search?q=...   (auth) → até 3 resultados
+//   GET    /music/profile/preview?...    (auth) → URL do áudio da prévia
 //   GET    /music/profile                (auth) → a música do próprio perfil
 //   PUT    /music/profile                (auth) → define o trecho (<= 1 min)
 //   DELETE /music/profile                (auth) → remove a música
@@ -21,6 +25,32 @@ export const profileMusicRoutes: FastifyPluginAsync = async (app: FastifyInstanc
     try {
       const results = await searchMusic(q ?? '');
       return reply.send({ results });
+    } catch (err) {
+      throw toApiError(err);
+    }
+  });
+
+  // GET /music/profile/preview?sourceId=...
+  //
+  // Garante que a faixa esteja disponível e devolve a URL pública dela, para
+  // o usuário OUVIR antes de confirmar. Sem isto a escolha do trecho era no
+  // escuro (o download definitivo só acontece na confirmação).
+  //
+  // Devolve a FAIXA INTEIRA e o app usa `setClip` para tocar só a janela
+  // escolhida. Vantagem: arrastar as alças NÃO baixa de novo — a faixa é
+  // baixada uma vez e fica em cache no servidor. O arquivo é servido pelo
+  // /static, que já responde a Range (o player precisa buscar o offset).
+  app.get('/music/profile/preview', { onRequest: [app.authenticate] }, async (request, reply) => {
+    const { sourceId } = request.query as { sourceId?: string };
+    if (!sourceId) throw ApiError.validation('Música inválida.');
+    try {
+      const file = await ensurePreviewFile(sourceId);
+      // URL a partir do nome do arquivo: o /static serve uploads/.
+      const name = path.basename(file.path);
+      return reply.send({
+        url: `${publicBase()}/static/music/preview/${name}`,
+        durationMs: file.durationMs,
+      });
     } catch (err) {
       throw toApiError(err);
     }

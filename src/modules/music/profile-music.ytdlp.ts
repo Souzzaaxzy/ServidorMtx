@@ -827,6 +827,165 @@ export async function searchProfileMusic(query: string): Promise<MusicSearchResu
   return [];
 }
 
+/**
+ * Prévia de um trecho, para o usuário OUVIR antes de confirmar.
+ *
+ * Por que existe: o download definitivo só acontece na confirmação (para não
+ * baixar enquanto o usuário ainda está arrastando as alças), então sem isto
+ * ele escolheria a parte da música no escuro.
+ *
+ * O áudio é baixado UMA vez por faixa e reaproveitado: enquanto o usuário
+ * ajusta a janela, só o recorte muda — baixar a faixa inteira a cada arrasto
+ * seria desperdício e bateria no YouTube sem necessidade.
+ *
+ * Devolve o arquivo da FAIXA INTEIRA (o cliente toca a janela). É o mesmo
+ * caminho do download sem ffmpeg, o que mantém uma única implementação de
+ * "obter o áudio de um vídeo".
+ */
+export interface PreviewFile {
+  path: string;
+  /** Duração real do arquivo (ms), lida do container. */
+  durationMs: number;
+}
+
+/**
+ * Lê a duração de um m4a do cabeçalho `mvhd` (sem ffprobe).
+ *
+ * A prévia precisa da duração para o app limitar a janela: o servidor não
+ * corta o arquivo (o recorte é no cliente), então a duração do ARQUIVO é o
+ * limite superior de qualquer seleção. Best-effort: devolve 0 quando não
+ * consegue ler, e o app cai para a duração informada na busca.
+ */
+export async function readM4aDurationMs(file: string): Promise<number> {
+  try {
+    const handle = await fs.open(file, 'r');
+    try {
+      // Varre os boxes de topo até achar `moov` (onde vive o `mvhd`).
+      let offset = 0;
+      const header = Buffer.alloc(8);
+      for (let i = 0; i < 64; i++) {
+        const read = await handle.read(header, 0, 8, offset);
+        if (read.bytesRead < 8) break;
+        const size = header.readUInt32BE(0);
+        const type = header.subarray(4, 8).toString('latin1');
+        if (size < 8) break;
+        if (type === 'moov') {
+          // Dentro do moov, procura o mvhd.
+          const moov = Buffer.alloc(Math.min(size, 4 * 1024 * 1024));
+          await handle.read(moov, 0, moov.length, offset + 8);
+          const idx = moov.indexOf('mvhd', 0, 'latin1');
+          if (idx === -1) return 0;
+          const version = moov[idx + 4];
+          const timescale = version === 1
+            ? moov.readUInt32BE(idx + 8 + 16)
+            : moov.readUInt32BE(idx + 4 + 8);
+          const duration = version === 1
+            ? Number(moov.readBigUInt64BE(idx + 8 + 20))
+            : moov.readUInt32BE(idx + 4 + 12);
+          if (!timescale) return 0;
+          return Math.round((duration / timescale) * 1000);
+        }
+        offset += size;
+      }
+    } finally {
+      await handle.close();
+    }
+  } catch {
+    // Best-effort.
+  }
+  return 0;
+}
+
+/** Cache de faixas já baixadas para prévia (sourceId → arquivo). */
+const previewCache = new Map<string, string>();
+
+/** Limite de faixas em cache (cada uma pode ter alguns MB). */
+const PREVIEW_CACHE_MAX = 5;
+
+/**
+ * Garante que a faixa esteja baixada para prévia e devolve o caminho do
+ * arquivo. Baixa a faixa INTEIRA (uma vez) para o cliente recortar a janela
+ * localmente enquanto o usuário arrasta.
+ */
+export async function ensurePreviewFile(sourceId: string): Promise<PreviewFile> {
+  if (!/^[A-Za-z0-9_-]{6,20}$/.test(sourceId)) {
+    throw ApiError.validation('Música inválida.');
+  }
+
+  const cached = previewCache.get(sourceId);
+  if (cached) {
+    try {
+      await fs.access(cached);
+      return { path: cached, durationMs: await readM4aDurationMs(cached) };
+    } catch {
+      previewCache.delete(sourceId);
+    }
+  }
+
+  const dir = path.resolve(process.cwd(), 'uploads', 'music', 'preview');
+  await fs.mkdir(dir, { recursive: true });
+  const dest = path.join(dir, `${sourceId}.m4a`);
+
+  // Se o ffmpeg existir, usamos o caminho que baixa direto em m4a sem
+  // conversão (formato 140); com ffmpeg também é válido, só não recortamos
+  // aqui — a prévia é uma faixa por vez, o recorte fica no cliente.
+  const args = [
+    '--no-warnings',
+    '--no-playlist',
+    '-f',
+    '140/ba[ext=m4a]/ba',
+    '--max-filesize',
+    String(MAX_PROFILE_MUSIC_BYTES),
+    '-o',
+    dest,
+    `https://www.youtube.com/watch?v=${sourceId}`,
+  ];
+
+  const { code, stderr } = await runYtdlp(args, DOWNLOAD_TIMEOUT_MS);
+  if (code !== 0) {
+    await fs.rm(dest, { force: true }).catch(() => void 0);
+    throw ytdlpFailureToApiError(stderr);
+  }
+
+  const stat = await fs.stat(dest).catch(() => null);
+  if (!stat || stat.size === 0) {
+    await fs.rm(dest, { force: true }).catch(() => void 0);
+    throw ApiError.internal('Não foi possível carregar a prévia. Tente novamente.');
+  }
+
+  // Mesma validação do download definitivo: os bytes têm de ser um container
+  // de áudio real, não um HTML de erro salvo como .m4a.
+  const head = Buffer.alloc(12);
+  const handle = await fs.open(dest, 'r');
+  try {
+    await handle.read(head, 0, 12, 0);
+  } finally {
+    await handle.close();
+  }
+  if (head.subarray(4, 8).toString('latin1') !== 'ftyp') {
+    await fs.rm(dest, { force: true }).catch(() => void 0);
+    throw ApiError.internal('A prévia baixada não é um áudio válido.');
+  }
+
+  previewCache.set(sourceId, dest);
+  // Cache simples: descarta o mais antigo quando passa do limite.
+  while (previewCache.size > PREVIEW_CACHE_MAX) {
+    const oldest = previewCache.keys().next().value;
+    if (oldest === undefined) break;
+    previewCache.delete(oldest);
+    await fs.rm(path.join(dir, `${oldest}.m4a`), { force: true }).catch(() => void 0);
+  }
+
+  return { path: dest, durationMs: await readM4aDurationMs(dest) };
+}
+
+/** Remove os arquivos de prévia (chamado na limpeza de mídia). */
+export async function purgePreviewFiles(): Promise<void> {
+  previewCache.clear();
+  const dir = path.resolve(process.cwd(), 'uploads', 'music', 'preview');
+  await fs.rm(dir, { recursive: true, force: true }).catch(() => void 0);
+}
+
 export interface StoredProfileMusicFile {
   url: string;
   bytes: number;

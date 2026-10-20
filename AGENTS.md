@@ -245,8 +245,16 @@ PostgreSQL). Runs on Pterodactyl/Bronxys via `npm start` (self-provisions).
     yt_dlp`) e executado com `spawn` sem shell (a busca do usuário nunca vira
     comando). Tudo com timeout.
 - Rotas (auth): `GET /api/music/profile/search?q=` (até 3 resultados),
-  `GET|PUT|DELETE /api/music/profile`. O trecho é re-validado no servidor:
-  **máx. 1 minuto** (`MAX_PROFILE_MUSIC_MS`), mín. 5s, início ≥ 0.
+  `GET /api/music/profile/preview?sourceId=` (URL do áudio para OUVIR antes de
+  confirmar), `GET|PUT|DELETE /api/music/profile`. O trecho é re-validado no
+  servidor: **máx. 1 minuto** (`MAX_PROFILE_MUSIC_MS`), mín. 5s, início ≥ 0.
+- **Prévia** (`ensurePreviewFile`): o download definitivo só acontece na
+  confirmação, então sem prévia o usuário escolheria o trecho NO ESCURO. O
+  servidor baixa a FAIXA INTEIRA **uma vez** (cache por `sourceId`, teto de 5
+  faixas) e o app recorta a janela com `setClip` — arrastar as alças não baixa
+  nada de novo. `readM4aDurationMs` lê a duração do `mvhd` do container (sem
+  ffprobe) para o app limitar a seleção. Os bytes são validados como áudio
+  real, igual ao download definitivo.
 - Substituir a música apaga o arquivo ANTIGO só depois de gravar o novo
   (nunca deixa o perfil apontando para arquivo apagado). `DELETE` é
   idempotente e remove o arquivo.
